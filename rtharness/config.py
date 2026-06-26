@@ -20,6 +20,7 @@ class Endpoint:
     model: str
     api_key_env: str = ""
     api_key: str = ""
+    provider: tuple[str, ...] = ()
 
     def resolved_key(self) -> str:
         if self.api_key:
@@ -64,6 +65,13 @@ def _endpoint_from_table(name: str, table: dict) -> Endpoint:
             f"Endpoint '{name}' has invalid protocol '{protocol}' "
             f"(expected 'openai' or 'anthropic')"
         )
+    provider = table.get("provider")
+    if isinstance(provider, str):
+        provider = (provider,)
+    elif isinstance(provider, list):
+        provider = tuple(str(p) for p in provider)
+    else:
+        provider = ()
     return Endpoint(
         name=name,
         protocol=protocol,
@@ -71,6 +79,7 @@ def _endpoint_from_table(name: str, table: dict) -> Endpoint:
         model=str(table["model"]),
         api_key_env=str(table.get("api_key_env", "")),
         api_key=str(table.get("api_key", "")),
+        provider=provider,
     )
 
 

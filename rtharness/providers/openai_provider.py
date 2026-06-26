@@ -103,6 +103,11 @@ class OpenAIProvider(Provider):
             payload["temperature"] = temperature
         if tools:
             payload["tools"] = _tools_to_wire(tools)
+        if getattr(self.endpoint, "provider", ()):
+            payload["provider"] = {
+                "order": list(self.endpoint.provider),
+                "allow_fallbacks": False,
+            }
 
         pending: dict[int, dict] = {}
         content_chars = 0

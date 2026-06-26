@@ -29,6 +29,10 @@ protocol = "openai"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 model = "openai/gpt-4o-mini"
+# Pin the OpenRouter backend so results are reproducible (different backends have
+# different safety configs). Single name or a list; allow_fallbacks is disabled.
+# provider = "WandB"
+# provider = ["WandB", "Alibaba"]
 
 [judge]
 protocol = "openai"
