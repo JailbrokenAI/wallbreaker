@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
@@ -19,12 +20,8 @@ def user_panel(text: str) -> Panel:
 
 
 def assistant_panel(text: str, model: str) -> Panel:
-    return Panel(
-        Text(text or "..."),
-        title=model,
-        title_align="left",
-        border_style="green",
-    )
+    body = Markdown(text) if text.strip() else Text("...")
+    return Panel(body, title=model, title_align="left", border_style="green")
 
 
 def tool_call_panel(name: str, args: dict) -> Panel:
@@ -40,13 +37,21 @@ def tool_call_panel(name: str, args: dict) -> Panel:
     )
 
 
-def tool_result_panel(name: str, content: str, is_error: bool) -> Panel:
+def tool_result_panel(
+    name: str, content: str, is_error: bool, verdict: tuple[str, str] | None = None
+) -> Panel:
+    border = "red" if is_error else "magenta"
+    subtitle = "error" if is_error else ""
+    if verdict and not is_error:
+        label, color = verdict
+        border = color
+        subtitle = f"verdict: {label}"
     return Panel(
         Text(_clip(content)),
         title=f"{name} result",
-        subtitle="error" if is_error else "",
+        subtitle=subtitle,
         title_align="left",
-        border_style="red" if is_error else "magenta",
+        border_style=border,
     )
 
 

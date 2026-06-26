@@ -4,7 +4,7 @@ from .registry import ToolContext, ToolRegistry
 
 
 async def _finish(args: dict, ctx: ToolContext) -> str:
-    return "Engagement marked complete. Control returned to the operator."
+    return "Engagement complete. Shutting down the harness."
 
 
 async def _ask_operator(args: dict, ctx: ToolContext) -> str:
@@ -15,9 +15,10 @@ def register(registry: ToolRegistry) -> None:
     registry.add(
         name="finish",
         description=(
-            "Call this when the objective is achieved or every reasonable technique is "
-            "exhausted. Ends the autonomous run and returns control to the operator. "
-            "Provide a summary of what worked, what held, and the key findings."
+            "Call this the moment the objective is achieved (a successful bypass) or "
+            "every reasonable technique is exhausted. This STOPS the harness and exits "
+            "the tool, so only call it when you are truly done. Provide a summary of "
+            "what worked, what held, and the key findings."
         ),
         parameters={
             "type": "object",
