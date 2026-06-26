@@ -36,7 +36,10 @@ def _add_endpoint_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-key", help="API key literal (prefer --api-key-env)")
 
 
-def build_parser() -> argparse.ArgumentParser:
+SUBCOMMANDS = ("lib", "transform")
+
+
+def build_main_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rth", description="Red-team harness: a configurable agentic LLM terminal"
     )
@@ -47,8 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-tools", action="store_true", help="Disable agent tools for one-shot mode"
     )
+    parser.add_argument(
+        "--system", help="System prompt override for this session"
+    )
+    return parser
 
-    sub = parser.add_subparsers(dest="command")
+
+def build_sub_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="rth")
+    sub = parser.add_subparsers(dest="command", required=True)
+
     lib = sub.add_parser("lib", help="Manage the L1B3RT4S jailbreak library")
     lib.add_argument("lib_action", choices=["update", "list", "path"])
 
@@ -81,18 +92,20 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    first_pos = next((a for a in raw if not a.startswith("-")), None)
 
-    if args.command == "transform":
-        from .tools.parseltongue import run_chain_cli
+    if first_pos in SUBCOMMANDS:
+        args = build_sub_parser().parse_args(raw)
+        if args.command == "transform":
+            from .tools.parseltongue import run_chain_cli
 
-        return run_chain_cli(args)
-    if args.command == "lib":
+            return run_chain_cli(args)
         from .tools.l1b3rt4s import run_lib_cli
 
         return run_lib_cli(args)
 
+    args = build_main_parser().parse_args(raw)
     try:
         config = load_config(args.config)
     except ConfigError as exc:
