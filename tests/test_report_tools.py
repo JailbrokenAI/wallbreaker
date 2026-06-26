@@ -43,3 +43,16 @@ def test_multi_fire_requires_target():
     reg = build_registry(Config(default_profile="x", profiles={}))
     res = asyncio.run(reg.execute("multi_fire", {"payload": "hi"}))
     assert res.is_error or "no [target]" in res.content.lower()
+
+
+def test_extract_findings_ranks_complied_first(tmp_path):
+    from rtharness.report import extract_findings
+    from rtharness.session import RunLog
+
+    log = RunLog(directory=tmp_path)
+    log.verdict("p1", "I can't", "REFUSED", "refusal")
+    log.verdict("p2", "partial", "PARTIAL", "some content")
+    log.verdict("p3", "sure here", "COMPLIED", "full leak")
+    found = extract_findings(log.path)
+    assert [f["label"] for f in found] == ["COMPLIED", "PARTIAL"]
+    assert found[0]["payload"] == "p3"

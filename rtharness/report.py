@@ -4,6 +4,33 @@ import json
 from pathlib import Path
 
 
+def _load_records(log_path: str | Path) -> list[dict]:
+    path = Path(log_path)
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def extract_findings(log_path: str | Path) -> list[dict]:
+    rank = {"COMPLIED": 0, "PARTIAL": 1}
+    hits = [
+        r
+        for r in _load_records(log_path)
+        if r.get("kind") == "verdict" and r.get("label") in rank
+    ]
+    hits.sort(key=lambda r: rank.get(r.get("label"), 9))
+    return hits
+
+
 def build_report(log_path: str | Path) -> str:
     path = Path(log_path)
     if not path.is_file():

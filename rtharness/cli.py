@@ -36,7 +36,7 @@ def _add_endpoint_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-key", help="API key literal (prefer --api-key-env)")
 
 
-SUBCOMMANDS = ("lib", "transform")
+SUBCOMMANDS = ("lib", "transform", "findings")
 
 
 def build_main_parser() -> argparse.ArgumentParser:
@@ -94,6 +94,9 @@ def build_sub_parser() -> argparse.ArgumentParser:
     tr.add_argument("transforms", help="Comma-separated transform chain, e.g. leet,base64")
     tr.add_argument("text", nargs="?", help="Text (or read stdin)")
     tr.add_argument("--decode", action="store_true", help="Reverse the chain")
+
+    fd = sub.add_parser("findings", help="List bypasses from a run log")
+    fd.add_argument("log", help="Path to a sessions/run-*.jsonl")
 
     return parser
 
@@ -156,6 +159,17 @@ def main(argv: list[str] | None = None) -> int:
             from .tools.parseltongue import run_chain_cli
 
             return run_chain_cli(args)
+        if args.command == "findings":
+            from .report import extract_findings
+
+            findings = extract_findings(args.log)
+            if not findings:
+                print("No bypasses (COMPLIED/PARTIAL) in that log.")
+                return 0
+            for f in findings:
+                payload = str(f.get("payload", "")).replace("\n", " ")[:80]
+                print(f"[{f['label']:8}] {payload}  -- {f.get('reason', '')[:60]}")
+            return 0
         from .tools.l1b3rt4s import run_lib_cli
 
         return run_lib_cli(args)

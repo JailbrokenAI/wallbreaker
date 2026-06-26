@@ -37,6 +37,7 @@ HELP_TEXT = """Slash commands:
 /judge [on|off]       LLM judge verdicts on target replies (default on)
 /judge model <id>     swap the judge model live (/judge default to reset)
 /asr                  show the attack scoreboard (hits / held / log path)
+/findings [log]       list the bypasses (COMPLIED/PARTIAL) from the run log
 /report [path]        write a markdown findings report from the run log
 /session save|load [path]   persist or reload the whole engagement
 /save [path]          save a plain-text transcript
@@ -516,6 +517,8 @@ class RthApp(App):
             ))
         elif cmd == "/objective":
             self._cmd_objective(raw_arg)
+        elif cmd == "/findings":
+            self._cmd_findings(rest)
         elif cmd == "/report":
             self._cmd_report(rest)
         elif cmd == "/session":
@@ -708,6 +711,25 @@ class RthApp(App):
         self.runlog.event("objective", text=raw)
         self.history.append(user(f"[engagement objective] {raw}"))
         self._mount(widgets.info_panel(f"objective set:\n{raw}", title="objective"))
+
+    def _cmd_findings(self, rest: list[str]) -> None:
+        from ..report import extract_findings
+
+        path = rest[0] if rest else self.runlog.path
+        findings = extract_findings(path)
+        if not findings:
+            self._mount(widgets.info_panel(
+                "no bypasses logged yet (COMPLIED/PARTIAL). Keep attacking.",
+                title="findings",
+            ))
+            return
+        lines = []
+        for f in findings:
+            payload = str(f.get("payload", "")).replace("\n", " ")[:70]
+            lines.append(f"[{f['label']:8}] {payload}\n           -> {f.get('reason','')[:70]}")
+        self._mount(widgets.info_panel(
+            f"{len(findings)} bypass(es):\n\n" + "\n".join(lines), title="findings"
+        ))
 
     def _cmd_report(self, rest: list[str]) -> None:
         from ..report import build_report
