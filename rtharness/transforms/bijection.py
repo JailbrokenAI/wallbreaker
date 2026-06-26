@@ -34,6 +34,26 @@ def bijection_decode(text: str, seed: int = 1337) -> str:
     return "".join(out)
 
 
+GREEK = list("ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩαβγδεζηθικλμνξοπρστυφχψω")
+
+
+def build_map_greek(seed: int = 1337) -> dict[str, str]:
+    rng = random.Random(seed)
+    pool = list(GREEK)
+    rng.shuffle(pool)
+    return {ch: pool[i] for i, ch in enumerate(SOURCE_ALPHABET)}
+
+
+def bijection_greek_encode(text: str, seed: int = 1337) -> str:
+    mapping = build_map_greek(seed)
+    return "".join(mapping.get(c.lower(), c) for c in text)
+
+
+def bijection_greek_decode(text: str, seed: int = 1337) -> str:
+    reverse = {v: k for k, v in build_map_greek(seed).items()}
+    return "".join(reverse.get(c, c) for c in text)
+
+
 def legend(seed: int = 1337) -> str:
     mapping = build_map(seed)
     return ", ".join(

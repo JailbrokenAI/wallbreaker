@@ -105,3 +105,48 @@ def flip_encode(text: str) -> str:
 
 def flip_decode(text: str) -> str:
     return "".join(FLIP_REVERSE.get(c, c) for c in reversed(text))
+
+
+def _build_style(upper: int, lower: int, digit: int | None, holes: dict[str, str]):
+    fwd: dict[str, str] = {}
+    for i in range(26):
+        u, low = chr(ord("A") + i), chr(ord("a") + i)
+        fwd[u] = holes.get(u) or chr(upper + i)
+        fwd[low] = holes.get(low) or chr(lower + i)
+    if digit is not None:
+        for i in range(10):
+            fwd[chr(ord("0") + i)] = chr(digit + i)
+    rev = {v: k for k, v in fwd.items()}
+
+    def encode(text: str) -> str:
+        return "".join(fwd.get(c, c) for c in text)
+
+    def decode(text: str) -> str:
+        return "".join(rev.get(c, c) for c in text)
+
+    return encode, decode
+
+
+italic_encode, italic_decode = _build_style(
+    0x1D434, 0x1D44E, None, {"h": "ℎ"}
+)
+script_encode, script_decode = _build_style(
+    0x1D49C, 0x1D4B6, None,
+    {
+        "B": "ℬ", "E": "ℰ", "F": "ℱ", "H": "ℋ", "I": "ℐ",
+        "L": "ℒ", "M": "ℳ", "R": "ℛ",
+        "e": "ℯ", "g": "ℊ", "o": "ℴ",
+    },
+)
+fraktur_encode, fraktur_decode = _build_style(
+    0x1D504, 0x1D51E, None,
+    {"C": "ℭ", "H": "ℌ", "I": "ℑ", "R": "ℜ", "Z": "ℨ"},
+)
+doublestruck_encode, doublestruck_decode = _build_style(
+    0x1D538, 0x1D552, 0x1D7D8,
+    {
+        "C": "ℂ", "H": "ℍ", "N": "ℕ", "P": "ℙ", "Q": "ℚ",
+        "R": "ℝ", "Z": "ℤ",
+    },
+)
+monospace_encode, monospace_decode = _build_style(0x1D670, 0x1D68A, 0x1D7F6, {})

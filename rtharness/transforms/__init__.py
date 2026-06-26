@@ -3,7 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from . import bijection, encodings, fonts, stego, structural, unicode_obf
+from . import (
+    bijection,
+    encodings,
+    fonts,
+    linguistics,
+    stego,
+    structural,
+    unicode_obf,
+)
 
 
 @dataclass
@@ -51,9 +59,18 @@ TRANSFORMS: dict[str, Transform] = dict(
         _t("zw_binary", stego.zero_width_binary_encode, stego.zero_width_binary_decode, "Invisible zero-width binary payload"),
         _t("bijection", bijection.bijection_encode, bijection.bijection_decode, "Two-letter bijection substitution (case-folding)", lossy=True),
         _t("bold", fonts.bold_encode, fonts.bold_decode, "Mathematical sans-serif bold styling"),
+        _t("italic", fonts.italic_encode, fonts.italic_decode, "Mathematical italic styling"),
+        _t("script", fonts.script_encode, fonts.script_decode, "Mathematical script/cursive styling"),
+        _t("fraktur", fonts.fraktur_encode, fonts.fraktur_decode, "Fraktur/gothic blackletter styling"),
+        _t("doublestruck", fonts.doublestruck_encode, fonts.doublestruck_decode, "Double-struck/blackboard styling"),
+        _t("monospace", fonts.monospace_encode, fonts.monospace_decode, "Mathematical monospace styling"),
         _t("circled", fonts.circled_encode, fonts.circled_decode, "Enclosed/circled alphanumerics"),
         _t("smallcaps", fonts.smallcaps_encode, fonts.smallcaps_decode, "Small-capitals styling (case-folding)", lossy=True),
         _t("flip", fonts.flip_encode, fonts.flip_decode, "Upside-down mirrored text (approximate decode)", lossy=True),
+        _t("unicode_noise", unicode_obf.unicode_noise_encode, unicode_obf.unicode_noise_strip, "Random combining-mark + zero-width noise"),
+        _t("gibberish", linguistics.gibberish, None, "Deterministic word -> pronounceable gibberish"),
+        _t("neutralize", linguistics.neutralize_encode, linguistics.neutralize_decode, "Swap flagged terms for neutral synonyms (lossy)", lossy=True),
+        _t("bijection_greek", bijection.bijection_greek_encode, bijection.bijection_greek_decode, "Bijection substitution to Greek letters (case-folding)", lossy=True),
         _t("casing", structural.casing_chaos, None, "Random upper/lower casing"),
         _t("whitespace", structural.whitespace_chaos, None, "Unicode whitespace chaos"),
         _t("char_drop", structural.char_drop, None, "Drop a fraction of vowels"),

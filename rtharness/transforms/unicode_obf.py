@@ -109,6 +109,28 @@ def tag_smuggle_decode(text: str) -> str:
     return "".join(out)
 
 
+_NOISE_POOL = ZALGO_MARKS + list(ZERO_WIDTH_CHARS)
+
+
+def unicode_noise_encode(text: str, intensity: int = 2) -> str:
+    rng = random.Random(0xBEEF)
+    out = []
+    for ch in text:
+        out.append(ch)
+        if ch.strip():
+            for _ in range(rng.randint(0, intensity)):
+                out.append(rng.choice(_NOISE_POOL))
+    return "".join(out)
+
+
+def unicode_noise_strip(text: str) -> str:
+    cleaned = "".join(c for c in text if c not in ZERO_WIDTH_CHARS)
+    return "".join(
+        c for c in unicodedata.normalize("NFD", cleaned)
+        if unicodedata.category(c) != "Mn"
+    )
+
+
 def rtl_override_encode(text: str) -> str:
     return RLO + text + PDF
 
