@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import difflib
+import shlex
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
@@ -580,7 +581,12 @@ class RthApp(App):
         self._mount(widgets.info_panel("conversation cleared", title="ready"))
 
     def _handle_command(self, text: str) -> None:
-        parts = text.split()
+        # shlex so quoted args with spaces (e.g. a path under "Redteaming harnass")
+        # stay one token; fall back to plain split on unbalanced quotes.
+        try:
+            parts = shlex.split(text) or text.split()
+        except ValueError:
+            parts = text.split()
         cmd, rest = parts[0].lower(), parts[1:]
         raw_arg = text[len(parts[0]):].strip()
         if cmd in ("/quit", "/exit"):

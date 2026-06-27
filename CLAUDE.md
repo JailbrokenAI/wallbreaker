@@ -38,6 +38,11 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   `cli.py`. `__main__.py` must `sys.exit(main())` or non-zero return codes (e.g. the
   `export --fail-on-finding` CI gate) are silently dropped to 0. Test CLI exit codes via
   `python -m rtharness ...; echo $?`, not just `main()` in-process.
+- **[tui]**: the project dir is "Redteaming harnass" (has a space), so any absolute
+  path arg hits it. Tokenize slash-command input with `shlex.split` (try/except →
+  `text.split` on unbalanced quotes), NOT `text.split()`, or quoted paths with spaces get
+  cut at the space (and the leading quote is kept). Keep free-text args on `raw_arg`, not
+  quote-stripped, so `/template set "..."` is preserved.
 - **[session]**: two on-disk formats — saved sessions are ONE JSON object
   (`session.json`/`autosave.json`), run logs are JSONL (`run-*.jsonl`, one event/line).
   `load_session` must detect `.jsonl` (or catch JSONDecodeError) and reconstruct via
