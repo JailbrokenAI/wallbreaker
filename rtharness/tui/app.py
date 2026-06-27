@@ -45,6 +45,7 @@ HELP_TEXT = """Slash commands:
 /lib [list|update|MODEL]   browse the L1B3RT4S library
 /harmbench [category]      standardized HarmBench behavior prompts (unbiased battery)
 /campaign [category] [n]   auto-escalate a battery up the technique ladder, coverage matrix
+/leaderboard [profiles..]  rank profiles by ASR on one battery (robustness benchmark)
 /find <term>               search the conversation transcript for a term
 /log [on|off]         toggle the JSONL run log (every payload + verdict)
 /judge [on|off]       LLM judge verdicts on target replies (default on)
@@ -52,6 +53,7 @@ HELP_TEXT = """Slash commands:
 /asr                  show the attack scoreboard (hits / held / log path)
 /stats                analytics from the run log: verdict mix, ASR bar, top tools
 /findings [log]       list the bypasses (COMPLIED/PARTIAL) from the run log
+/export [path]        dump structured findings as JSON (CI / downstream tooling)
 /repro [n]            emit a copy-paste repro pack for the Nth bypass (or latest)
 /report [html] [path] write a findings report (markdown, or html for a styled scoreboard)
 /session save|load [path]   persist or reload the whole engagement
@@ -557,6 +559,8 @@ class RthApp(App):
             self.run_worker(self._cmd_harmbench(rest), exclusive=False)
         elif cmd == "/campaign":
             self.run_worker(self._cmd_campaign(rest), group="judge", exclusive=False)
+        elif cmd == "/leaderboard":
+            self.run_worker(self._cmd_leaderboard(rest), group="judge", exclusive=False)
         elif cmd == "/find":
             self._cmd_find(raw_arg)
         elif cmd == "/log":
@@ -581,6 +585,8 @@ class RthApp(App):
             self._cmd_sysprompt(parts[1:], raw_arg)
         elif cmd == "/findings":
             self._cmd_findings(rest)
+        elif cmd == "/export":
+            self._cmd_export(rest)
         elif cmd == "/repro":
             self._cmd_repro(rest)
         elif cmd == "/report":
@@ -828,6 +834,28 @@ class RthApp(App):
         )
         self._mount(panel)
         self._refresh_status()
+
+    async def _cmd_leaderboard(self, rest: list[str]) -> None:
+        if len(self.config.profiles) < 2:
+            self._mount(widgets.error_panel(
+                "need >=2 configured profiles to rank"
+            ))
+            return
+        args: dict = {}
+        profiles = [t for t in rest if not t.isdigit()]
+        nums = [int(t) for t in rest if t.isdigit()]
+        if profiles:
+            args["targets"] = profiles
+        if nums:
+            args["n"] = nums[0]
+        self._mount(widgets.info_panel(
+            "benchmarking profiles against one battery...", title="leaderboard"
+        ))
+        res = await self.registry.execute("leaderboard", args)
+        panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
+            res.content, title="leaderboard"
+        )
+        self._mount(panel)
 
     def _cmd_find(self, term: str) -> None:
         if not term:
@@ -1151,6 +1179,42 @@ class RthApp(App):
         self._mount(widgets.info_panel(
             f"{len(findings)} bypass(es):\n\n" + "\n".join(lines), title="findings"
         ))
+
+    def _cmd_export(self, rest: list[str]) -> None:
+        import json
+
+        from ..report import extract_findings
+
+        findings = extract_findings(self.runlog.path)
+        tgt = self.config.target
+        payload = {
+            "target": {
+                "model": tgt.model if tgt else None,
+                "base_url": tgt.base_url if tgt else None,
+                "provider_pin": list(tgt.provider) if tgt and tgt.provider else [],
+            },
+            "objective": self.objective,
+            "asr": {"hits": self.asr_hits, "total": self.asr_total},
+            "findings": [
+                {
+                    "label": f.get("label"),
+                    "payload": f.get("payload"),
+                    "response": f.get("response"),
+                    "reason": f.get("reason"),
+                    "ts": f.get("ts"),
+                }
+                for f in findings
+            ],
+        }
+        path = rest[0] if rest else "findings.json"
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+            self._mount(widgets.info_panel(
+                f"exported {len(findings)} finding(s) to {path}", title="export"
+            ))
+        except OSError as exc:
+            self._mount(widgets.error_panel(str(exc)))
 
     def _cmd_repro(self, rest: list[str]) -> None:
         from ..report import extract_findings

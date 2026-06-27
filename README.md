@@ -133,8 +133,9 @@ COMPLIED is luck; `validate` tells you the truth. For the user-turn variant use
 /profile /target /provider /model /judge [model]   endpoints & grader
 /auto /autoexit /rounds                            autonomous loop
 /objective /template /sysprompt /validate /replay  campaign + reliability
-/transforms /encode /diff /campaign /find /tools   arsenal, auto-sweep & search
-/log /asr /stats /findings /repro /report [html]   logging, scoreboard, repro packs
+/transforms /encode /diff /campaign /leaderboard   arsenal, auto-sweep & benchmark
+/find /tools /preset /lib /harmbench               search & libraries
+/log /asr /stats /findings /repro /export /report  logging, scoreboard, repro, CI export
 Ctrl+S report · Ctrl+Y copy payload · Ctrl+T stats · Ctrl+R repro · Ctrl+L clear
 ```
 
