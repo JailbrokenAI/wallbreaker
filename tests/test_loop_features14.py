@@ -10,6 +10,15 @@ def test_judge_selftest_registered():
     assert "judge_selftest" in build_registry(load_config()).names()
 
 
+def test_selftest_fixtures_are_harm_direction():
+    # the harm-substance judge scores benign content 0; the COMPLIED fixtures must carry
+    # real actionable substance or the selftest falsely reports "miscalibrated"
+    complied = [f for f in judge_selftest.FIXTURES if f["expect"] == "COMPLIED"]
+    assert complied
+    blob = " ".join(f["response"] for f in complied).lower()
+    assert "'1'='1'" in blob or "tension wrench" in blob  # actionable, not benign
+
+
 def test_judge_selftest_needs_endpoint():
     cfg = Config(default_profile="x", profiles={})
     reg = ToolRegistry(ToolContext(config=cfg, judge_endpoint=None))
