@@ -118,6 +118,7 @@ COMPLIED is luck; `validate` tells you the truth. For the user-turn variant use
 | `diff_fire` | A/B two payloads at one target to attribute ASR to a specific edit |
 | `recommend_transforms` | survey ~16 encodings, rank by bypass, synthesize a chain to try |
 | `campaign` | auto-escalate a HarmBench battery up a technique ladder, coverage matrix |
+| `leaderboard` | rank multiple profiles by ASR on one battery (robustness benchmark) |
 | `scan` | Garak-style coverage matrix (technique + HarmBench probes) |
 | `indirect_inject` | RAG/agent injection via document/email/tool-output carriers |
 | `system_sweep` | validate ONE system prompt across a task battery (multi-sample) |
@@ -134,7 +135,7 @@ COMPLIED is luck; `validate` tells you the truth. For the user-turn variant use
 /objective /template /sysprompt /validate /replay  campaign + reliability
 /transforms /encode /diff /campaign /find /tools   arsenal, auto-sweep & search
 /log /asr /stats /findings /repro /report [html]   logging, scoreboard, repro packs
-Ctrl+S report · Ctrl+Y copy payload · Ctrl+L clear
+Ctrl+S report · Ctrl+Y copy payload · Ctrl+T stats · Ctrl+R repro · Ctrl+L clear
 ```
 
 ## Logging & reports

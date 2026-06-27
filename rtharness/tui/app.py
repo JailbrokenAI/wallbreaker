@@ -59,7 +59,7 @@ HELP_TEXT = """Slash commands:
 /clear                clear the conversation
 /quit                 exit
 
-Ctrl+S report · Ctrl+Y copy last payload · Ctrl+L clear · Ctrl+C quit
+Ctrl+S report · Ctrl+Y copy payload · Ctrl+T stats · Ctrl+R repro · Ctrl+L clear · Ctrl+C quit
 
 Up / Down arrows recall your previous inputs into the prompt.
 Type anything else to talk to the agent. It has shell, file, parseltongue,
@@ -78,6 +78,8 @@ class RthApp(App):
         ("ctrl+l", "clear_log", "Clear"),
         ("ctrl+s", "report", "Report"),
         ("ctrl+y", "copy_payload", "Copy payload"),
+        ("ctrl+t", "stats", "Stats"),
+        ("ctrl+r", "repro", "Repro"),
     ]
 
     def __init__(
@@ -465,6 +467,12 @@ class RthApp(App):
 
     def action_report(self) -> None:
         self._cmd_report([])
+
+    def action_stats(self) -> None:
+        self._cmd_stats()
+
+    def action_repro(self) -> None:
+        self._cmd_repro([])
 
     def action_copy_payload(self) -> None:
         if not self._last_payload:
