@@ -112,7 +112,8 @@ COMPLIED is luck; `validate` tells you the truth. For the user-turn variant use
 |------|---------|
 | `run_shell`, `read_file`, `write_file`, `edit_file` | build/run/save payloads |
 | `parseltongue`, `parseltongue_catalog`, `mutate` | obfuscate / anti-classifier rewrite |
-| `l1b3rt4s_*`, `harmbench`, `preset` | jailbreak library, benchmark, seed templates |
+| `l1b3rt4s_*`, `eni_*` | jailbreak libraries: L1B3RT4S + the ENI persona collection |
+| `harmbench`, `preset` | unbiased behavior benchmark, curated seed templates |
 | `query_target` | fire at the model-under-test (with `transforms=[...]` to encode+fire) |
 | `multi_fire` | sweep one payload through many encodings (concurrent) |
 | `crescendo` | multi-turn escalation |
@@ -141,7 +142,7 @@ COMPLIED is luck; `validate` tells you the truth. For the user-turn variant use
 /auto /autoexit /rounds                            autonomous loop
 /objective /template /sysprompt /validate /replay  campaign + reliability
 /transforms /encode /diff /campaign /leaderboard   arsenal, auto-sweep & benchmark
-/find /tools /preset /lib /harmbench               search & libraries
+/find /tools /preset /lib /eni /harmbench          search & libraries
 /log /asr /stats /findings /repro /export /report  logging, scoreboard, repro, CI export
 Ctrl+S report · Ctrl+Y copy payload · Ctrl+T stats · Ctrl+R repro · Ctrl+L clear
 ```

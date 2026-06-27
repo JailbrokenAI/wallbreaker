@@ -36,7 +36,7 @@ def _add_endpoint_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-key", help="API key literal (prefer --api-key-env)")
 
 
-SUBCOMMANDS = ("lib", "transform", "findings", "report", "export", "check")
+SUBCOMMANDS = ("lib", "eni", "transform", "findings", "report", "export", "check")
 
 
 def build_main_parser() -> argparse.ArgumentParser:
@@ -95,6 +95,9 @@ def build_sub_parser() -> argparse.ArgumentParser:
 
     lib = sub.add_parser("lib", help="Manage the L1B3RT4S jailbreak library")
     lib.add_argument("lib_action", choices=["update", "list", "path"])
+
+    eni = sub.add_parser("eni", help="Browse the ENI persona-jailbreak collection")
+    eni.add_argument("eni_action", choices=["list", "update", "path"])
 
     tr = sub.add_parser("transform", help="Run Parseltongue transforms on text")
     tr.add_argument("transforms", help="Comma-separated transform chain, e.g. leet,base64")
@@ -191,6 +194,10 @@ def main(argv: list[str] | None = None) -> int:
             from .tools.parseltongue import run_chain_cli
 
             return run_chain_cli(args)
+        if args.command == "eni":
+            from .tools.eni import run_eni_cli
+
+            return run_eni_cli(args)
         if args.command in ("findings", "report", "export"):
             from .report import resolve_log_path
 

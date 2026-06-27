@@ -44,6 +44,7 @@ HELP_TEXT = """Slash commands:
 /template test [a;b]  fire the template across a category battery, scoreboard
 /sysprompt set <text> hold ONE fixed system prompt; /sysprompt test sweeps tasks through it
 /lib [list|update|MODEL]   browse the L1B3RT4S library
+/eni [list|search q|MODEL] browse the ENI persona-jailbreak collection
 /harmbench [category]      standardized HarmBench behavior prompts (unbiased battery)
 /campaign [category] [n]   auto-escalate a battery up the technique ladder, coverage matrix
 /leaderboard [profiles..]  rank profiles by ASR on one battery (robustness benchmark)
@@ -75,7 +76,7 @@ l1b3rt4s, query_target, and http_request tools."""
 KNOWN_COMMANDS = (
     "/help", "/edit", "/retry", "/regen", "/undo", "/clear", "/profile", "/target",
     "/provider", "/validate", "/replay", "/model", "/auto", "/autoexit", "/rounds",
-    "/transforms", "/encode", "/diff", "/tools", "/preset", "/lib", "/harmbench",
+    "/transforms", "/encode", "/diff", "/tools", "/preset", "/lib", "/eni", "/harmbench",
     "/campaign", "/leaderboard", "/find", "/leakscan", "/log", "/judge", "/asr", "/stats",
     "/objective", "/template", "/sysprompt", "/findings", "/export", "/repro",
     "/report", "/session", "/save", "/quit", "/exit",
@@ -654,6 +655,8 @@ class RthApp(App):
             self._cmd_preset(rest)
         elif cmd == "/lib":
             self.run_worker(self._cmd_lib(rest), exclusive=False)
+        elif cmd == "/eni":
+            self.run_worker(self._cmd_eni(rest), exclusive=False)
         elif cmd == "/harmbench":
             self.run_worker(self._cmd_harmbench(rest), exclusive=False)
         elif cmd == "/campaign":
@@ -1029,6 +1032,22 @@ class RthApp(App):
         else:
             out = await self.registry.execute("l1b3rt4s_get", {"model": action})
             self._mount(widgets.info_panel(out.content, title=f"lib:{action}"))
+
+    async def _cmd_eni(self, rest: list[str]) -> None:
+        action = rest[0] if rest else "list"
+        if action in ("list", "update"):
+            out = await self.registry.execute("eni_list", {})
+            self._mount(widgets.info_panel(out.content, title="eni"))
+        elif action == "search":
+            query = " ".join(rest[1:])
+            if not query:
+                self._mount(widgets.error_panel("usage: /eni search <query>"))
+                return
+            out = await self.registry.execute("eni_search", {"query": query})
+            self._mount(widgets.info_panel(out.content, title="eni:search"))
+        else:
+            out = await self.registry.execute("eni_get", {"model": action})
+            self._mount(widgets.info_panel(out.content, title=f"eni:{action}"))
 
     def _cmd_preset(self, rest: list[str]) -> None:
         from ..presets import get_preset, list_presets

@@ -21,7 +21,7 @@ def build_registry(config: Config, cwd: str | None = None) -> ToolRegistry:
     control.register(registry)
 
     for module_name in (
-        "parseltongue", "l1b3rt4s", "target", "http_tool", "judge", "multi_fire",
+        "parseltongue", "l1b3rt4s", "eni", "target", "http_tool", "judge", "multi_fire",
         "crescendo", "optimize", "presets_tool", "mutate", "barcode_tool",
         "pair", "best_of_n", "many_shot", "prefill", "diff_fire", "recommend",
         "campaign", "leaderboard", "leak_scan", "judge_selftest", "scan",
