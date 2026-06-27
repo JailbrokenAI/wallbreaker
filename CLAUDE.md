@@ -38,6 +38,13 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   `cli.py`. `__main__.py` must `sys.exit(main())` or non-zero return codes (e.g. the
   `export --fail-on-finding` CI gate) are silently dropped to 0. Test CLI exit codes via
   `python -m rtharness ...; echo $?`, not just `main()` in-process.
+- **[files]**: the agent invents absolute paths that don't exist on this host (e.g.
+  `/home/user/...` on macOS, where `/home` is read-only autofs → OSError Errno 45).
+  `write_file`/`edit_file` confine targets to `ctx.cwd` via `_confine` (redirect escaping
+  abs paths + `..` traversal to the basename under cwd), so writes never escape or crash.
+- **[providers/tools]**: `query_target` wraps `provider.complete` in try/except → a clean
+  `[target error] <Type>: ...` result, so a target timeout/network failure is an
+  actionable tool result, not a generic registry "Tool 'X' raised:" traceback.
 - **[tui]**: the project dir is "Redteaming harnass" (has a space), so any absolute
   path arg hits it. Tokenize slash-command input with `shlex.split` (try/except →
   `text.split` on unbalanced quotes), NOT `text.split()`, or quoted paths with spaces get

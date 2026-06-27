@@ -40,7 +40,14 @@ async def _query_target(args: dict, ctx: ToolContext) -> str:
     messages.append(user(prompt))
 
     start = time.monotonic()
-    reply = await provider.complete(messages, system=system, max_tokens=max_tokens)
+    try:
+        reply = await provider.complete(messages, system=system, max_tokens=max_tokens)
+    except Exception as exc:  # noqa: BLE001
+        dt = time.monotonic() - start
+        return (
+            f"[target error after {dt:.1f}s] {type(exc).__name__}: {str(exc)[:180]}\n"
+            "The target failed (timeout/network). Retry, lower max_tokens, or try another technique."
+        )
     dt = time.monotonic() - start
     target = ctx.config.target
     header = f"[target {target.model} @ {target.base_url} | {dt:.1f}s{enc_note}]\n"

@@ -14,6 +14,21 @@ def _resolve(ctx: ToolContext, path: str) -> Path:
     return p
 
 
+def _confine(ctx: ToolContext, path: str) -> tuple[Path, str]:
+    """Resolve a write target, redirecting anything outside the working dir back into it.
+
+    The agent sometimes invents absolute paths (e.g. /home/user/...) that don't exist on
+    this machine; those used to raise a raw OSError. Confine writes to cwd instead.
+    """
+    base = Path(ctx.cwd).resolve()
+    p = _resolve(ctx, path)
+    try:
+        p.resolve().relative_to(base)
+        return p, ""
+    except ValueError:
+        return base / Path(path).name, f" (redirected into the working dir {base})"
+
+
 async def _read_file(args: dict, ctx: ToolContext) -> str:
     path = args.get("path", "")
     if not path:
@@ -35,7 +50,7 @@ async def _write_file(args: dict, ctx: ToolContext) -> str:
     if not path:
         return "Error: 'path' is required"
     content = args.get("content", "")
-    p = _resolve(ctx, path)
+    p, note = _confine(ctx, path)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
@@ -44,7 +59,7 @@ async def _write_file(args: dict, ctx: ToolContext) -> str:
             f"Error writing {p}: {exc}. Use a relative path; the working "
             f"directory is {Path(ctx.cwd).resolve()}"
         )
-    return f"Wrote {len(content)} chars to {p}"
+    return f"Wrote {len(content)} chars to {p}{note}"
 
 
 async def _edit_file(args: dict, ctx: ToolContext) -> str:
@@ -53,7 +68,7 @@ async def _edit_file(args: dict, ctx: ToolContext) -> str:
     new = args.get("new", "")
     if not path or old == "":
         return "Error: 'path' and 'old' are required"
-    p = _resolve(ctx, path)
+    p, _note = _confine(ctx, path)
     if not p.is_file():
         return f"Error: no such file: {p}"
     try:
