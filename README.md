@@ -118,6 +118,7 @@ COMPLIED is luck; `validate` tells you the truth. For the user-turn variant use
 | `multi_fire` | sweep one payload through many encodings (concurrent) |
 | `crescendo` | multi-turn escalation |
 | `pair_attack` | PAIR/TAP: refine one objective on the target's refusals |
+| `pair_sweep` | run the PAIR loop across a whole battery concurrently (highest-ASR, batched) |
 | `best_of_n` | resample N times, keep the bypass |
 | `many_shot` | many-shot jailbreak: flood context with faux compliant turns, then fire |
 | `prefill` | response-priming: seed the assistant's own reply so it continues, not refuses |

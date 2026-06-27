@@ -47,6 +47,7 @@ HELP_TEXT = """Slash commands:
 /lib [list|update|MODEL]   browse the L1B3RT4S library
 /eni [list|search q|MODEL] browse the ENI persona-jailbreak collection
 /seedsweep <request>       fire one request through many ENI+L1B3RT4S seeds, rank bypasses
+/pairsweep [category] [n]   run PAIR (your highest-ASR loop) across a whole battery, concurrent
 /narrate <request>         sweep 5 varied novel-chapter framings + prefill, keep the bypass
 /harmbench [category]      standardized HarmBench behavior prompts (unbiased battery)
 /campaign [category] [n]   auto-escalate a battery up the technique ladder, coverage matrix
@@ -80,8 +81,8 @@ KNOWN_COMMANDS = (
     "/help", "/edit", "/retry", "/regen", "/undo", "/clear", "/profile", "/target",
     "/provider", "/validate", "/replay", "/model", "/auto", "/autoexit", "/rounds",
     "/transforms", "/encode", "/diff", "/tools", "/preset", "/lib", "/eni", "/harmbench",
-    "/campaign", "/leaderboard", "/seedsweep", "/narrate", "/find", "/leakscan", "/log",
-    "/judge", "/asr", "/stats",
+    "/campaign", "/leaderboard", "/seedsweep", "/pairsweep", "/narrate", "/find",
+    "/leakscan", "/log", "/judge", "/asr", "/stats",
     "/objective", "/template", "/sysprompt", "/findings", "/export", "/repro",
     "/report", "/session", "/save", "/quit", "/exit",
 )
@@ -668,6 +669,8 @@ class RthApp(App):
             self.run_worker(self._cmd_eni(rest), exclusive=False)
         elif cmd == "/seedsweep":
             self.run_worker(self._cmd_seedsweep(raw_arg), group="judge", exclusive=False)
+        elif cmd == "/pairsweep":
+            self.run_worker(self._cmd_pairsweep(rest), group="judge", exclusive=False)
         elif cmd == "/narrate":
             self.run_worker(self._cmd_narrate(raw_arg), group="judge", exclusive=False)
         elif cmd == "/harmbench":
@@ -1073,6 +1076,23 @@ class RthApp(App):
         res = await self.registry.execute("narrate", {"request": request, "variants": 5})
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
             res.content, title="narrate"
+        )
+        self._mount(panel)
+        self._refresh_status()
+
+    async def _cmd_pairsweep(self, rest: list[str]) -> None:
+        args: dict = {}
+        for tok in rest:
+            if tok.isdigit():
+                args["n"] = int(tok)
+            else:
+                args["category"] = tok
+        self._mount(widgets.info_panel(
+            "running PAIR across the battery (concurrent)...", title="pair sweep"
+        ))
+        res = await self.registry.execute("pair_sweep", args)
+        panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
+            res.content, title="pair sweep"
         )
         self._mount(panel)
         self._refresh_status()
