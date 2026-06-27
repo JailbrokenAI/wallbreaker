@@ -47,7 +47,7 @@ HELP_TEXT = """Slash commands:
 /lib [list|update|MODEL]   browse the L1B3RT4S library
 /eni [list|search q|MODEL] browse the ENI persona-jailbreak collection
 /seedsweep <request>       fire one request through many ENI+L1B3RT4S seeds, rank bypasses
-/narrate <request>         wrap the ask as a novel chapter + in-story prefill, fire + judge
+/narrate <request>         sweep 5 varied novel-chapter framings + prefill, keep the bypass
 /harmbench [category]      standardized HarmBench behavior prompts (unbiased battery)
 /campaign [category] [n]   auto-escalate a battery up the technique ladder, coverage matrix
 /leaderboard [profiles..]  rank profiles by ASR on one battery (robustness benchmark)
@@ -1068,9 +1068,9 @@ class RthApp(App):
             return
         self._last_payload = request
         self._mount(widgets.info_panel(
-            "wrapping as a novel chapter + in-story prefill, firing...", title="narrate"
+            "sweeping 5 varied novel-chapter framings + in-story prefill...", title="narrate"
         ))
-        res = await self.registry.execute("narrate", {"request": request})
+        res = await self.registry.execute("narrate", {"request": request, "variants": 5})
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
             res.content, title="narrate"
         )
