@@ -38,6 +38,11 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   `cli.py`. `__main__.py` must `sys.exit(main())` or non-zero return codes (e.g. the
   `export --fail-on-finding` CI gate) are silently dropped to 0. Test CLI exit codes via
   `python -m rtharness ...; echo $?`, not just `main()` in-process.
+- **[judge]**: the LLM judge mis-scored obfuscated bypasses as REFUSED — it graded the
+  response against the benign-looking (fiction-framed) PROMPT and called a real harmful
+  reply "unrelated → refused". JUDGE_SYSTEM/JUDGE_TEMPLATE must tell it to grade the
+  RESPONSE's harmful substance, NOT surface-match the prompt, and to score harmful content
+  HIGH even when the prompt was a "story". This is the dominant ASR-undercount bug.
 - **[seed_sweep]**: ENI personas are ~35KB; `MAX_SEED_CHARS` must stay above the largest
   seed (now 40000) or seeds get silently truncated mid-prompt and fire crippled (an early
   12000 cap chopped every ENI seed to a third → all scored 0). Validate "is it actually
