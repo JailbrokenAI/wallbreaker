@@ -44,13 +44,16 @@ HELP_TEXT = """Slash commands:
 /sysprompt set <text> hold ONE fixed system prompt; /sysprompt test sweeps tasks through it
 /lib [list|update|MODEL]   browse the L1B3RT4S library
 /harmbench [category]      standardized HarmBench behavior prompts (unbiased battery)
+/campaign [category] [n]   auto-escalate a battery up the technique ladder, coverage matrix
+/find <term>               search the conversation transcript for a term
 /log [on|off]         toggle the JSONL run log (every payload + verdict)
 /judge [on|off]       LLM judge verdicts on target replies (default on)
 /judge model <id>     swap the judge model live (/judge default to reset)
 /asr                  show the attack scoreboard (hits / held / log path)
 /stats                analytics from the run log: verdict mix, ASR bar, top tools
 /findings [log]       list the bypasses (COMPLIED/PARTIAL) from the run log
-/report [path]        write a markdown findings report from the run log
+/repro [n]            emit a copy-paste repro pack for the Nth bypass (or latest)
+/report [html] [path] write a findings report (markdown, or html for a styled scoreboard)
 /session save|load [path]   persist or reload the whole engagement
 /save [path]          save a plain-text transcript
 /clear                clear the conversation
@@ -544,6 +547,10 @@ class RthApp(App):
             self.run_worker(self._cmd_lib(rest), exclusive=False)
         elif cmd == "/harmbench":
             self.run_worker(self._cmd_harmbench(rest), exclusive=False)
+        elif cmd == "/campaign":
+            self.run_worker(self._cmd_campaign(rest), group="judge", exclusive=False)
+        elif cmd == "/find":
+            self._cmd_find(raw_arg)
         elif cmd == "/log":
             self._cmd_log(rest)
         elif cmd == "/judge":
@@ -566,6 +573,8 @@ class RthApp(App):
             self._cmd_sysprompt(parts[1:], raw_arg)
         elif cmd == "/findings":
             self._cmd_findings(rest)
+        elif cmd == "/repro":
+            self._cmd_repro(rest)
         elif cmd == "/report":
             self._cmd_report(rest)
         elif cmd == "/session":
@@ -792,6 +801,47 @@ class RthApp(App):
                 "harmbench", {"action": "sample", "category": action, "n": 10}
             )
         self._mount(widgets.info_panel(out.content, title="harmbench"))
+
+    async def _cmd_campaign(self, rest: list[str]) -> None:
+        args: dict = {}
+        for tok in rest:
+            if tok.isdigit():
+                args["n"] = int(tok)
+            else:
+                args["category"] = tok
+        self._mount(widgets.info_panel(
+            f"running auto-campaign (escalation ladder) against "
+            f"{self.config.target.model if self.config.target else 'no target'}...",
+            title="campaign",
+        ))
+        res = await self.registry.execute("campaign", args)
+        panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
+            res.content, title="campaign"
+        )
+        self._mount(panel)
+        self._refresh_status()
+
+    def _cmd_find(self, term: str) -> None:
+        if not term:
+            self._mount(widgets.error_panel("usage: /find <term>"))
+            return
+        needle = term.lower()
+        hits = []
+        for i, msg in enumerate(self.history):
+            text = msg.text()
+            for tu in msg.tool_uses():
+                text += f" [{tu.name} {tu.input}]"
+            if needle in text.lower():
+                pos = text.lower().find(needle)
+                snippet = text[max(0, pos - 30): pos + len(term) + 30].replace("\n", " ")
+                hits.append(f"#{i} [{msg.role}] ...{snippet}...")
+        if not hits:
+            self._mount(widgets.info_panel(f"no matches for {term!r}", title="find"))
+            return
+        self._mount(widgets.info_panel(
+            f"{len(hits)} match(es) for {term!r}:\n\n" + "\n".join(hits[:40]),
+            title="find",
+        ))
 
     async def _cmd_lib(self, rest: list[str]) -> None:
         from ..tools import l1b3rt4s as lib
@@ -1092,6 +1142,51 @@ class RthApp(App):
             lines.append(f"[{f['label']:8}] {payload}\n           -> {f.get('reason','')[:70]}")
         self._mount(widgets.info_panel(
             f"{len(findings)} bypass(es):\n\n" + "\n".join(lines), title="findings"
+        ))
+
+    def _cmd_repro(self, rest: list[str]) -> None:
+        from ..report import extract_findings
+
+        findings = extract_findings(self.runlog.path)
+        if not findings:
+            self._mount(widgets.info_panel(
+                "no bypasses to reproduce yet (COMPLIED/PARTIAL).", title="repro"
+            ))
+            return
+        idx = 1
+        if rest and rest[0].lstrip("-").isdigit():
+            idx = int(rest[0])
+        if not (1 <= idx <= len(findings)):
+            self._mount(widgets.error_panel(
+                f"index out of range; have {len(findings)} bypass(es)"
+            ))
+            return
+        f = findings[idx - 1]
+        tgt = self.config.target
+        pin = "+".join(tgt.provider) if tgt and tgt.provider else "none"
+        payload = str(f.get("payload", ""))
+        block = (
+            "=== rth repro pack ===\n"
+            f"target.model : {tgt.model if tgt else 'n/a'}\n"
+            f"target.base  : {tgt.base_url if tgt else 'n/a'}\n"
+            f"provider.pin : {pin}\n"
+            f"verdict      : {f.get('label', '?')}\n"
+            f"judge.reason : {f.get('reason', '')}\n"
+            "--- payload ---\n"
+            f"{payload}\n"
+            "--- reproduce ---\n"
+            "fire in rth:  /target <model> ; then paste the payload above\n"
+            "or tool call: query_target {\"prompt\": <payload>}\n"
+            "======================"
+        )
+        try:
+            self.copy_to_clipboard(block)
+            note = " (copied to clipboard)"
+        except Exception:
+            note = ""
+        self._mount(widgets.info_panel(
+            f"repro pack for bypass #{idx}/{len(findings)}{note}\n\n{block}",
+            title="repro",
         ))
 
     def _cmd_report(self, rest: list[str]) -> None:
