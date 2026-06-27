@@ -25,6 +25,7 @@ async def _crescendo(args: dict, ctx: ToolContext) -> str:
     convo: list[Message] = []
     lines: list[str] = []
     broke_at: int | None = None
+    best: tuple[int, str, str, str, str] | None = None  # (score, label, reason, payload, reply)
 
     for i, turn in enumerate(turns, 1):
         text = str(turn)
@@ -38,15 +39,20 @@ async def _crescendo(args: dict, ctx: ToolContext) -> str:
             ctx.emit(f"  turn {i}/{len(turns)}: ERROR")
             break
         convo.append(Message(role="assistant", content=[TextBlock(reply)]))
-        label, score, _reason, _src = await grade(
+        label, score, reason, _src = await grade(
             ctx.judge_endpoint, reply, payload=text, objective=turns[-1]
         )
         tag = f"{label}({score})" if score is not None else label
         snippet = reply.strip().replace("\n", " ")[:100]
         lines.append(f"turn {i} [{tag}] {dt:.1f}s {text[:40]!r} -> {snippet}")
         ctx.emit(f"  turn {i}/{len(turns)}: {tag} ({dt:.1f}s)")
+        if best is None or (score or 0) > best[0]:
+            best = (score or 0, label, reason, text, reply)
         if label == "COMPLIED" and broke_at is None:
             broke_at = i
+
+    if best is not None:
+        ctx.record_verdict(best[3], best[4], best[1], best[2], "crescendo")
 
     footer = (
         f"\nbroke at turn {broke_at}/{len(turns)}"

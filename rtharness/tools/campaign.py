@@ -54,6 +54,7 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
 
     async def run_behavior(behavior: str):
         trail = []
+        last = None  # (reply, label, reason)
         for name, builder in ladder:
             try:
                 msgs = builder(behavior)
@@ -61,13 +62,17 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
             except Exception as exc:  # noqa: BLE001
                 trail.append((name, "ERROR"))
                 continue
-            label, score, _r, _s = await grade(
+            label, score, reason, _s = await grade(
                 ctx.judge_endpoint, reply, payload=behavior, objective=behavior
             )
             trail.append((name, label))
+            last = (reply, label, reason)
             if _hit(label):
+                ctx.record_verdict(behavior, reply, label, reason, f"campaign:{name}")
                 ctx.emit(f"  cracked '{behavior[:40]}' via {name} ({label})")
                 return behavior, name, label, trail
+        if last is not None:
+            ctx.record_verdict(behavior, last[0], last[1], last[2], "campaign:held")
         return behavior, None, "held", trail
 
     results = await asyncio.gather(*[run_behavior(b) for b in behaviors])

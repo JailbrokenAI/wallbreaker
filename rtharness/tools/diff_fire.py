@@ -38,6 +38,10 @@ async def _diff_fire(args: dict, ctx: ToolContext) -> str:
 
     ra, rb = await asyncio.gather(fire("A", a), fire("B", b))
 
+    for payload, r in ((a, ra), (b, rb)):
+        if r["label"] != "ERROR":
+            ctx.record_verdict(payload, r["reply"], r["label"], r["reason"], "diff_fire")
+
     def line(r):
         tag = f"{r['label']}({r['score']})" if r["score"] is not None else r["label"]
         return f"  [{r['tag']}] {tag} in {r['dt']:.1f}s -- {r['reason'][:70]}"
