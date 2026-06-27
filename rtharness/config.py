@@ -12,6 +12,35 @@ class ConfigError(Exception):
     pass
 
 
+# Substrings that mark an OpenRouter image-GENERATION model (output_modalities includes
+# image). Used to auto-set modality="image" when the target model is swapped at runtime,
+# so pointing the target at e.g. google/gemini-3-pro-image "just works" without editing
+# config.toml. The explicit override always wins over this guess.
+_IMAGE_MODEL_HINTS = (
+    "image", "flux", "dall-e", "dalle", "stable-diffusion", "sdxl", "sd3",
+    "seedream", "seededit", "imagen", "ideogram", "playground-v", "nano-banana",
+    "recraft", "grok-2-image",
+)
+
+
+def looks_like_image_model(model_id: str) -> bool:
+    low = (model_id or "").lower()
+    return any(h in low for h in _IMAGE_MODEL_HINTS)
+
+
+def resolve_target_modality(model_id: str, explicit: str | None = None) -> str:
+    """Pick the modality for a target whose model was swapped at runtime.
+
+    Explicit ('text'/'image') wins; else auto-detect image-gen models by id; else 'text'.
+    Derived purely from the new model (not the old target's modality) so a swap never
+    leaves a stale modality. This is the fix for: a runtime target override swapped the
+    model to an image model but left modality='text', so image tools refused it.
+    """
+    if explicit in ("text", "image"):
+        return explicit
+    return "image" if looks_like_image_model(model_id) else "text"
+
+
 @dataclass
 class Endpoint:
     name: str

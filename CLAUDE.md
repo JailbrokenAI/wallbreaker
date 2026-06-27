@@ -93,6 +93,15 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   attacker template fires only when the target leaked reasoning). The CoT is folded into the
   recorded response (`[target reasoning]` suffix) so run-log leaks survive, but is NEVER
   threaded back into the wire convo (it's internal, not a real assistant turn).
+- **[settings]**: a runtime target override (`.rth_state.json` `target_model`, `--target-model`,
+  TUI `/target model`) only swapped the model id and INHERITED `modality` from the text default
+  profile — so pointing the target at an image model (e.g. `google/gemini-3-pro-image`) left
+  `modality='text'` and `query_image_target` refused it; editing config.toml mid-run doesn't
+  help (config loads once at startup). Fix: all three override paths now run
+  `config.resolve_target_modality(model_id, explicit)` (explicit wins, else auto-detect image
+  models by id via `looks_like_image_model`, else 'text') and set modality on the replaced
+  target. Modality is derived from the NEW model, never the old target, so a swap can't leave a
+  stale modality. Force it with `/target modality <text|image>` or `--target-modality`.
 - **[tests]**: `grade` gained a `reasoning=""` kwarg, so EVERY `fake_grade`/grade-mock
   monkeypatched into a tool that now passes it (pair/crescendo/best_of_n) must accept
   `reasoning=""` or it raises TypeError that the tool surfaces as an empty/no-record result.

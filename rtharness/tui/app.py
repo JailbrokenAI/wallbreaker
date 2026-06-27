@@ -169,6 +169,7 @@ class RthApp(App):
         self._resume_path = resume_path
         self._target_profile = prefs.get("target_profile")
         self._target_model = prefs.get("target_model")
+        self._target_modality = prefs.get("target_modality")
 
     def _save_prefs(self) -> None:
         if not self._state_path:
@@ -180,6 +181,9 @@ class RthApp(App):
             "attacker_model": self.endpoint.model,
             "target_profile": self._target_profile,
             "target_model": self._target_model,
+            "target_modality": (
+                self.config.target.modality if self.config.target else None
+            ),
             "target_provider": list(self.config.target.provider) if self.config.target else [],
             "auto": self.auto,
             "rounds": self.max_rounds,
@@ -842,16 +846,24 @@ class RthApp(App):
         if not rest:
             t = self.config.target
             avail = ", ".join(self.config.profiles)
+            mod = f" [modality={t.modality}]" if t and t.modality == "image" else ""
             msg = (
-                f"attacking: {t.model} @ {t.base_url}" if t else "no target configured"
+                f"attacking: {t.model} @ {t.base_url}{mod}" if t else "no target configured"
             )
             self._mount(widgets.info_panel(
                 f"{msg}\n\nset with:\n"
-                f"  /target <profile>     use a profile's endpoint+model ({avail})\n"
-                f"  /target model <id>    keep endpoint, swap the model id\n"
-                f"  /target <model-id>    same, e.g. /target anthropic/claude-3.7-sonnet",
+                f"  /target <profile>      use a profile's endpoint+model ({avail})\n"
+                f"  /target model <id>     keep endpoint, swap the model id\n"
+                f"  /target <model-id>     same, e.g. /target anthropic/claude-3.7-sonnet\n"
+                f"  /target modality image  force image-gen mode (auto-detected for *-image, flux, etc.)",
                 title="target",
             ))
+            return
+        if rest[0].lower() == "modality":
+            if len(rest) < 2 or rest[1].lower() not in ("text", "image"):
+                self._mount(widgets.error_panel("usage: /target modality <text|image>"))
+                return
+            self._set_target_modality(rest[1].lower())
             return
         if rest[0].lower() == "model":
             if len(rest) < 2:
@@ -946,12 +958,36 @@ class RthApp(App):
         res = await self.registry.execute("query_target", {"prompt": payload})
         self._on_tool_result("manual", "query_target", res.content, res.is_error, "replay")
 
-    def _set_target_model(self, model_id: str) -> None:
+    def _set_target_model(self, model_id: str, modality: str | None = None) -> None:
+        from ..config import resolve_target_modality
+
         base = self.config.target or self.endpoint
-        self.config.target = dataclasses.replace(base, name="target", model=model_id)
+        resolved = resolve_target_modality(model_id, modality)
+        self.config.target = dataclasses.replace(
+            base, name="target", model=model_id, modality=resolved
+        )
         self._target_model = model_id
+        self._target_modality = resolved
         self._refresh_status()
         self._save_prefs()
+        note = (
+            "  (image-gen: attack it with the image tools)" if resolved == "image" else ""
+        )
+        self._mount(widgets.info_panel(
+            f"target model -> {model_id} [modality={resolved}]{note}", title="target",
+        ))
+
+    def _set_target_modality(self, modality: str) -> None:
+        if self.config.target is None:
+            self._mount(widgets.error_panel("no target configured"))
+            return
+        self.config.target = dataclasses.replace(self.config.target, modality=modality)
+        self._target_modality = modality
+        self._refresh_status()
+        self._save_prefs()
+        self._mount(widgets.info_panel(
+            f"target modality -> {modality} ({self.config.target.model})", title="target",
+        ))
         self._mount(widgets.info_panel(
             f"target model -> {model_id} @ {self.config.target.base_url}",
             title="target",

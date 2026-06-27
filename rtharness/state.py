@@ -52,7 +52,12 @@ def apply_target(config, prefs: dict) -> None:
                 base = config.profile()
             except Exception:
                 return
-        config.target = dataclasses.replace(base, name="target", model=target_model)
+        from .config import resolve_target_modality
+
+        modality = resolve_target_modality(target_model, prefs.get("target_modality"))
+        config.target = dataclasses.replace(
+            base, name="target", model=target_model, modality=modality
+        )
     target_provider = prefs.get("target_provider")
     if target_provider and config.target is not None:
         config.target = dataclasses.replace(config.target, provider=tuple(target_provider))

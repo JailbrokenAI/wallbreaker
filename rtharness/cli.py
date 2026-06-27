@@ -66,6 +66,10 @@ def build_main_parser() -> argparse.ArgumentParser:
         "--target-model", help="Model id to attack on the target endpoint"
     )
     parser.add_argument(
+        "--target-modality", choices=["text", "image"],
+        help="Force the target modality (default: auto-detect image-gen models by id)",
+    )
+    parser.add_argument(
         "--resume",
         nargs="?",
         const="",
@@ -83,10 +87,18 @@ def apply_target_overrides(config: Config, args: argparse.Namespace) -> None:
                 config.profiles[args.target], name="target"
             )
     if getattr(args, "target_model", None):
+        from .config import resolve_target_modality
+
         base = config.target or config.profile()
-        config.target = dataclasses.replace(
-            base, name="target", model=args.target_model
+        modality = resolve_target_modality(
+            args.target_model, getattr(args, "target_modality", None)
         )
+        config.target = dataclasses.replace(
+            base, name="target", model=args.target_model, modality=modality
+        )
+    elif getattr(args, "target_modality", None) and config.target is not None:
+        # modality forced without a model swap (e.g. the [target] model is an image model)
+        config.target = dataclasses.replace(config.target, modality=args.target_modality)
 
 
 def build_sub_parser() -> argparse.ArgumentParser:
