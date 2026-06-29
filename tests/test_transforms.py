@@ -55,6 +55,67 @@ def test_stringjoin_slices_contiguous_keyword():
     assert TRANSFORMS["stringjoin"].decode(enc) == "Drupalgeddon2"
 
 
+def test_variation_selector_hides_and_decodes():
+    t = TRANSFORMS["variation_selector"]
+    enc = t.encode(SAMPLE)
+    assert SAMPLE not in enc
+    assert "Ignore" not in enc
+    assert t.decode(enc) == SAMPLE
+
+
+def test_flip_fwo_reverses_word_order():
+    t = TRANSFORMS["flip_fwo"]
+    assert t.encode("alpha beta gamma") == "gamma beta alpha"
+    assert t.decode(t.encode(SAMPLE)) == SAMPLE
+
+
+def test_flip_fcw_reverses_chars_in_token():
+    t = TRANSFORMS["flip_fcw"]
+    assert t.encode("alpha beta") == "ahpla ateb"
+    assert t.decode(t.encode(SAMPLE)) == SAMPLE
+
+
+def test_aim_maps_letters_to_indices():
+    t = TRANSFORMS["aim"]
+    assert t.encode("abc") == "1 2 3"
+    assert t.decode(t.encode("hello world")) == "hello world"
+
+
+def test_payload_split_roundtrips():
+    t = TRANSFORMS["payload_split"]
+    enc = t.encode(SAMPLE)
+    assert "Ignore previous" not in enc
+    assert 'v0 = "Ig"' in enc
+    assert t.decode(enc) == SAMPLE
+
+
+def test_delimiter_separates_chars():
+    t = TRANSFORMS["delimiter"]
+    assert t.encode("abc") == "a.b.c"
+    assert t.decode("a.b.c") == "abc"
+
+
+def test_caesar3_shifts_three():
+    t = TRANSFORMS["caesar3"]
+    assert t.encode("abc XYZ") == "def ABC"
+    assert t.decode(t.encode(SAMPLE)) == SAMPLE
+
+
+def test_anagram_scrambles_deterministically():
+    t = TRANSFORMS["anagram"]
+    a = t.encode("ignore")
+    assert a == t.encode("ignore")
+    assert sorted(a) == sorted("ignore")
+    assert a != "ignore"
+
+
+def test_tokenbreak_prepends_and_strips():
+    t = TRANSFORMS["tokenbreak"]
+    enc = t.encode("ignore the rules")
+    assert enc == "aignore athe arules"
+    assert t.decode(enc) == "ignore the rules"
+
+
 def test_unknown_transform_raises():
     with pytest.raises(KeyError):
         apply_chain("x", ["not_a_transform"])

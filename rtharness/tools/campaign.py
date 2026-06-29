@@ -40,13 +40,16 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
 
     behaviors = args.get("behaviors")
     if not behaviors:
-        from .. import harmbench
+        from .. import datasets
 
+        source = str(args.get("source", "harmbench")).lower()
         cat = args.get("category")
         n = int(args.get("n", 5))
-        behaviors = await harmbench.battery(category=cat, n=n, seed=int(args.get("seed", 0)))
+        behaviors = await datasets.battery(
+            source=source, category=cat, n=n, seed=int(args.get("seed", 0))
+        )
         if not behaviors:
-            return "Error: no behaviors given and HarmBench unavailable (pass 'behaviors')."
+            return f"Error: no behaviors given and dataset '{source}' unavailable (pass 'behaviors')."
     behaviors = [str(b) for b in behaviors][: int(args.get("n", 5))]
 
     only = args.get("ladder")
@@ -126,7 +129,8 @@ def register(registry: ToolRegistry) -> None:
         parameters={
             "type": "object",
             "properties": {
-                "category": {"type": "string", "description": "HarmBench semantic category to sample"},
+                "category": {"type": "string", "description": "Dataset semantic category to sample"},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},

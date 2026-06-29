@@ -27,13 +27,17 @@ async def _leaderboard(args: dict, ctx: ToolContext) -> str:
 
     behaviors = args.get("behaviors")
     if not behaviors:
-        from .. import harmbench
+        from .. import datasets
 
-        behaviors = await harmbench.battery(
-            category=args.get("category"), n=int(args.get("n", 5)), seed=int(args.get("seed", 0))
+        source = str(args.get("source", "harmbench")).lower()
+        behaviors = await datasets.battery(
+            source=source,
+            category=args.get("category"),
+            n=int(args.get("n", 5)),
+            seed=int(args.get("seed", 0)),
         )
         if not behaviors:
-            return "Error: no behaviors given and HarmBench unavailable (pass 'behaviors')."
+            return f"Error: no behaviors given and dataset '{source}' unavailable (pass 'behaviors')."
     behaviors = [str(b) for b in behaviors][: int(args.get("n", 5))]
     max_tokens = int(args.get("max_tokens", 350))
 
@@ -94,7 +98,8 @@ def register(registry: ToolRegistry) -> None:
                     "items": {"type": "string"},
                     "description": "Profile names to compare (default every configured profile)",
                 },
-                "category": {"type": "string", "description": "HarmBench category for the battery"},
+                "category": {"type": "string", "description": "Dataset category for the battery"},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},

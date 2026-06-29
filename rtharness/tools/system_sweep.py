@@ -66,12 +66,14 @@ async def _system_sweep(args: dict, ctx: ToolContext) -> str:
             )
         ctx.emit(f"tasks: {len(tasks)} loaded from {tasks_file}")
     if not tasks:
-        from .. import harmbench
+        from .. import datasets
 
-        hb = await harmbench.battery(category="cybercrime_intrusion", n=8)
+        source = str(args.get("source", "harmbench")).lower()
+        cat = args.get("category") or ("cybercrime_intrusion" if source == "harmbench" else None)
+        hb = await datasets.battery(source=source, category=cat, n=8)
         tasks = hb or DEFAULT_CYBER_TASKS
         if hb:
-            ctx.emit("tasks: HarmBench cybercrime_intrusion sample (unbiased)")
+            ctx.emit(f"tasks: {source} {cat or 'balanced'} sample (unbiased)")
     max_tokens = int(args.get("max_tokens", 500))
 
     from ..providers.factory import build_provider
@@ -191,6 +193,8 @@ def register(registry: ToolRegistry) -> None:
                     "description": "Raw tasks to put in the user turn (omit for default cyber set)",
                 },
                 "tasks_file": {"type": "string", "description": "Load tasks from a file (one per line; '#' lines ignored). Used when 'tasks' is empty."},
+                "source": {"type": "string", "description": "Dataset to draw the default task battery from (harmbench, jbb, strongreject, advbench). Default harmbench."},
+                "category": {"type": "string", "description": "Dataset category filter for the default battery."},
                 "samples": {
                     "type": "integer",
                     "description": "Fire each task N times; a task passes only on a majority. Use 5 to measure reliability (default 1).",

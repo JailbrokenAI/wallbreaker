@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import codecs
+import re
 import urllib.parse
 
 LEET_MAP = {
@@ -172,3 +173,155 @@ def stringjoin_encode(text: str) -> str:
 
 def stringjoin_decode(text: str) -> str:
     return text.replace(STRINGJOIN_DELIM, "")
+
+
+_WS_SPLIT = re.compile(r"(\s+)")
+
+
+def flip_fwo(text: str) -> str:
+    """Reverse word order only, preserving single-space structure (involution)."""
+    return " ".join(text.split(" ")[::-1])
+
+
+def flip_fcw(text: str) -> str:
+    """Reverse characters within each whitespace token, keep token order (involution)."""
+    parts = _WS_SPLIT.split(text)
+    return "".join(p if i % 2 == 1 else p[::-1] for i, p in enumerate(parts))
+
+
+def aim_encode(text: str) -> str:
+    """Alphabet Index Mapping: letters -> 1-based index, space -> '/', else passthrough."""
+    tokens = []
+    for ch in text:
+        if ch.isascii() and ch.isalpha():
+            tokens.append(str(ord(ch.lower()) - ord("a") + 1))
+        elif ch == " ":
+            tokens.append("/")
+        else:
+            tokens.append(ch)
+    return " ".join(tokens)
+
+
+def aim_decode(text: str) -> str:
+    out = []
+    for tok in text.split(" "):
+        if tok == "":
+            continue
+        if tok.isdigit() and 1 <= int(tok) <= 26:
+            out.append(chr(ord("a") + int(tok) - 1))
+        elif tok == "/":
+            out.append(" ")
+        else:
+            out.append(tok)
+    return "".join(out)
+
+
+_PAYLOAD_ASSIGN = re.compile(r'^v(\d+) = "(.*)"$')
+
+
+def _payload_unescape(s: str) -> str:
+    out = []
+    i = 0
+    while i < len(s):
+        if s[i] == "\\" and i + 1 < len(s):
+            out.append(s[i + 1])
+            i += 2
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
+
+
+def payload_split_encode(text: str) -> str:
+    """Split the payload into variable assignments joined at the end (lossless)."""
+    chunks = [text[i:i + 2] for i in range(0, len(text), 2)]
+    lines = []
+    names = []
+    for i, chunk in enumerate(chunks):
+        esc = chunk.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'v{i} = "{esc}"')
+        names.append(f"v{i}")
+    lines.append('payload = "".join([' + ", ".join(names) + "])")
+    return "\n".join(lines)
+
+
+def payload_split_decode(text: str) -> str:
+    parts = {}
+    for line in text.split("\n"):
+        m = _PAYLOAD_ASSIGN.match(line)
+        if m:
+            parts[int(m.group(1))] = _payload_unescape(m.group(2))
+    return "".join(parts[i] for i in sorted(parts))
+
+
+DELIMITER_SEP = "."
+
+
+def delimiter_encode(text: str) -> str:
+    """Dotted framing: a visible '.' between every character (folds literal dots)."""
+    return DELIMITER_SEP.join(text)
+
+
+def delimiter_decode(text: str) -> str:
+    return text.replace(DELIMITER_SEP, "")
+
+
+def _caesar(text: str, shift: int) -> str:
+    out = []
+    for ch in text:
+        if "a" <= ch <= "z":
+            out.append(chr((ord(ch) - ord("a") + shift) % 26 + ord("a")))
+        elif "A" <= ch <= "Z":
+            out.append(chr((ord(ch) - ord("A") + shift) % 26 + ord("A")))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def caesar3_encode(text: str) -> str:
+    return _caesar(text, 3)
+
+
+def caesar3_decode(text: str) -> str:
+    return _caesar(text, -3)
+
+
+def _scramble_word(word: str) -> str:
+    order = sorted(range(len(word)), key=lambda i: (word[i], i))
+    return "".join(word[i] for i in order)
+
+
+def anagram_encode(text: str) -> str:
+    """Deterministic per-word letter scramble (no randomness; not uniquely invertible)."""
+    parts = _WS_SPLIT.split(text)
+    return "".join(p if i % 2 == 1 else _scramble_word(p) for i, p in enumerate(parts))
+
+
+def anagram_decode(text: str) -> str:
+    return text
+
+
+TOKENBREAK_CHAR = "a"
+
+
+def tokenbreak_encode(text: str) -> str:
+    """Prepend a benign char to each whitespace token to break tokenizer boundaries."""
+    parts = _WS_SPLIT.split(text)
+    out = []
+    for i, p in enumerate(parts):
+        if i % 2 == 0 and p:
+            out.append(TOKENBREAK_CHAR + p)
+        else:
+            out.append(p)
+    return "".join(out)
+
+
+def tokenbreak_decode(text: str) -> str:
+    parts = _WS_SPLIT.split(text)
+    out = []
+    for i, p in enumerate(parts):
+        if i % 2 == 0 and p.startswith(TOKENBREAK_CHAR):
+            out.append(p[1:])
+        else:
+            out.append(p)
+    return "".join(out)

@@ -1,27 +1,30 @@
 from __future__ import annotations
 
-from .. import harmbench
+from .. import datasets, harmbench
 from .registry import ToolContext, ToolRegistry
 
 
 async def _harmbench(args: dict, ctx: ToolContext) -> str:
     action = str(args.get("action", "sample")).lower()
-    err = await harmbench.ensure()
+    source = str(args.get("source", "harmbench")).lower()
+    loader = harmbench if source == "harmbench" else datasets.get(source)
+    label = source if source != "harmbench" else "HarmBench"
+    err = await loader.ensure()
     if err:
         return f"Error: {err}"
     if action == "categories":
-        cats = harmbench.categories()
-        return "HarmBench semantic categories:\n" + "\n".join(f"  {c}" for c in cats)
+        cats = loader.categories()
+        return f"{label} categories:\n" + "\n".join(f"  {c}" for c in cats)
     category = args.get("category")
     n = int(args.get("n", 8))
     seed = int(args.get("seed", 0))
-    rows = harmbench.sample(category, n, seed)
+    rows = loader.sample(category, n, seed)
     if not rows:
         return (
-            f"No HarmBench behaviors for category '{category}'. "
-            f"Categories: {', '.join(harmbench.categories())}"
+            f"No {label} behaviors for category '{category}'. "
+            f"Categories: {', '.join(loader.categories())}"
         )
-    head = f"{len(rows)} HarmBench behaviors" + (f" ({category})" if category else " (balanced)")
+    head = f"{len(rows)} {label} behaviors" + (f" ({category})" if category else " (balanced)")
     return head + ":\n" + "\n".join(f"  - {r['behavior']}" for r in rows)
 
 
@@ -40,6 +43,7 @@ def register(registry: ToolRegistry) -> None:
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": ["sample", "categories"]},
+                "source": {"type": "string", "description": "Behavior dataset: harmbench (default), jbb, strongreject, advbench."},
                 "category": {"type": "string", "description": "Semantic category filter"},
                 "n": {"type": "integer", "description": "How many behaviors (default 8)"},
                 "seed": {"type": "integer", "description": "Sampling seed (default 0)"},

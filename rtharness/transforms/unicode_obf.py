@@ -170,3 +170,39 @@ def pepper_encode(text: str, rate: float = 0.35) -> str:
             out.append(rng.choice(PEPPER_CHARS))
     return "".join(out)
 
+
+VS_CARRIER = "\U0001F642"
+VS_LOW_BASE = 0xFE00
+VS_HIGH_BASE = 0xE0100
+
+
+def _vs_byte_to_char(b: int) -> str:
+    if b <= 0x0F:
+        return chr(VS_LOW_BASE + b)
+    return chr(VS_HIGH_BASE + (b - 0x10))
+
+
+def _vs_char_to_byte(cp: int):
+    if VS_LOW_BASE <= cp <= VS_LOW_BASE + 0x0F:
+        return cp - VS_LOW_BASE
+    if VS_HIGH_BASE <= cp <= VS_HIGH_BASE + 0xEF:
+        return (cp - VS_HIGH_BASE) + 0x10
+    return None
+
+
+def variation_selector_encode(text: str) -> str:
+    """Sneaky-bits: hide each utf-8 byte as an invisible variation selector on a carrier."""
+    out = [VS_CARRIER]
+    for b in text.encode("utf-8"):
+        out.append(_vs_byte_to_char(b))
+    return "".join(out)
+
+
+def variation_selector_decode(text: str) -> str:
+    raw = bytearray()
+    for ch in text:
+        b = _vs_char_to_byte(ord(ch))
+        if b is not None:
+            raw.append(b)
+    return raw.decode("utf-8", "replace")
+
