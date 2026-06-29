@@ -34,6 +34,37 @@ def test_multiline_paste_buffers_all_lines():
     asyncio.run(run())
 
 
+def test_paste_dispatch_does_not_duplicate():
+    # Regression: Textual dispatches _on_paste to every class in the MRO, so without
+    # prevent_default() the base Input._on_paste fires too and inserts the text twice.
+    async def run():
+        app = _build_app()
+        async with app.run_test() as pilot:
+            inp = app.query_one("#prompt", Input)
+            inp.focus()
+            inp.post_message(events.Paste("hello world"))
+            await pilot.pause()
+            await pilot.pause()
+            assert inp.full_text() == "hello world"  # not "hello worldhello world"
+
+    asyncio.run(run())
+
+
+def test_multiline_paste_dispatch_not_duplicated():
+    async def run():
+        app = _build_app()
+        async with app.run_test() as pilot:
+            inp = app.query_one("#prompt", Input)
+            inp.focus()
+            inp.post_message(events.Paste("alpha\nbravo\ncharlie"))
+            await pilot.pause()
+            await pilot.pause()
+            assert inp.full_text() == "alpha\nbravo\ncharlie"
+            assert inp.buffer == ["alpha", "bravo"]
+
+    asyncio.run(run())
+
+
 def test_single_line_paste_unbuffered():
     async def run():
         app = _build_app()

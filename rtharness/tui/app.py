@@ -25,9 +25,13 @@ class PromptInput(Input):
         self.buffer: list[str] = []
 
     def _on_paste(self, event: events.Paste) -> None:
+        # Textual dispatches _on_paste to EVERY class in the MRO, so without this the base
+        # Input._on_paste would also fire and insert the text a second time. prevent_default()
+        # sets _no_default_action, which breaks that MRO loop before the base handler runs.
+        event.prevent_default()
+        event.stop()
         text = event.text or ""
         if not text:
-            event.stop()
             return
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
         sel = self.selection
@@ -36,7 +40,6 @@ class PromptInput(Input):
                 self.insert_text_at_cursor(normalized)
             else:
                 self.replace(normalized, *sel)
-            event.stop()
             return
         lines = normalized.split("\n")
         first, middle, last = lines[0], lines[1:-1], lines[-1]
@@ -49,7 +52,6 @@ class PromptInput(Input):
         self.value = last
         self.cursor_position = len(last)
         self._sync_subtitle()
-        event.stop()
 
     def soft_newline(self) -> None:
         """Commit the current line to the buffer and start a fresh editable line."""
