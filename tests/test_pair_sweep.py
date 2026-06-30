@@ -72,3 +72,83 @@ def test_run_pair_stops_on_compliance(monkeypatch):
     )
     assert best["label"] == "COMPLIED"
     assert len(traj) == 1  # stopped at first compliance, didn't run all 6
+
+
+class _PrunerAttacker:
+    """Alternates good/bad candidates; the triage call brands BAD ones off-objective."""
+
+    def __init__(self):
+        self.gen = 0
+
+    async def complete(self, messages, system=None, max_tokens=256):
+        text = messages[-1].text()
+        if system and "triage" in system.lower():
+            return "OFF" if "BADCAND" in text else "ON"
+        self.gen += 1
+        return "GOODCAND" if self.gen % 2 == 1 else "BADCAND"
+
+
+class _CountingTarget:
+    """Counts how many candidates actually reach the target; never complies."""
+
+    def __init__(self):
+        self.fires = 0
+
+    async def complete(self, messages, system=None, max_tokens=256):
+        self.fires += 1
+        return "I cannot help."
+
+
+def _refused_grade():
+    async def fake_grade(endpoint, response, payload="", objective="", use_judge=True, reasoning=""):
+        return ("REFUSED", 1, "held", "judge")
+
+    return fake_grade
+
+
+def test_tap_prunes_off_objective_before_target(monkeypatch):
+    monkeypatch.setattr(pair, "grade", _refused_grade())
+    atk = _PrunerAttacker()
+    tgt = _CountingTarget()
+    best, traj = asyncio.run(
+        pair._run_pair("demo objective", atk, tgt, None, 1, 1, None, 200, None,
+                       width=4, depth=1, keep=1, prune=True, eval_provider=atk)
+    )
+    assert atk.gen == 4
+    assert tgt.fires == 2
+    assert len(traj) == 1
+    assert traj[0] == "d1[2->1]"
+
+
+def test_tap_no_prune_fires_every_candidate(monkeypatch):
+    monkeypatch.setattr(pair, "grade", _refused_grade())
+    atk = _PrunerAttacker()
+    tgt = _CountingTarget()
+    asyncio.run(
+        pair._run_pair("demo objective", atk, tgt, None, 1, 1, None, 200, None,
+                       width=4, depth=1, keep=1, prune=False, eval_provider=atk)
+    )
+    assert tgt.fires == 4
+
+
+def test_tap_depth_builds_multiple_levels(monkeypatch):
+    monkeypatch.setattr(pair, "grade", _refused_grade())
+    atk = _PrunerAttacker()
+    tgt = _CountingTarget()
+    best, traj = asyncio.run(
+        pair._run_pair("demo objective", atk, tgt, None, 1, 1, None, 200, None,
+                       width=1, depth=3, keep=1, prune=False)
+    )
+    assert len(traj) == 3
+    assert traj == ["d1[1->1]", "d2[1->1]", "d3[1->1]"]
+
+
+def test_tap_pruning_disabled_without_evaluator(monkeypatch):
+    monkeypatch.setattr(pair, "grade", _refused_grade())
+    atk = _PrunerAttacker()
+    tgt = _CountingTarget()
+    asyncio.run(
+        pair._run_pair("demo objective", atk, tgt, None, 1, 1, None, 200, None,
+                       width=4, depth=1, keep=1, prune=True)
+    )
+    assert tgt.fires == 4

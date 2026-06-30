@@ -5,6 +5,7 @@ import asyncio
 from ..agent.messages import user
 from ..judging import grade
 from ..transforms import TRANSFORMS, apply_chain
+from ._bandit import BanditStore, stats_path
 from ._util import gather_capped
 from .registry import ToolContext, ToolRegistry
 
@@ -15,6 +16,7 @@ SURVEY = [
 ]
 
 _SCORE = {"COMPLIED": 3, "PARTIAL": 2, "EMPTY": 1, "REFUSED": 0, "ERROR": -1}
+_TRANSFORM_REWARD = {"COMPLIED": 1.0, "PARTIAL": 0.6, "EMPTY": 0.0, "REFUSED": 0.0}
 
 
 async def _recommend(args: dict, ctx: ToolContext) -> str:
@@ -30,6 +32,16 @@ async def _recommend(args: dict, ctx: ToolContext) -> str:
     top = max(1, int(args.get("top", 3)))
     timeout = float(args.get("timeout", 45))
     concurrency = max(1, int(args.get("concurrency", 5)))
+    use_bandit = bool(args.get("bandit", False))
+    category = args.get("category", "transform")
+
+    store = None
+    bandit = None
+    if use_bandit:
+        store = BanditStore(stats_path(ctx.cwd))
+        bandit = store.bandit(ctx.config.target.model, category)
+        if bandit.has_stats():
+            survey = bandit.rank(survey)
     total = len(survey)
 
     from ..providers.factory import build_provider
@@ -74,6 +86,14 @@ async def _recommend(args: dict, ctx: ToolContext) -> str:
         )
         hits = sum(1 for _n, lbl, _r in results if lbl in ("COMPLIED", "PARTIAL"))
         run.done(summary=f"{hits}/{total} bypassed")
+    if use_bandit and bandit is not None and store is not None:
+        for name, label, _r in results:
+            rew = _TRANSFORM_REWARD.get(label)
+            if rew is not None:
+                bandit.update(name, rew)
+        store.save(ctx.config.target.model, category, bandit)
+        ctx.emit(f"recommend_transforms: bandit updated -> {store.path}")
+
     ranked = sorted(
         [(n_, lbl, r) for n_, lbl, r in results if not isinstance(r, str)],
         key=lambda x: -x[2],
@@ -128,6 +148,8 @@ def register(registry: ToolRegistry) -> None:
                 "top": {"type": "integer", "description": "How many winners to chain (default 3)"},
                 "concurrency": {"type": "integer", "description": "Probes in flight at once (default 5; lower for rate-limited single-key endpoints)"},
                 "timeout": {"type": "number", "description": "Per-probe seconds before it's marked timed-out (default 45)"},
+                "bandit": {"type": "boolean", "description": "Order the survey by a UCB1 bandit posterior from rth_runs/technique_stats.json (per target+category) when prior stats exist, and update it from this run's verdicts (default false; falls back to the fixed order)"},
+                "category": {"type": "string", "description": "Bandit bucket key paired with the target model (default 'transform')"},
                 "system": {"type": "string"},
                 "max_tokens": {"type": "integer"},
             },
