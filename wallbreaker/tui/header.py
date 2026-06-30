@@ -39,18 +39,24 @@ class StatusHeader(Static):
     def render(self) -> Text:
         f = self.fields
         busy = self.has_class("busy")
+        sep = Text("  │  ", style=PALETTE["muted"])
         out = Text(no_wrap=True, overflow="ellipsis")
+        out.append("◆ ", style=f"bold {PALETTE['brand']}")
         if busy:
-            out.append(f" {SPINNER[self._frame]} WORKING ", style="bold")
+            out.append(f"{SPINNER[self._frame]} working", style=f"bold {PALETTE['accent']}")
         else:
-            out.append(" idle ", style=f"bold {PALETTE['label']}")
+            out.append("ready", style=f"bold {PALETTE['assistant']}")
+        out.append_text(sep.copy())
         if f.get("round"):
             out.append(f"r{f['round']} ", style=f"bold {PALETTE['secondary']}")
         out.append(f"{f.get('profile', '')}", style=PALETTE["user"])
-        out.append(" > ", style=PALETTE["label"])
-        out.append(f"{f.get('target', 'none')}  ", style=PALETTE["accent"])
-        out.append(f"{f.get('mode', '')}  ", style=PALETTE["label"])
+        out.append(" ▸ ", style=PALETTE["muted"])
+        out.append(f"{f.get('target', 'none')}", style=f"bold {PALETTE['accent']}")
+        out.append_text(sep.copy())
+        out.append(f"{f.get('mode', '')}", style=PALETTE["label"])
+        out.append_text(sep.copy())
         out.append("ASR ", style=PALETTE["label"])
-        out.append(f"{f.get('asr', '0/0')}  ", style="bold")
-        out.append(f"{f.get('tokens', '')}tok", style=PALETTE["label"])
+        out.append(f"{f.get('asr', '0/0')}", style=f"bold {PALETTE['assistant']}")
+        out.append_text(sep.copy())
+        out.append(f"{f.get('tokens', '')} tok", style=PALETTE["label"])
         return out

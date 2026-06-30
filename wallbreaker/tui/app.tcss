@@ -1,18 +1,21 @@
 Screen {
     background: $background;
+    color: $text;
 }
 
 #header {
     height: 1;
     dock: top;
-    background: $panel;
+    background: $surface;
     color: $text;
     padding: 0 1;
+    border-bottom: hkey $primary;
 }
 
 #header.busy {
-    background: $warning;
-    color: $surface;
+    background: $warning 12%;
+    color: $text;
+    border-bottom: hkey $warning;
 }
 
 #body {
@@ -21,16 +24,24 @@ Screen {
 
 #log {
     width: 1fr;
-    padding: 0 1;
+    padding: 0 2;
+    background: $background;
     scrollbar-size-vertical: 1;
+    scrollbar-background: $surface;
+    scrollbar-background-hover: $surface;
+    scrollbar-background-active: $surface;
+    scrollbar-color: $panel;
+    scrollbar-color-hover: $primary;
+    scrollbar-color-active: $accent;
 }
 
 #sidebar {
-    width: 34;
-    min-width: 24;
-    background: $panel;
+    width: 36;
+    min-width: 26;
+    background: $surface;
     border-left: vkey $primary;
-    padding: 1 1;
+    padding: 1 2;
+    color: $text;
 }
 
 #sidebar.hidden {
@@ -39,10 +50,13 @@ Screen {
 
 #prompt {
     dock: bottom;
-    border: tall $primary;
+    border: round $primary;
     background: $surface;
+    padding: 0 1;
+    margin: 0 1 1 1;
 }
 
 #prompt:focus {
-    border: tall $accent;
+    border: round $accent;
+    background: $panel;
 }

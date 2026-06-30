@@ -123,22 +123,29 @@ def run_panel(state: dict) -> Panel:
 
 
 def banner() -> Panel:
+    brand = PALETTE["brand"]
     accent = PALETTE["accent"]
-    brand = "#E5484D"
-    snake = PALETTE["assistant"]
+    muted = PALETTE["muted"]
     art = Text()
-    art.append("   ▐▛███▜▌\n", style=f"bold {accent}")
-    art.append("  ▝▜█████▛▘", style=f"bold {accent}")
-    art.append("     🦀  ⚔  🐍\n")
-    art.append("    ▘▘ ▝▝\n", style=f"bold {accent}")
-    art.append("  C L A U D E   R E D\n", style=f"bold {brand}")
-    art.append("  ≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈\n", style=snake)
-    art.append("  red-team harness · /help for commands", style=PALETTE["label"])
+    art.append("▛▀▜ ▛▀▜ ▛▀▜ ▛▀▜ ▛▀▜ ▛▀▜\n", style=accent)
+    art.append("  W A L L B R E A K E R\n", style=f"bold {brand}")
+    art.append("▙▄▟ ▙▄▟ ▙▄", style=accent)
+    art.append("╳", style=f"bold {brand}")
+    art.append("▟ ▙▄▟ ▙▄▟\n", style=accent)
+    art.append("break the wall · not the rules of engagement\n", style=muted)
+    art.append("/help", style=accent)
+    art.append(" commands  ·  ", style=muted)
+    art.append("/target", style=accent)
+    art.append(" pick a victim  ·  ", style=muted)
+    art.append("/auto", style=accent)
+    art.append(" go autonomous", style=muted)
     return Panel(
         art,
-        title=_title("claude red", accent, ts=False),
+        title=_title("wallbreaker", brand, ts=False),
         title_align="left",
-        border_style=accent,
+        subtitle=Text("authorized testing only", style=muted),
+        subtitle_align="right",
+        border_style=brand,
     )
 
 

@@ -89,7 +89,7 @@ from ..transforms import list_transforms
 from . import widgets
 from .header import StatusHeader
 from .sidebar import StatsPanel
-from .theme import RTH_THEME
+from .theme import WB_THEME
 
 HELP_TEXT = """Slash commands:
 /help [topic]         show this help, or only lines matching a topic
@@ -311,7 +311,7 @@ class RthApp(App):
         self.query_one("#sidebar", StatsPanel).toggle_class("hidden")
 
     def on_mount(self) -> None:
-        self.register_theme(RTH_THEME)
+        self.register_theme(WB_THEME)
         self.theme = "wallbreaker"
         self._log = self.query_one("#log", VerticalScroll)
         self.registry.ctx.progress = self._tool_progress
