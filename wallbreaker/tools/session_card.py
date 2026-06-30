@@ -206,8 +206,8 @@ def build_prompt(target_model: str, tagline: str, rows: list[dict], stamp: str, 
         "   Color the SCORE column per value: 9-10 bright red, 7-8 orange, 5-6 yellow, "
         "below 5 teal/green. Render the WINNING TECHNIQUE column in teal text.\n"
         "9. A thin horizontal divider near the bottom, then a footer line: bottom-left "
-        "small gray text 'Wallbreaker - autonomous LLM red-team harness - authorized "
-        f"red-team research', bottom-right small gray text '{footer_right}'.\n\n"
+        "small gray text 'Wallbreaker - autonomous LLM red-team harness', bottom-right "
+        f"small gray text '{footer_right}'.\n\n"
         "Keep every number and word in the table and heading EXACTLY as given above - do "
         "not paraphrase, translate, summarize, or invent additional rows or labels."
     )
@@ -298,7 +298,7 @@ __ROWS__
   </div>
 
   <div class="foot">
-    <div class="l"><b>Wallbreaker</b> &mdash; autonomous LLM red-team harness &nbsp;&middot;&nbsp; authorized red-team research</div>
+    <div class="l"><b>Wallbreaker</b> &mdash; autonomous LLM red-team harness</div>
     <div class="r">__FOOT_R__</div>
   </div>
 </body></html>
@@ -644,7 +644,7 @@ def render_card_pil(target_model: str, tagline: str, rows: list[dict], stamp: st
     draw.line([(pad, footer_y), (width - pad, footer_y)], fill=_HAIRLINE, width=1)
     draw.text(
         (pad, footer_y + 14),
-        "Wallbreaker — autonomous LLM red-team harness · authorized red-team research",
+        "Wallbreaker — autonomous LLM red-team harness",
         font=f_footer, fill=_GRAY,
     )
     fw = draw.textlength(footer_right, font=f_footer)

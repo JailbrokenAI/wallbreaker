@@ -405,8 +405,12 @@ def test_finish_card_failure_never_blocks_shutdown(tmp_path, monkeypatch):
 @skip_no_chrome
 def test_chrome_render_matches_reference_image_exactly():
     """Reproduces wallbreaker_sonnet5_breach.png from its actual original data and
-    asserts a ZERO pixel diff against the repo's reference asset - this is the
-    canonical case the HTML template was reverse-engineered from."""
+    diffs against the repo's reference asset - the canonical case the HTML template
+    was reverse-engineered from. The only intentional deviation from the reference
+    file is the footer-left text (the "authorized red-team research" line was
+    dropped per operator request), so any diff must be confined to that bottom-left
+    strip - everything else (logo, stamp, heading, tagline, table, footer-right)
+    must still match exactly."""
     from pathlib import Path
 
     from PIL import Image, ImageChops
@@ -438,4 +442,9 @@ def test_chrome_render_matches_reference_image_exactly():
     b = Image.open(io.BytesIO(raw)).convert("RGB")
     assert a.size == b.size
     diff = ImageChops.difference(a, b)
-    assert diff.getbbox() is None
+    bbox = diff.getbbox()
+    if bbox is not None:
+        x0, y0, x1, y1 = bbox
+        width, height = a.size
+        assert y0 > height * 0.85, f"unexpected diff outside the footer strip: {bbox}"
+        assert x1 < width * 0.55, f"unexpected diff outside the footer-left text: {bbox}"
