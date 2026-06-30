@@ -16,8 +16,14 @@ const NAV: { id: Tab; label: string }[] = [
   { id: "arsenal", label: "Arsenal" },
 ];
 
+function tabFromHash(): Tab {
+  const h = window.location.hash.replace("#", "");
+  return (NAV.some((n) => n.id === h) ? h : "overview") as Tab;
+}
+
 export function App() {
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTabState] = useState<Tab>(tabFromHash());
+  const setTab = (t: Tab) => { setTabState(t); window.location.hash = t; };
   const [cfg, setCfg] = useState<ConfigInfo | null>(null);
   const [ov, setOv] = useState<OverviewT | null>(null);
 

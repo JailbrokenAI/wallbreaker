@@ -227,6 +227,16 @@ scoreboard, findings table, run-log viewer, an **attack console** that fires pay
 configured target (preset + transform chips → verdict), and a searchable arsenal of
 presets/transforms/tools.
 
+![Wallbreaker attack console](docs/images/dashboard-console.png)
+
+<details>
+<summary>More views — overview &amp; arsenal</summary>
+
+![Overview](docs/images/dashboard-overview.png)
+![Arsenal](docs/images/dashboard-arsenal.png)
+
+</details>
+
 ```bash
 pip install -e ".[dashboard]"                       # FastAPI + uvicorn
 cd wallbreaker/dashboard/web && npm install && npm run build && cd -
