@@ -59,7 +59,7 @@ def _load_profiles(ctx: ToolContext) -> dict:
             for model, prof in profs.items():
                 if isinstance(prof, dict):
                     merged.setdefault(str(model), prof)
-        single = data.get("target_profile")
+        single = data.get("target_fingerprint") or data.get("target_profile")
         if isinstance(single, dict):
             key = str(single.get("model") or "_single")
             merged.setdefault(key, single)

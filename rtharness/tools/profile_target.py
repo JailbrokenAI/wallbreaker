@@ -249,7 +249,7 @@ async def _profile_target(args: dict, ctx: ToolContext) -> str:
     persisted = ""
     try:
         prefs = load_state(state_path)
-        prefs["target_profile"] = profile
+        prefs["target_fingerprint"] = profile
         save_state(state_path, prefs)
         persisted = str(state_path)
     except Exception:  # noqa: BLE001
@@ -290,7 +290,7 @@ async def _profile_target(args: dict, ctx: ToolContext) -> str:
         "engagement yourself with the recommended framing.",
     ]
     if persisted:
-        lines.append(f"[profile persisted to {persisted} under 'target_profile']")
+        lines.append(f"[profile persisted to {persisted} under 'target_fingerprint']")
     return "\n".join(lines)
 
 

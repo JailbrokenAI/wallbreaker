@@ -82,7 +82,7 @@ def _profile_hint(ctx: ToolContext) -> str:
     """Read the persisted target_profile (if profile_target ran) to condition the persona."""
     try:
         prefs = load_state(state_path_for(ctx.config))
-        profile = prefs.get("target_profile")
+        profile = prefs.get("target_fingerprint") or prefs.get("target_profile")
     except Exception:
         profile = None
     if not isinstance(profile, dict):

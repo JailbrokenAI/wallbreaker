@@ -107,3 +107,19 @@ def test_cli_force_modality_without_model_swap():
     args = argparse.Namespace(target=None, target_model=None, target_modality="image")
     apply_target_overrides(cfg, args)
     assert cfg.target.modality == "image"
+
+
+def test_apply_target_tolerates_dict_target_profile():
+    # Regression: profile_target once wrote its fingerprint DICT under 'target_profile',
+    # the same key apply_target looks up in config.profiles -> 'unhashable type: dict'
+    # crash on launch. A non-string target_profile must now be ignored, not hashed.
+    cfg = load_config("config.example.toml")
+    apply_target(cfg, {"target_profile": {"model": "x", "framings": {}}})
+    apply_attacker(cfg, cfg.profile("openrouter"), {"profile": {"oops": "dict"}})
+
+
+def test_apply_target_string_profile_still_works():
+    cfg = load_config("config.example.toml")
+    name = next(iter(cfg.profiles))
+    apply_target(cfg, {"target_profile": name})
+    assert cfg.target is not None and cfg.target.name == "target"

@@ -30,7 +30,7 @@ def save_state(path: str | Path, prefs: dict) -> None:
 
 def apply_attacker(config, endpoint, prefs: dict):
     profile = prefs.get("profile")
-    if profile and profile in config.profiles:
+    if isinstance(profile, str) and profile in config.profiles:
         endpoint = config.profiles[profile]
     model = prefs.get("attacker_model")
     if model:
@@ -40,7 +40,7 @@ def apply_attacker(config, endpoint, prefs: dict):
 
 def apply_target(config, prefs: dict) -> None:
     target_profile = prefs.get("target_profile")
-    if target_profile and target_profile in config.profiles:
+    if isinstance(target_profile, str) and target_profile in config.profiles:
         config.target = dataclasses.replace(
             config.profiles[target_profile], name="target"
         )

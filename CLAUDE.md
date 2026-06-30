@@ -12,6 +12,17 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   with `lossy` flags.
 
 ## Lessons Learned
+- **[state]**: `.rth_state.json` keys are a flat namespace shared by the TUI/`state.py` AND
+  the recon tools, so never overload one key with two value SHAPES. `target_profile` meant
+  a profile-NAME string (`apply_target` does `target_profile in config.profiles`), but
+  `profile_target` persisted its fingerprint DICT under the same key -> on next launch the
+  membership test hashed a dict -> `TypeError: unhashable type: 'dict'`, crashing startup
+  before the TUI drew. Fix: the fingerprint lives under its own key `target_fingerprint`
+  (readers `persona_modulate`/`recommend_next` prefer it, fall back to a legacy dict
+  `target_profile`), and every `apply_*` guards with `isinstance(x, str)` before a
+  `x in config.profiles` lookup so a corrupt/legacy state file degrades instead of crashing.
+  Lesson: a value read by `<thing> in config.profiles` MUST be a str; assert the shape at
+  the boundary, and give distinct concepts distinct state keys.
 - **[workflow]**: building a big multi-area feature set with parallel subagents on ONE shared
   working tree works cleanly ONLY if each agent owns a DISJOINT set of files. Collision hubs to
   serialize: `tools/__init__.py` (tool registration), `report.py`, `cli.py`, `prompts.py`,

@@ -94,8 +94,9 @@ def test_persists_target_profile(monkeypatch, tmp_path):
     reg, cfg = _reg(monkeypatch, tmp_path, FakeFramingTarget)
     asyncio.run(reg.execute("profile_target", {"objective": OBJECTIVE}))
     prefs = load_state(state_path_for(cfg))
-    prof = prefs.get("target_profile")
+    prof = prefs.get("target_fingerprint")
     assert isinstance(prof, dict)
+    assert "target_profile" not in prefs
     assert prof["best_framing"] in ("academic", "persona")
     assert prof["framings"]["fiction"]["label"] == "REFUSED"
     assert prof["framings"]["academic"]["label"] == "COMPLIED"
