@@ -60,6 +60,9 @@ class Endpoint:
     #               persona to the user channel where the model is actually steerable)
     #   "drop"    - discard the system prompt entirely
     system_mode: str = "default"
+    # claude-code only: a file whose contents become the brain's base system prompt
+    # (passed to the CLI as --system-prompt-file); the harness tool protocol is appended.
+    system_prompt_file: str = ""
 
     def resolved_key(self) -> str:
         if self.api_key:
@@ -174,14 +177,17 @@ def doctor_report(config: Config) -> tuple[str, bool]:
 
 
 def _endpoint_from_table(name: str, table: dict) -> Endpoint:
-    missing = [k for k in ("protocol", "base_url", "model") if k not in table]
+    protocol = str(table.get("protocol", "")).lower()
+    # claude-code drives the local `claude` CLI - it authenticates itself and needs no
+    # base_url/api_key, so only protocol+model are required for it.
+    required = ("protocol", "model") if protocol == "claude-code" else ("protocol", "base_url", "model")
+    missing = [k for k in required if k not in table]
     if missing:
         raise ConfigError(f"Endpoint '{name}' missing keys: {', '.join(missing)}")
-    protocol = str(table["protocol"]).lower()
-    if protocol not in ("openai", "anthropic"):
+    if protocol not in ("openai", "anthropic", "claude-code"):
         raise ConfigError(
             f"Endpoint '{name}' has invalid protocol '{protocol}' "
-            f"(expected 'openai' or 'anthropic')"
+            f"(expected 'openai', 'anthropic', or 'claude-code')"
         )
     modality = str(table.get("modality", "text")).lower()
     if modality not in ("text", "image"):
@@ -204,7 +210,7 @@ def _endpoint_from_table(name: str, table: dict) -> Endpoint:
     return Endpoint(
         name=name,
         protocol=protocol,
-        base_url=str(table["base_url"]).rstrip("/"),
+        base_url=str(table.get("base_url", "")).rstrip("/"),
         model=str(table["model"]),
         api_key_env=str(table.get("api_key_env", "")),
         api_key=str(table.get("api_key", "")),
@@ -213,6 +219,7 @@ def _endpoint_from_table(name: str, table: dict) -> Endpoint:
         modality=modality,
         reasoning=bool(table.get("reasoning", False)),
         system_mode=str(table.get("system_mode", "default")).lower(),
+        system_prompt_file=str(table.get("system_prompt_file", "")),
     )
 
 

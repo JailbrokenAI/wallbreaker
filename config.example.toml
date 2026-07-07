@@ -24,6 +24,20 @@ base_url = "http://localhost:1234/v1"
 api_key_env = "LOCAL_API_KEY"
 model = "local-model"
 
+# Use the local Claude Code CLI as the red-teamer brain (no base_url/api_key - the
+# `claude` CLI authenticates itself). Select with default_profile="claude-code" or
+# `/brain claude-code`. Claude Code becomes the attacker LLM that authors personas and
+# attack turns for every offensive tool (author_persona, pair, crescendo, ...).
+# model is a CLI alias (sonnet/opus/haiku) or a full model id.
+# system_prompt_file (optional): your own operator system prompt; it becomes the brain's
+# base prompt (--system-prompt-file) and the harness tool protocol is appended on top.
+# Override the binary with WALLBREAKER_CLAUDE_BIN, the file with
+# WALLBREAKER_CLAUDE_SYSTEM_PROMPT_FILE.
+[profiles.claude-code]
+protocol = "claude-code"
+model = "sonnet"
+# system_prompt_file = "/path/to/your/system_prompt.txt"
+
 [target]
 protocol = "openai"
 base_url = "https://openrouter.ai/api/v1"
