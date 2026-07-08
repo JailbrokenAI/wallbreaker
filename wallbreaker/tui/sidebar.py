@@ -6,19 +6,13 @@ from rich.text import Text
 from textual.widgets import Static
 
 from .theme import PALETTE
-
-_VERDICT_COLOR = {
-    "COMPLIED": PALETTE["verdict_bad"],
-    "PARTIAL": PALETTE["verdict_partial"],
-    "REFUSED": PALETTE["verdict_good"],
-    "EMPTY": PALETTE["info"],
-}
+from .widgets import verdict_color
 
 
 def _verdict_text(label) -> Text:
     if not label:
         return Text("-", style=PALETTE["label"])
-    return Text(str(label), style=f"bold {_VERDICT_COLOR.get(label, PALETTE['muted'])}")
+    return Text(str(label), style=f"bold {verdict_color(label)}")
 
 
 class StatsPanel(Static):

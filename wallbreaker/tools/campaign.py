@@ -97,7 +97,7 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
             try:
                 msgs = builder(behavior)
                 reply = await target.complete(msgs, system=system, max_tokens=max_tokens)
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 trail.append((name, "ERROR"))
                 continue
             label, score, reason, _s = await grade(

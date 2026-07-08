@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sys
 
 from .config import Config, ConfigError, Endpoint, load_config

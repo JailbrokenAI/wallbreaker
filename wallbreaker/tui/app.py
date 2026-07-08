@@ -81,7 +81,7 @@ from ..agent.loop import AgentEvents, run_autonomous, run_turn
 from ..agent.messages import TextBlock, ToolResultBlock, user
 from ..classify import classify, verdict_color
 from ..config import Config, Endpoint
-from ..prompts import DEFAULT_SYSTEM, compose_system
+from ..prompts import compose_system
 from ..providers.factory import build_provider
 from ..session import RunLog
 from ..tools import build_registry
@@ -1194,7 +1194,7 @@ class RthApp(App):
             f"target modality -> {modality} ({self.config.target.model})", title="target",
         ))
         self._mount(widgets.info_panel(
-            f"target model -> {model_id} @ {self.config.target.base_url}",
+            f"target model -> {self.config.target.model} @ {self.config.target.base_url}",
             title="target",
         ))
 
@@ -1375,8 +1375,6 @@ class RthApp(App):
         ))
 
     async def _cmd_lib(self, rest: list[str]) -> None:
-        from ..tools import l1b3rt4s as lib
-
         action = rest[0] if rest else "list"
         if action == "update":
             out = await self.registry.execute("l1b3rt4s_list", {})
@@ -1897,8 +1895,8 @@ class RthApp(App):
         self._mount(widgets.info_panel(
             f"graded fires: {total}   ASR: {asr}   ({hits} bypass / {total - hits} held)\n\n"
             f"verdict mix:\n" + "\n".join(bar_lines) + "\n\n"
-            f"ASR by technique:\n" + "\n".join(tech_lines) + "\n\n"
-            f"busiest tools:\n" + "\n".join(tool_lines) + "\n\n"
+            "ASR by technique:\n" + "\n".join(tech_lines) + "\n\n"
+            "busiest tools:\n" + "\n".join(tool_lines) + "\n\n"
             f"log: {self.runlog.path}",
             title="stats",
         ))

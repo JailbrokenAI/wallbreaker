@@ -10,7 +10,7 @@ from ..classify import HEDGE_MARKERS, classify
 from ..judging import grade_image
 from ..providers.image_provider import ext_for_mime
 from ..transforms import TRANSFORMS, apply_chain
-from .files import _confine, _resolve
+from .files import _resolve
 from .registry import ToolContext, ToolRegistry
 
 IMAGE_DIR = "wb_images"

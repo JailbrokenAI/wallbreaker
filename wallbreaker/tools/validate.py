@@ -30,7 +30,7 @@ async def _validate(args: dict, ctx: ToolContext) -> str:
             resp = await target.complete(
                 [user(task)], system=system, max_tokens=max_tokens, temperature=temperature
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             return "ERROR"
         label, _score, _r, _s = await grade(
             ctx.judge_endpoint, resp, payload=task, objective=objective
