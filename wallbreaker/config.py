@@ -184,15 +184,20 @@ def doctor_report(config: Config) -> tuple[str, bool]:
 def _endpoint_from_table(name: str, table: dict) -> Endpoint:
     protocol = str(table.get("protocol", "")).lower()
     # claude-code drives the local `claude` CLI - it authenticates itself and needs no
-    # base_url/api_key, so only protocol+model are required for it.
-    required = ("protocol", "model") if protocol == "claude-code" else ("protocol", "base_url", "model")
+    # base_url/api_key, so only protocol+model are required for it. 'xai' is native xAI
+    # (api.x.ai) - OpenAI-compatible wire format, so its base_url defaults to the xAI host
+    # and only protocol+model are strictly required.
+    if protocol in ("claude-code", "xai"):
+        required = ("protocol", "model")
+    else:
+        required = ("protocol", "base_url", "model")
     missing = [k for k in required if k not in table]
     if missing:
         raise ConfigError(f"Endpoint '{name}' missing keys: {', '.join(missing)}")
-    if protocol not in ("openai", "anthropic", "claude-code"):
+    if protocol not in ("openai", "anthropic", "claude-code", "xai"):
         raise ConfigError(
             f"Endpoint '{name}' has invalid protocol '{protocol}' "
-            f"(expected 'openai', 'anthropic', or 'claude-code')"
+            f"(expected 'openai', 'anthropic', 'xai', or 'claude-code')"
         )
     modality = str(table.get("modality", "text")).lower()
     if modality not in ("text", "image"):
@@ -205,6 +210,16 @@ def _endpoint_from_table(name: str, table: dict) -> Endpoint:
             f"Endpoint '{name}': modality 'image' requires protocol 'openai' "
             f"(OpenRouter image generation rides the chat-completions API)"
         )
+    base_url = str(table.get("base_url", "")).rstrip("/")
+    api_key_env = str(table.get("api_key_env", ""))
+    api_key = str(table.get("api_key", ""))
+    if protocol == "xai":
+        # Native xAI: default to the public host and the conventional key env var so a
+        # profile only needs protocol + model. An explicit base_url/api_key still wins.
+        if not base_url:
+            base_url = "https://api.x.ai/v1"
+        if not api_key and not api_key_env:
+            api_key_env = "XAI_API_KEY"
     provider = table.get("provider")
     if isinstance(provider, str):
         provider = (provider,)
@@ -215,10 +230,10 @@ def _endpoint_from_table(name: str, table: dict) -> Endpoint:
     return Endpoint(
         name=name,
         protocol=protocol,
-        base_url=str(table.get("base_url", "")).rstrip("/"),
+        base_url=base_url,
         model=str(table["model"]),
-        api_key_env=str(table.get("api_key_env", "")),
-        api_key=str(table.get("api_key", "")),
+        api_key_env=api_key_env,
+        api_key=api_key,
         provider=provider,
         timeout=float(table.get("timeout", 0) or 0),
         modality=modality,

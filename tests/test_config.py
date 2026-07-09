@@ -1,6 +1,48 @@
 import pytest
 
-from wallbreaker.config import ConfigError, Endpoint, load_config
+from wallbreaker.config import ConfigError, Endpoint, _endpoint_from_table, load_config
+
+
+def test_xai_protocol_defaults_base_url_and_key_env():
+    ep = _endpoint_from_table("xai", {"protocol": "xai", "model": "grok-4.5"})
+    assert ep.protocol == "xai"
+    assert ep.base_url == "https://api.x.ai/v1"
+    assert ep.api_key_env == "XAI_API_KEY"
+
+
+def test_xai_explicit_overrides_win():
+    ep = _endpoint_from_table(
+        "xai",
+        {
+            "protocol": "xai",
+            "model": "grok-4.3",
+            "base_url": "https://proxy.example/v1/",
+            "api_key": "inline-key",
+        },
+    )
+    assert ep.base_url == "https://proxy.example/v1"  # trailing slash stripped
+    assert ep.api_key == "inline-key"
+    assert ep.api_key_env == ""  # inline key means no env default
+
+
+def test_xai_routes_to_openai_provider():
+    from wallbreaker.providers.factory import build_provider
+    from wallbreaker.providers.openai_provider import OpenAIProvider
+
+    ep = _endpoint_from_table("xai", {"protocol": "xai", "model": "grok-4.5", "api_key": "k"})
+    assert isinstance(build_provider(ep), OpenAIProvider)
+
+
+def test_xai_rejects_image_modality():
+    with pytest.raises(ConfigError):
+        _endpoint_from_table(
+            "xai", {"protocol": "xai", "model": "grok-4.5", "modality": "image"}
+        )
+
+
+def test_invalid_protocol_message_lists_xai():
+    with pytest.raises(ConfigError, match="xai"):
+        _endpoint_from_table("bad", {"protocol": "nope", "base_url": "x", "model": "m"})
 
 
 def test_load_example_config():

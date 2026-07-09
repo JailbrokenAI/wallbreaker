@@ -38,6 +38,14 @@ protocol = "claude-code"
 model = "sonnet"
 # system_prompt_file = "/path/to/your/system_prompt.txt"
 
+# Native xAI (api.x.ai) brain/target. protocol="xai" is OpenAI wire-compatible, so it rides
+# the OpenAI provider; base_url defaults to https://api.x.ai/v1 and the key env defaults to
+# XAI_API_KEY, so only protocol + model are required. Set XAI_API_KEY in your environment.
+# Some grok models (e.g. grok-4.5) are region-locked by xAI and 403 outside allowed regions.
+# [profiles.xai]
+# protocol = "xai"
+# model = "grok-4.3"
+
 [target]
 protocol = "openai"
 base_url = "https://openrouter.ai/api/v1"

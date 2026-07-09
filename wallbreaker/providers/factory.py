@@ -11,7 +11,10 @@ from .openai_provider import OpenAIProvider
 def build_provider(endpoint: Endpoint, timeout: float | None = None) -> Provider:
     # per-endpoint timeout (config) wins; else the explicit arg; else the default
     resolved = getattr(endpoint, "timeout", 0) or timeout or DEFAULT_TIMEOUT
-    if endpoint.protocol == "openai":
+    # 'xai' is native xAI (api.x.ai): its /v1/chat/completions is OpenAI wire-compatible
+    # (including delta.reasoning_content, which OpenAIProvider already reads), so it rides
+    # the same provider. Image modality is blocked for xai at config-validation time.
+    if endpoint.protocol in ("openai", "xai"):
         if getattr(endpoint, "modality", "text") == "image":
             return OpenRouterImageProvider(endpoint, timeout=resolved)
         return OpenAIProvider(endpoint, timeout=resolved)

@@ -12,6 +12,21 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   with `lossy` flags.
 
 ## Lessons Learned
+- **[providers]**: native xAI (api.x.ai) is OpenAI wire-compatible - `/v1/chat/completions`
+  streams the same shape including `delta.reasoning_content` (which `OpenAIProvider` already
+  reads), so `protocol="xai"` is just a thin alias routed to `OpenAIProvider` in
+  `factory.build_provider`. `_endpoint_from_table` treats `xai` like `claude-code` for required
+  keys (only protocol+model), defaults `base_url` to `https://api.x.ai/v1` and `api_key_env` to
+  `XAI_API_KEY` (explicit values win), and blocks `modality="image"` (xAI's grok-imagine uses a
+  different API). Do NOT enable the OpenRouter-ism `reasoning={"enabled":true}` for xai - xAI
+  native uses `reasoning_effort` and grok reasoning models emit `reasoning_content`
+  unprompted anyway. DIAGNOSIS gotcha that ate a whole session: a `403 permission-denied` whose
+  raw body says `"The model grok-4.5 is not available in your region"` is an xAI GEO-BLOCK, not a
+  key/modality problem - it 403s identically through OpenRouter AND native api.x.ai, and the
+  model won't even appear in `/v1/models`. A raw `curl` that "works" was testing a DIFFERENT
+  model than the harness fired: the real culprit was a stale `.wallbreaker_state.json`
+  `target_model` override (grok-4.5) shadowing config, while the curl hit gemini. Always compare
+  the EXACT model id the harness sends vs the curl before blaming modality/formatting.
 - **[cli]**: a function-local `import X` anywhere in `main()` makes `X` a LOCAL name across the
   ENTIRE function (Python binds locals per-function at compile time), so any OTHER branch that
   uses `X` before that import runs raises `UnboundLocalError` — even with a module-level `import X`
