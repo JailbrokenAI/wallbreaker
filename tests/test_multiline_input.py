@@ -1,7 +1,7 @@
 import asyncio
 
 from textual import events
-from textual.widgets import Input
+from textual.widgets import Input, Static
 
 from wallbreaker.config import Config, Endpoint
 from wallbreaker.prompts import DEFAULT_SYSTEM
@@ -122,6 +122,24 @@ def test_multiline_submits_as_one_message():
             # buffer cleared after submit
             assert inp.buffer == []
             assert inp.value == ""
+
+    asyncio.run(run())
+
+
+def test_multiline_paste_shows_visible_preview():
+    async def run():
+        app = _build_app()
+        async with app.run_test() as pilot:
+            inp = app.query_one("#prompt", Input)
+            preview = app.query_one("#compose-preview", Static)
+            assert preview.has_class("hidden")
+            inp._on_paste(events.Paste("line one\nline two\nline three"))
+            await pilot.pause()
+            assert not preview.has_class("hidden")
+            assert preview.border_title == "composing · 3 lines"
+            inp.reset_buffer()
+            await pilot.pause()
+            assert preview.has_class("hidden")
 
     asyncio.run(run())
 

@@ -24,6 +24,21 @@ class PromptInput(Input):
         super().__init__(*args, **kwargs)
         self.buffer: list[str] = []
 
+    def _refresh_preview(self) -> None:
+        """Mirror the buffered (non-editable) lines into the visible compose preview."""
+        try:
+            preview = self.app.query_one("#compose-preview", Static)
+        except Exception:
+            return
+        if self.buffer:
+            n = len(self.buffer) + 1
+            preview.border_title = f"composing · {n} lines"
+            preview.remove_class("hidden")
+            preview.update("\n".join(self.buffer))
+        else:
+            preview.add_class("hidden")
+            preview.update("")
+
     def _on_paste(self, event: events.Paste) -> None:
         # Textual dispatches _on_paste to EVERY class in the MRO, so without this the base
         # Input._on_paste would also fire and insert the text a second time. prevent_default()
@@ -52,6 +67,7 @@ class PromptInput(Input):
         self.value = last
         self.cursor_position = len(last)
         self._sync_subtitle()
+        self._refresh_preview()
 
     def soft_newline(self) -> None:
         """Commit the current line to the buffer and start a fresh editable line."""
@@ -59,6 +75,7 @@ class PromptInput(Input):
         self.value = ""
         self.cursor_position = 0
         self._sync_subtitle()
+        self._refresh_preview()
 
     def full_text(self) -> str:
         """The whole composed message: buffered lines joined with the editable line."""
@@ -70,6 +87,7 @@ class PromptInput(Input):
         self.buffer = []
         self.value = ""
         self._sync_subtitle()
+        self._refresh_preview()
 
     def _sync_subtitle(self) -> None:
         n = len(self.buffer)
@@ -304,6 +322,7 @@ class RthApp(App):
         with Horizontal(id="body"):
             yield VerticalScroll(id="log")
             yield StatsPanel(id="sidebar")
+        yield Static("", id="compose-preview", classes="hidden")
         yield PromptInput(placeholder="message, /help — paste multi-line, ctrl+j adds a line", id="prompt")
         yield Footer()
 

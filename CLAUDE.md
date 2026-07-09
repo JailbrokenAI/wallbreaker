@@ -12,6 +12,19 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   with `lossy` flags.
 
 ## Lessons Learned
+- **[tui]**: `PromptInput` (an `Input`, single-line) already BUFFERS every line of a multi-line
+  paste (`_on_paste` splits, keeps the last line editable, stashes the rest in `.buffer`, submits
+  the whole block via `full_text()`), so "paste only keeps one line" was never a data-loss bug —
+  the buffered lines were just INVISIBLE (only a `+N lines` border subtitle hinted at them), so a
+  big paste READ as one line. Fix: a `#compose-preview` `Static` docked bottom ABOVE `#prompt`
+  (yield it BEFORE the prompt — later-yielded dock:bottom sits LOWER, so preview-then-prompt-then-
+  Footer stacks preview on top) mirrors the buffered lines; `PromptInput._refresh_preview()` (called
+  from `_on_paste`/`soft_newline`/`reset_buffer`) shows `"\n".join(self.buffer)` (NOT full_text — the
+  trailing line is already visible in the Input, don't duplicate it) and toggles a `hidden` class.
+  Capped `max-height: 10; overflow-y: auto` so a 500-line paste scrolls instead of eating the screen.
+  Keep asserting via `has_class("hidden")`/`border_title`, NEVER `Static.renderable` (per the earlier
+  [textual] lesson). The `#log`-children-count tests stay green because the preview is a screen-level
+  sibling, not a child of `#log`.
 - **[providers]**: native xAI (api.x.ai) is OpenAI wire-compatible - `/v1/chat/completions`
   streams the same shape including `delta.reasoning_content` (which `OpenAIProvider` already
   reads), so `protocol="xai"` is just a thin alias routed to `OpenAIProvider` in
