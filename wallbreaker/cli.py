@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 
 from .config import Config, ConfigError, Endpoint, load_config
@@ -304,8 +305,6 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             return 0
         if args.command == "regrade":
-            import asyncio
-
             from .regrade import format_regrade, regrade_log
             from .report import resolve_log_path
 
