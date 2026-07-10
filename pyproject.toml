@@ -23,6 +23,7 @@ dependencies = [
     "textual>=0.79",
     "rich>=13.7",
     "mcp>=1.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.urls]

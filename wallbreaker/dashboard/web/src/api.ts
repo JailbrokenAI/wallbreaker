@@ -35,9 +35,26 @@ export interface Finding {
 
 export interface RunSummary {
   name: string;
+  time?: string;
+  models?: RunModels;
   size: number;
   records: number;
   hits: number;
+}
+
+export interface RunModels {
+  attacker?: string;
+  target?: string;
+  judge?: string;
+  recorded?: boolean;
+}
+
+export interface RunDetail {
+  name: string;
+  total: number;
+  records: Record<string, unknown>[];
+  raw_records?: string[];
+  line_numbers?: number[];
 }
 
 export interface Settings {
@@ -52,11 +69,23 @@ export interface Preset { name: string; description: string }
 export interface Transform { name: string; description: string; lossy: boolean; reversible: boolean }
 export interface Tool { name: string; description: string }
 
-export interface FireResult {
+export interface ComposeResult {
+  request: string;
   prompt: string;
+  payload: string;
+  preset: string;
+  transforms: string[];
+  system: string;
+  max_tokens: number;
+  source: string;
+}
+
+export interface FireResult extends ComposeResult {
   content: string;
+  response: string;
   is_error: boolean;
   verdict: string;
+  run_log?: string;
 }
 
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
@@ -86,10 +115,16 @@ export const api = {
     }),
   findings: () => j<Finding[]>("/api/findings"),
   runs: () => j<RunSummary[]>("/api/runs"),
-  run: (name: string) => j<{ name: string; total: number; records: Record<string, unknown>[] }>(`/api/runs/${encodeURIComponent(name)}`),
+  run: (name: string) => j<RunDetail>(`/api/runs/${encodeURIComponent(name)}`),
   presets: () => j<Preset[]>("/api/presets"),
   transforms: () => j<Transform[]>("/api/transforms"),
   tools: () => j<Tool[]>("/api/tools"),
+  compose: (body: Record<string, unknown>) =>
+    j<ComposeResult>("/api/compose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   fire: (body: Record<string, unknown>) =>
     j<FireResult>("/api/fire", {
       method: "POST",

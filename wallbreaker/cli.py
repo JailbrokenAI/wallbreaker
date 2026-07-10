@@ -4,6 +4,8 @@ import argparse
 import asyncio
 import sys
 
+from dotenv import load_dotenv
+
 from .config import Config, ConfigError, Endpoint, load_config
 from .providers.base import ProviderError
 
@@ -179,12 +181,13 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
     from .providers.factory import build_provider
     from .tools import build_registry
 
-    from ..session import RunLog
+    from .session import RunLog, run_models_meta
 
     endpoint = resolve_endpoint(config, args)
     provider = build_provider(endpoint)
     registry = None if args.no_tools else build_registry(config)
     runlog = RunLog()
+    runlog.set_run_meta(models=run_models_meta(config, attacker=endpoint))
     if registry is not None:
         registry.ctx.progress = lambda m: print(f"[progress] {m}", file=sys.stderr)
         registry.ctx.record = (
@@ -240,6 +243,7 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv(override=False)
     raw = list(sys.argv[1:] if argv is None else argv)
     first_pos = next((a for a in raw if not a.startswith("-")), None)
 

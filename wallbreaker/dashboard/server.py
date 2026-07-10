@@ -4,15 +4,42 @@ import asyncio
 import dataclasses
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from .. import report as report_mod
 from ..presets import list_presets
-from ..transforms import list_transforms
+from ..transforms import TRANSFORMS, apply_chain, list_transforms
 
 _VERDICT_RE = re.compile(r"\b(COMPLIED|PARTIAL|REFUSED|EMPTY|BLOCKED_INPUT|BLOCKED_OUTPUT)\b")
-_MAX_RECORDS = 1500
+_RUN_NAME_RE = re.compile(r"^run-(\d{8})-?(\d{6})\.jsonl$")
 _FIRE_TOOLS = {"query_target", "continue_target", "fire", "query_image_target"}
+
+
+def _run_time_from_name(name: str) -> str:
+    match = _RUN_NAME_RE.match(name)
+    if not match:
+        return ""
+    try:
+        dt = datetime.strptime("".join(match.groups()), "%Y%m%d%H%M%S")
+    except ValueError:
+        return ""
+    return dt.isoformat(sep=" ", timespec="seconds")
+
+
+def _models_from_records(records: list[dict]) -> dict:
+    for record in records:
+        if record.get("kind") != "run_meta":
+            continue
+        models = record.get("models")
+        if isinstance(models, dict):
+            return {
+                "attacker": str(models.get("attacker") or ""),
+                "target": str(models.get("target") or ""),
+                "judge": str(models.get("judge") or ""),
+                "recorded": True,
+            }
+    return {"attacker": "", "target": "", "judge": "", "recorded": False}
 
 
 def _summarize_args(args: dict) -> str:
@@ -58,6 +85,72 @@ def _config_summary(config) -> dict:
 def _extract_verdict(text: str) -> str:
     m = _VERDICT_RE.search(text or "")
     return m.group(1) if m else ""
+
+
+def _list_arg(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    try:
+        items = list(value or [])
+    except TypeError:
+        items = [value]
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _compose_attack_payload(body: dict) -> dict:
+    request = str(body.get("request") or body.get("prompt") or "").strip()
+    preset_name = str(body.get("preset") or "").strip()
+    transforms = _list_arg(body.get("transforms"))
+    system = str(body.get("system") or "")
+    try:
+        max_tokens = int(body.get("max_tokens", 1024))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_tokens must be an integer") from exc
+
+    raw_payload = body.get("payload")
+    if raw_payload is not None:
+        payload = str(raw_payload)
+        if not payload.strip():
+            raise ValueError("'payload' is required")
+        return {
+            "request": request,
+            "prompt": payload,
+            "payload": payload,
+            "preset": preset_name,
+            "transforms": transforms,
+            "system": system,
+            "max_tokens": max_tokens,
+            "source": "payload",
+        }
+
+    if not request:
+        raise ValueError("'request' is required")
+
+    prompt = request
+    if preset_name:
+        from ..presets import get_preset
+
+        preset = get_preset(preset_name)
+        if preset is None:
+            raise ValueError(f"unknown preset {preset_name}")
+        prompt = preset.template.replace("{request}", request)
+
+    unknown = [name for name in transforms if name not in TRANSFORMS]
+    if unknown:
+        raise ValueError(f"unknown transform(s): {', '.join(unknown)}")
+    payload = apply_chain(prompt, transforms) if transforms else prompt
+    return {
+        "request": request,
+        "prompt": prompt,
+        "payload": payload,
+        "preset": preset_name,
+        "transforms": transforms,
+        "system": system,
+        "max_tokens": max_tokens,
+        "source": "compose",
+    }
 
 
 def _apply_settings(config, prefs: dict) -> None:
@@ -122,6 +215,9 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     from fastapi.staticfiles import StaticFiles
 
     sessions = Path(sessions_dir)
+    from ..session import RunLog, run_models_meta
+
+    console_runlog = RunLog(directory=str(sessions))
     if config is not None:
         try:
             from ..state import load_state, state_path_for
@@ -232,6 +328,8 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 records, hits = [], 0
             out.append({
                 "name": p.name,
+                "time": _run_time_from_name(p.name),
+                "models": _models_from_records(records),
                 "size": p.stat().st_size,
                 "records": len(records),
                 "hits": hits,
@@ -243,8 +341,31 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         path = sessions / name
         if ".." in name or "/" in name or not path.is_file():
             raise HTTPException(status_code=404, detail="run not found")
-        records = report_mod._load_records(path)
-        return {"name": name, "total": len(records), "records": records[:_MAX_RECORDS]}
+        records = []
+        raw_records = []
+        line_numbers = []
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            raw = line.strip()
+            if not raw:
+                continue
+            raw_records.append(raw)
+            line_numbers.append(lineno)
+            try:
+                records.append(json.loads(raw))
+            except json.JSONDecodeError as exc:
+                records.append({
+                    "kind": "parse_error",
+                    "line": lineno,
+                    "error": str(exc),
+                    "raw": raw,
+                })
+        return {
+            "name": name,
+            "total": len(records),
+            "records": records,
+            "raw_records": raw_records,
+            "line_numbers": line_numbers,
+        }
 
     @app.get("/api/findings")
     def findings():
@@ -294,42 +415,65 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         except Exception:
             return []
 
+    @app.post("/api/compose")
+    def compose(body: dict):
+        try:
+            return _compose_attack_payload(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/fire")
     async def fire(body: dict):
         if config is None or getattr(config, "target", None) is None:
             raise HTTPException(status_code=400, detail="no [target] configured in config.toml")
-        request = str(body.get("request") or body.get("prompt") or "").strip()
-        if not request:
-            raise HTTPException(status_code=400, detail="'request' is required")
-
-        prompt = request
-        preset_name = body.get("preset")
-        if preset_name:
-            from ..presets import get_preset
-
-            preset = get_preset(str(preset_name))
-            if preset is None:
-                raise HTTPException(status_code=400, detail=f"unknown preset {preset_name}")
-            prompt = preset.template.replace("{request}", request)
+        try:
+            composed = _compose_attack_payload(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         args = {
-            "prompt": prompt,
-            "max_tokens": int(body.get("max_tokens", 1024)),
+            "prompt": composed["payload"] if composed["source"] == "payload" else composed["prompt"],
+            "max_tokens": composed["max_tokens"],
         }
-        if body.get("transforms"):
-            args["transforms"] = list(body["transforms"])
-        if body.get("system"):
-            args["system"] = str(body["system"])
+        if composed["source"] != "payload" and composed["transforms"]:
+            args["transforms"] = composed["transforms"]
+        if composed["system"]:
+            args["system"] = composed["system"]
 
         from ..tools import build_registry
 
         reg = build_registry(config)
         result = await reg.execute("query_target", args)
+        verdict = _extract_verdict(result.content)
+        if not console_runlog._started:
+            console_runlog.set_run_meta(
+                source="dashboard_console",
+                models=run_models_meta(config, attacker=None),
+            )
+        target = getattr(config, "target", None)
+        console_runlog.event(
+            "attack_fire",
+            request=composed["request"],
+            prompt=composed["prompt"],
+            payload=composed["payload"],
+            response=result.content,
+            label=verdict,
+            technique="console",
+            preset=composed["preset"],
+            transforms=composed["transforms"],
+            system=composed["system"],
+            is_error=result.is_error,
+            max_tokens=composed["max_tokens"],
+            target_model=getattr(target, "model", "") if target else "",
+            target_base_url=getattr(target, "base_url", "") if target else "",
+        )
         return {
-            "prompt": prompt,
+            **composed,
             "content": result.content,
+            "response": result.content,
             "is_error": result.is_error,
-            "verdict": _extract_verdict(result.content),
+            "verdict": verdict,
+            "run_log": console_runlog.path.name,
         }
 
     agent_lock = asyncio.Lock()
@@ -357,12 +501,13 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         from ..agent.messages import user
         from ..prompts import DEFAULT_SYSTEM
         from ..providers.factory import build_provider
-        from ..session import RunLog
+        from ..session import RunLog, run_models_meta
         from ..tools import build_registry
 
         provider = build_provider(brain)
         registry = build_registry(config)
         runlog = RunLog(directory=str(sessions))
+        runlog.set_run_meta(models=run_models_meta(config, attacker=brain))
         queue: asyncio.Queue = asyncio.Queue()
 
         def push(ev) -> None:

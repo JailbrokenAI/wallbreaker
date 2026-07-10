@@ -123,17 +123,46 @@ def list_sessions(directory: str | Path = "sessions") -> list[Path]:
     return sorted(d.glob("session-*.json")) if d.is_dir() else []
 
 
+def run_models_meta(config=None, attacker=None, judge=None) -> dict:
+    target = getattr(config, "target", None)
+    if judge is None:
+        judge = getattr(config, "judge", None) or attacker
+    return {
+        "attacker": getattr(attacker, "model", "") or "",
+        "target": getattr(target, "model", "") or "",
+        "judge": getattr(judge, "model", "") or "",
+    }
+
+
 class RunLog:
     def __init__(self, directory: str | Path = "sessions", enabled: bool = True):
         self.enabled = enabled
         self.dir = Path(directory)
         self.path = self.dir / f"run-{_timestamp()}.jsonl"
         self._started = False
+        self._run_meta: dict = {}
 
     def _ensure(self) -> None:
         if not self._started:
             self.dir.mkdir(parents=True, exist_ok=True)
             self._started = True
+            if self._run_meta:
+                self._write({
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "kind": "run_meta",
+                    **self._run_meta,
+                })
+
+    def _write(self, record: dict) -> None:
+        with open(self.path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def set_run_meta(self, **data) -> None:
+        """Store static run metadata to write as the first JSONL row on first use."""
+        self._run_meta = {
+            k: v for k, v in data.items()
+            if v is not None and v != {} and v != []
+        }
 
     def event(self, kind: str, **data) -> None:
         if not self.enabled:
@@ -141,8 +170,7 @@ class RunLog:
         self._ensure()
         record = {"ts": datetime.now().isoformat(timespec="seconds"), "kind": kind}
         record.update(data)
-        with open(self.path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._write(record)
 
     def user(self, text: str) -> None:
         self.event("user", text=text)

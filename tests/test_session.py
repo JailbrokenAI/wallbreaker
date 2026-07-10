@@ -25,6 +25,28 @@ def test_runlog_disabled_writes_nothing(tmp_path):
     assert not log.path.exists()
 
 
+def test_runlog_writes_pending_run_metadata_on_first_event(tmp_path):
+    log = RunLog(directory=tmp_path)
+    log.set_run_meta(models={
+        "attacker": "attacker-model",
+        "target": "target-model",
+        "judge": "judge-model",
+    })
+    assert not log.path.exists()
+
+    log.event("objective", text="break it")
+
+    records = [
+        json.loads(line)
+        for line in log.path.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert records[0]["kind"] == "run_meta"
+    assert records[0]["models"]["attacker"] == "attacker-model"
+    assert records[0]["models"]["target"] == "target-model"
+    assert records[0]["models"]["judge"] == "judge-model"
+    assert records[1]["kind"] == "objective"
+
+
 def test_session_save_load_roundtrip(tmp_path):
     from wallbreaker.agent.messages import (
         Message,

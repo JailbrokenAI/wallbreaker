@@ -31,11 +31,17 @@ def is_available() -> bool:
 
 def node_ok() -> bool:
     try:
+        node = os.environ.get("PARSEL_NODE", "node")
         proc = subprocess.run(
-            ["node", "--version"], capture_output=True, text=True, check=False
+            [node, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
         return proc.returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError, OSError):
         return False
 
 
@@ -47,10 +53,13 @@ def _run(payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
             "Run `wallbreaker parsel update` (or set PARSEL_REPO)."
         )
     try:
+        node = os.environ.get("PARSEL_NODE", "node")
         proc = subprocess.run(
-            ["node", str(bp)],
+            [node, str(bp)],
             input=json.dumps(payload),
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             cwd=str(repo_dir()),
             timeout=timeout,
@@ -58,6 +67,11 @@ def _run(payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
         )
     except FileNotFoundError as exc:
         raise BridgeError("Node.js is required but `node` was not found on PATH.") from exc
+    except PermissionError as exc:
+        raise BridgeError(
+            "Node.js could not be launched due to a permission error. "
+            "Install Node.js or set PARSEL_NODE to a working node.exe path."
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         raise BridgeError(f"Node bridge timed out after {timeout:.0f}s.") from exc
 

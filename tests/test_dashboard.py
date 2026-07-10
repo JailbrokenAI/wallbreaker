@@ -59,6 +59,62 @@ def test_fire_requires_target(tmp_path):
     assert r.status_code == 400
 
 
+def test_compose_builds_payload_without_target(tmp_path):
+    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
+    r = client.post("/api/compose", json={"request": "hello", "transforms": ["base64"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["prompt"] == "hello"
+    assert body["payload"] == "aGVsbG8="
+    assert body["transforms"] == ["base64"]
+
+
+def test_fire_records_full_console_attempt(monkeypatch, tmp_path):
+    from wallbreaker.config import Config, Endpoint
+    from wallbreaker.tools.registry import ToolResult
+    import wallbreaker.tools as tools_mod
+
+    sessions = tmp_path / "sessions"
+    cfg = Config(
+        default_profile="attacker",
+        profiles={
+            "attacker": Endpoint("attacker", "openai", "http://attacker", "attack-model"),
+        },
+        target=Endpoint("target", "openai", "http://target", "target-model"),
+    )
+    seen = {}
+
+    class FakeRegistry:
+        async def execute(self, name, args):
+            seen["name"] = name
+            seen["args"] = args
+            return ToolResult("[target fake]\nREFUSED: nope")
+
+    monkeypatch.setattr(tools_mod, "build_registry", lambda _config: FakeRegistry())
+    client = TestClient(create_app(config=cfg, sessions_dir=sessions))
+    r = client.post("/api/fire", json={"request": "hello", "transforms": ["base64"]})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["payload"] == "aGVsbG8="
+    assert body["response"] == "[target fake]\nREFUSED: nope"
+    assert body["run_log"].startswith("run-")
+    assert seen["name"] == "query_target"
+    assert seen["args"]["prompt"] == "hello"
+    assert seen["args"]["transforms"] == ["base64"]
+
+    records = [
+        json.loads(line)
+        for line in (sessions / body["run_log"]).read_text(encoding="utf-8").splitlines()
+    ]
+    fired = [record for record in records if record.get("kind") == "attack_fire"]
+    assert fired
+    assert fired[0]["prompt"] == "hello"
+    assert fired[0]["payload"] == "aGVsbG8="
+    assert fired[0]["response"] == "[target fake]\nREFUSED: nope"
+    assert fired[0]["target_model"] == "target-model"
+
+
 def test_agent_run_requires_target(tmp_path):
     client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
     r = client.post("/api/agent/run", json={"objective": "jailbreak the model"})

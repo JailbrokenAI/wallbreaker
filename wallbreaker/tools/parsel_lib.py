@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import os
 from pathlib import Path
 
 REPO_URL = "https://github.com/elder-plinius/P4RS3LT0NGV3"
@@ -25,10 +26,16 @@ def is_present() -> bool:
 
 def node_ok() -> bool:
     try:
+        node = os.environ.get("PARSEL_NODE", "node")
         return subprocess.run(
-            ["node", "--version"], capture_output=True, text=True, check=False
+            [node, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         ).returncode == 0
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError, OSError):
         return False
 
 

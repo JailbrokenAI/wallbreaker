@@ -244,6 +244,7 @@ class RthApp(App):
         self._target_profile = prefs.get("target_profile")
         self._target_model = prefs.get("target_model")
         self._target_modality = prefs.get("target_modality")
+        self.runlog.set_run_meta(models=self._run_models_meta())
 
     def _save_prefs(self) -> None:
         if not self._state_path:
@@ -295,6 +296,15 @@ class RthApp(App):
         if self.judge_model_override:
             base = dataclasses.replace(base, name="judge", model=self.judge_model_override)
         return base
+
+    def _run_models_meta(self) -> dict:
+        from ..session import run_models_meta
+
+        judge = self._judge_endpoint() if self.judge_enabled else None
+        meta = run_models_meta(self.config, attacker=self.endpoint, judge=judge)
+        if not self.judge_enabled:
+            meta["judge"] = "heuristic"
+        return meta
 
     def _sync_judge_endpoint(self) -> None:
         self.registry.ctx.judge_endpoint = self._judge_endpoint()
@@ -777,6 +787,7 @@ class RthApp(App):
 
     def _on_tool_start(self, _id: str, name: str, args: dict) -> None:
         self._mount(widgets.tool_call_panel(name, args))
+        self.runlog.set_run_meta(models=self._run_models_meta())
         self.runlog.tool_call(name, args)
         if name == "query_target":
             self._last_payload = str(args.get("prompt", ""))
@@ -1926,6 +1937,7 @@ class RthApp(App):
             ))
             return
         self.objective = raw
+        self.runlog.set_run_meta(models=self._run_models_meta())
         self.runlog.event("objective", text=raw)
         self.history.append(user(f"[engagement objective] {raw}"))
         self._mount(widgets.info_panel(f"objective set:\n{raw}", title="objective"))
