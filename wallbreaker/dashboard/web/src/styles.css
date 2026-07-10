@@ -144,6 +144,202 @@ tr:hover td { background: var(--panel); }
   font-size: 11px;
 }
 
+/* ---- findings ---- */
+.findings-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.findings-picker {
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 124px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.findings-picker-actions {
+  justify-content: flex-start;
+  margin-bottom: 10px;
+}
+.finding-run-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+.finding-run-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 9px;
+}
+.finding-run-option:hover,
+.finding-run-option.selected {
+  border-color: var(--accent);
+}
+.finding-run-option.selected {
+  background: rgba(45, 226, 200, 0.08);
+}
+.finding-run-option span:first-child,
+.finding-run-option span:nth-child(2),
+.finding-run-option span:nth-child(4) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.finding-run-option span:nth-child(4) {
+  grid-column: 1 / -1;
+}
+.findings-results {
+  min-width: 0;
+}
+.findings-table {
+  table-layout: fixed;
+}
+.finding-cell-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.finding-expanded-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.finding-tech-panel,
+.finding-conversation-panel,
+.finding-judging-panel,
+.finding-fields-panel,
+.finding-raw-panel {
+  min-width: 0;
+}
+.finding-tech-panel,
+.finding-conversation-panel,
+.finding-judging-panel,
+.finding-fields-panel,
+.finding-raw-panel {
+  grid-column: 1 / -1;
+}
+.finding-kv-list {
+  display: grid;
+  gap: 0;
+}
+.finding-kv-list div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 10px;
+  border-top: 1px solid var(--panel);
+  align-items: start;
+}
+.finding-kv-list div:first-child {
+  border-top: none;
+}
+.finding-kv-list b {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.finding-kv-list span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.finding-kv-list.compact div {
+  grid-template-columns: 90px minmax(0, 1fr);
+}
+.finding-subpanel {
+  border-top: 1px solid var(--panel);
+}
+.finding-subpanel b {
+  display: block;
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.7px;
+  padding: 9px 10px 0;
+  text-transform: uppercase;
+}
+.finding-subpanel pre,
+.finding-judging-panel > pre {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 10px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.finding-conversation {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+.finding-turn {
+  border: 1px solid var(--panel);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.finding-turn.user {
+  border-left: 3px solid var(--accent);
+}
+.finding-turn.assistant {
+  border-left: 3px solid var(--violet);
+}
+.finding-turn-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--panel);
+}
+.finding-turn-head span:first-child {
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.finding-turn pre {
+  margin: 0;
+  max-height: 44vh;
+  overflow: auto;
+  padding: 10px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+@media (max-width: 1000px) {
+  .findings-layout { grid-template-columns: 1fr; }
+  .findings-picker {
+    position: static;
+    max-height: none;
+  }
+  .finding-run-list {
+    max-height: 260px;
+  }
+  .finding-expanded-grid { grid-template-columns: 1fr; }
+  .finding-kv-list div,
+  .finding-kv-list.compact div {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- run log detail ---- */
 .runs-table-wrap {
   overflow-x: auto;

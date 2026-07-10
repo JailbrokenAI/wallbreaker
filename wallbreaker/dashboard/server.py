@@ -14,6 +14,8 @@ from ..transforms import TRANSFORMS, apply_chain, list_transforms
 _VERDICT_RE = re.compile(r"\b(COMPLIED|PARTIAL|REFUSED|EMPTY|BLOCKED_INPUT|BLOCKED_OUTPUT)\b")
 _RUN_NAME_RE = re.compile(r"^run-(\d{8})-?(\d{6})\.jsonl$")
 _FIRE_TOOLS = {"query_target", "continue_target", "fire", "query_image_target"}
+_FINDING_KINDS = {"verdict", "attack_fire"}
+_FINDING_LABELS = {"COMPLIED", "PARTIAL"}
 
 
 def _run_time_from_name(name: str) -> str:
@@ -40,6 +42,273 @@ def _models_from_records(records: list[dict]) -> dict:
                 "recorded": True,
             }
     return {"attacker": "", "target": "", "judge": "", "recorded": False}
+
+
+def _safe_run_path(sessions: Path, name: str) -> Path | None:
+    if ".." in name or "/" in name or "\\" in name:
+        return None
+    path = sessions / name
+    return path if path.is_file() else None
+
+
+def _load_records_with_lines(path: Path) -> tuple[list[dict], list[str], list[int]]:
+    records = []
+    raw_records = []
+    line_numbers = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        raw = line.strip()
+        if not raw:
+            continue
+        raw_records.append(raw)
+        line_numbers.append(lineno)
+        try:
+            records.append(json.loads(raw))
+        except json.JSONDecodeError as exc:
+            records.append({
+                "kind": "parse_error",
+                "line": lineno,
+                "error": str(exc),
+                "raw": raw,
+            })
+    return records, raw_records, line_numbers
+
+
+def _text_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _dict_value(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _list_value(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _split_chain(value) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _record_prompt(record: dict) -> str:
+    args = _dict_value(record.get("args") or record.get("input"))
+    for key in ("payload", "prompt", "request", "text", "objective", "query"):
+        value = _text_value(record.get(key)).strip()
+        if value:
+            return value
+    for key in ("payload", "prompt", "request", "text", "objective", "query"):
+        value = _text_value(args.get(key)).strip()
+        if value:
+            return value
+    return ""
+
+
+def _record_response(record: dict) -> str:
+    for key in ("response", "content", "result", "answer", "output", "text"):
+        value = _text_value(record.get(key)).strip()
+        if value:
+            return value
+    return ""
+
+
+def _conversation_from_record(record: dict) -> list[dict]:
+    for key in ("conversation", "history", "messages"):
+        turns = _list_value(record.get(key))
+        if not turns:
+            continue
+        out = []
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            role = str(turn.get("role") or "user")
+            content = _text_value(turn.get("content") or turn.get("text"))
+            if content:
+                out.append({"role": role, "content": content, "source": key})
+        if out:
+            return out
+    return []
+
+
+def _related_fire_records(records: list[dict], index: int) -> list[dict]:
+    start = 0
+    for i in range(index - 1, -1, -1):
+        if records[i].get("kind") in _FINDING_KINDS:
+            start = i + 1
+            break
+    related = []
+    for record in records[start : index + 1]:
+        kind = record.get("kind")
+        tool = record.get("tool") or record.get("name")
+        if kind in ("tool_call", "tool_result") and tool in _FIRE_TOOLS:
+            related.append(record)
+        elif kind in _FINDING_KINDS:
+            related.append(record)
+    return related
+
+
+def _conversation_for_finding(records: list[dict], index: int, finding: dict) -> list[dict]:
+    explicit = _conversation_from_record(finding)
+    if explicit:
+        return explicit
+
+    turns = []
+    for record in _related_fire_records(records, index):
+        kind = record.get("kind")
+        tool = str(record.get("tool") or record.get("name") or kind or "")
+        if kind == "tool_call":
+            args = _dict_value(record.get("args") or record.get("input"))
+            for turn in _list_value(args.get("history")):
+                if isinstance(turn, dict):
+                    content = _text_value(turn.get("content") or turn.get("text"))
+                    if content:
+                        turns.append({
+                            "role": str(turn.get("role") or "user"),
+                            "content": content,
+                            "source": f"{tool}:history",
+                        })
+            prompt = _record_prompt(record)
+            if prompt:
+                turns.append({"role": "user", "content": prompt, "source": tool})
+        elif kind == "tool_result":
+            response = _record_response(record)
+            if response:
+                turns.append({"role": "assistant", "content": response, "source": tool})
+
+    if not turns:
+        payload = _text_value(finding.get("payload")).strip()
+        response = _text_value(finding.get("response")).strip()
+        if payload:
+            turns.append({"role": "user", "content": payload, "source": "finding"})
+        if response:
+            turns.append({"role": "assistant", "content": response, "source": "finding"})
+    return turns
+
+
+def _template_for_finding(records: list[dict], index: int, finding: dict) -> dict:
+    related = _related_fire_records(records, index)
+    args = {}
+    source_tool = ""
+    for record in reversed(related):
+        if record.get("kind") != "tool_call":
+            continue
+        tool = str(record.get("tool") or record.get("name") or "")
+        if tool not in _FIRE_TOOLS:
+            continue
+        args = _dict_value(record.get("args") or record.get("input"))
+        source_tool = tool
+        break
+
+    def pick(*keys):
+        for source in (finding, args):
+            for key in keys:
+                value = source.get(key)
+                if value not in (None, "", [], {}):
+                    return value
+        return ""
+
+    transforms = {
+        "prompt": _split_chain(pick("transforms", "transform_chain", "obfuscation_chain")),
+        "system": _split_chain(pick("system_transforms")),
+        "response": _split_chain(pick("response_transforms")),
+    }
+    return {
+        "technique": _text_value(pick("technique") or "manual"),
+        "source_tool": source_tool,
+        "preset": _text_value(pick("preset")),
+        "template": _text_value(pick("template", "prompt_template", "technique_template")),
+        "instructions": _text_value(pick("instructions", "system", "persona", "method")),
+        "think_seed": _text_value(pick("think_seed")),
+        "max_tokens": pick("max_tokens"),
+        "transforms": transforms,
+        "raw_args": args,
+    }
+
+
+def _judging_for_finding(finding: dict) -> dict:
+    from ..judging import IMAGE_JUDGE_SYSTEM, IMAGE_JUDGE_TEMPLATE, JUDGE_SYSTEM, JUDGE_TEMPLATE
+
+    source = _text_value(finding.get("judge_source") or finding.get("source") or "judge")
+    is_image = source == "image-judge" or bool(finding.get("image_urls"))
+    return {
+        "source": source,
+        "label": finding.get("label", ""),
+        "reason": finding.get("reason", ""),
+        "score": finding.get("score"),
+        "criteria": IMAGE_JUDGE_SYSTEM if is_image else JUDGE_SYSTEM,
+        "template": IMAGE_JUDGE_TEMPLATE if is_image else JUDGE_TEMPLATE,
+    }
+
+
+def _findings_for_run(path: Path) -> list[dict]:
+    records, raw_records, line_numbers = _load_records_with_lines(path)
+    models = _models_from_records(records)
+    run_time = _run_time_from_name(path.name)
+    findings = []
+    for index, record in enumerate(records):
+        label = str(record.get("label", "")).upper()
+        if record.get("kind") not in _FINDING_KINDS or label not in _FINDING_LABELS:
+            continue
+        raw_line = raw_records[index] if index < len(raw_records) else json.dumps(record, ensure_ascii=False)
+        line_number = line_numbers[index] if index < len(line_numbers) else index + 1
+        finding = dict(record)
+        finding.setdefault("label", label)
+        finding["id"] = f"{path.name}:{line_number}"
+        finding["run"] = path.name
+        finding["run_time"] = run_time
+        finding["line"] = line_number
+        finding["record_index"] = index
+        finding["raw"] = raw_line
+        finding["models"] = models
+        finding["conversation"] = _conversation_for_finding(records, index, record)
+        finding["technique_detail"] = _template_for_finding(records, index, record)
+        finding["judging"] = _judging_for_finding(record)
+        finding["fields"] = record
+        findings.append(finding)
+    rank = {"COMPLIED": 0, "PARTIAL": 1}
+    findings.sort(key=lambda item: (item.get("run", ""), rank.get(item.get("label"), 9), item.get("line", 0)), reverse=True)
+    return findings
+
+
+def _finding_run_summaries(sessions: Path) -> list[dict]:
+    if not sessions.is_dir():
+        return []
+    out = []
+    for path in sorted(sessions.glob("run-*.jsonl"), reverse=True):
+        try:
+            records = report_mod._load_records(path)
+            findings_count = sum(
+                1 for record in records
+                if record.get("kind") in _FINDING_KINDS
+                and str(record.get("label", "")).upper() in _FINDING_LABELS
+            )
+            hits = sum(
+                1 for record in records
+                if str(record.get("label", "")).upper() in _FINDING_LABELS
+            )
+        except Exception:
+            records, findings_count, hits = [], 0, 0
+        out.append({
+            "name": path.name,
+            "time": _run_time_from_name(path.name),
+            "models": _models_from_records(records),
+            "size": path.stat().st_size,
+            "records": len(records),
+            "hits": hits,
+            "findings": findings_count,
+        })
+    return out
 
 
 def _summarize_args(args: dict) -> str:
@@ -300,7 +569,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             except Exception:
                 scorecard = {}
             try:
-                findings_count = len(report_mod.extract_findings(log))
+                findings_count = len(_findings_for_run(log))
             except Exception:
                 findings_count = 0
         runs = sorted(sessions.glob("run-*.jsonl")) if sessions.is_dir() else []
@@ -338,27 +607,10 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
     @app.get("/api/runs/{name}")
     def run_detail(name: str):
-        path = sessions / name
-        if ".." in name or "/" in name or not path.is_file():
+        path = _safe_run_path(sessions, name)
+        if path is None:
             raise HTTPException(status_code=404, detail="run not found")
-        records = []
-        raw_records = []
-        line_numbers = []
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            raw = line.strip()
-            if not raw:
-                continue
-            raw_records.append(raw)
-            line_numbers.append(lineno)
-            try:
-                records.append(json.loads(raw))
-            except json.JSONDecodeError as exc:
-                records.append({
-                    "kind": "parse_error",
-                    "line": lineno,
-                    "error": str(exc),
-                    "raw": raw,
-                })
+        records, raw_records, line_numbers = _load_records_with_lines(path)
         return {
             "name": name,
             "total": len(records),
@@ -367,15 +619,31 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             "line_numbers": line_numbers,
         }
 
+    @app.get("/api/findings/runs")
+    def finding_runs():
+        return _finding_run_summaries(sessions)
+
     @app.get("/api/findings")
-    def findings():
-        log = _latest()
-        if log is None:
-            return []
-        try:
-            return report_mod.extract_findings(log)
-        except Exception:
-            return []
+    def findings(runs: str | None = None):
+        selected = [name.strip() for name in (runs or "").split(",") if name.strip()]
+        paths = []
+        if selected:
+            for name in selected:
+                path = _safe_run_path(sessions, name)
+                if path is not None:
+                    paths.append(path)
+        else:
+            log = _latest()
+            if log is not None:
+                paths.append(log)
+        out = []
+        for path in paths:
+            try:
+                out.extend(_findings_for_run(path))
+            except Exception:
+                continue
+        out.sort(key=lambda item: (str(item.get("run", "")), int(item.get("line", 0))), reverse=True)
+        return out
 
     @app.get("/api/scorecard")
     def scorecard():

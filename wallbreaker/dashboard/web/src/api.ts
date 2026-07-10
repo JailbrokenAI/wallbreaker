@@ -25,12 +25,56 @@ export interface Overview {
 }
 
 export interface Finding {
+  id?: string;
+  run?: string;
+  run_time?: string;
+  ts?: string;
+  line?: number;
+  record_index?: number;
   label: string;
   technique?: string;
   payload?: string;
   reason?: string;
   response?: string;
   category?: string;
+  raw?: string;
+  models?: RunModels;
+  conversation?: FindingTurn[];
+  technique_detail?: FindingTechnique;
+  judging?: FindingJudging;
+  fields?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
+export interface FindingTurn {
+  role: string;
+  content: string;
+  source?: string;
+}
+
+export interface FindingTechnique {
+  technique?: string;
+  source_tool?: string;
+  preset?: string;
+  template?: string;
+  instructions?: string;
+  think_seed?: string;
+  max_tokens?: unknown;
+  transforms?: {
+    prompt?: string[];
+    system?: string[];
+    response?: string[];
+  };
+  raw_args?: Record<string, unknown>;
+}
+
+export interface FindingJudging {
+  source?: string;
+  label?: string;
+  reason?: string;
+  score?: unknown;
+  criteria?: string;
+  template?: string;
 }
 
 export interface RunSummary {
@@ -40,6 +84,7 @@ export interface RunSummary {
   size: number;
   records: number;
   hits: number;
+  findings?: number;
 }
 
 export interface RunModels {
@@ -113,7 +158,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  findings: () => j<Finding[]>("/api/findings"),
+  findings: (runs?: string[]) => {
+    const qs = runs?.length ? `?runs=${encodeURIComponent(runs.join(","))}` : "";
+    return j<Finding[]>(`/api/findings${qs}`);
+  },
+  findingRuns: () => j<RunSummary[]>("/api/findings/runs"),
   runs: () => j<RunSummary[]>("/api/runs"),
   run: (name: string) => j<RunDetail>(`/api/runs/${encodeURIComponent(name)}`),
   presets: () => j<Preset[]>("/api/presets"),

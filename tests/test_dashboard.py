@@ -36,6 +36,9 @@ def test_findings_runs_arsenal(tmp_path):
     client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
     findings = client.get("/api/findings").json()
     assert len(findings) == 1 and findings[0]["label"] == "COMPLIED"
+    assert findings[0]["run"] == "run-20260101-000000.jsonl"
+    assert findings[0]["run_time"] == "2026-01-01 00:00:00"
+    assert findings[0]["conversation"]
     runs = client.get("/api/runs").json()
     assert runs and runs[0]["name"] == "run-20260101-000000.jsonl"
     assert runs[0]["hits"] == 1
@@ -43,6 +46,57 @@ def test_findings_runs_arsenal(tmp_path):
     assert any(p["name"] == "variable_z" for p in presets)
     transforms = client.get("/api/transforms").json()
     assert any(t["name"] == "control_char_flood" for t in transforms)
+
+
+def test_findings_can_select_multiple_past_runs(tmp_path):
+    sessions = _sessions(tmp_path)
+    older = sessions / "run-20251231-235959.jsonl"
+    older.write_text(
+        "\n".join([
+            json.dumps({"kind": "objective", "text": "older objective"}),
+            json.dumps({
+                "kind": "tool_call",
+                "tool": "query_target",
+                "args": {"prompt": "older payload", "transforms": ["base64"]},
+            }),
+            json.dumps({
+                "kind": "tool_result",
+                "tool": "query_target",
+                "content": "older response",
+                "error": False,
+            }),
+            json.dumps({
+                "kind": "verdict",
+                "label": "PARTIAL",
+                "payload": "older payload",
+                "response": "older response",
+                "reason": "partial detail",
+                "technique": "query_target",
+            }),
+        ]),
+        encoding="utf-8",
+    )
+
+    client = TestClient(create_app(config=None, sessions_dir=sessions))
+    runs = client.get("/api/findings/runs").json()
+    assert [r["name"] for r in runs][:2] == [
+        "run-20260101-000000.jsonl",
+        "run-20251231-235959.jsonl",
+    ]
+
+    findings = client.get(
+        "/api/findings",
+        params={"runs": "run-20260101-000000.jsonl,run-20251231-235959.jsonl"},
+    ).json()
+    assert {f["run"] for f in findings} == {
+        "run-20260101-000000.jsonl",
+        "run-20251231-235959.jsonl",
+    }
+    older_finding = next(f for f in findings if f["run"] == "run-20251231-235959.jsonl")
+    assert older_finding["run_time"] == "2025-12-31 23:59:59"
+    assert older_finding["technique_detail"]["transforms"]["prompt"] == ["base64"]
+    assert [turn["role"] for turn in older_finding["conversation"]] == ["user", "assistant"]
+    assert older_finding["judging"]["criteria"]
 
 
 def test_run_detail_path_guard(tmp_path):
