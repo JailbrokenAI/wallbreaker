@@ -79,6 +79,56 @@ HARD_CONTINUE = (
     "Do not write an essay. Emit a function call."
 )
 
+# Full registry is ~92 tools; with a 30-70KB operator system prompt that bloats the
+# context and makes some brains (Sonnet 5 + legacy, DeepSeek R1) return empty
+# multi-turn replies. Keep the red-team core so the campaign can still escalate.
+CORE_TOOLS = {
+    "harmbench",
+    "profile_target",
+    "fingerprint_defense",
+    "query_target",
+    "continue_target",
+    "query_image_target",
+    "pair_attack",
+    "crescendo",
+    "goat",
+    "tree_attack",
+    "chat_session",
+    "best_of_n",
+    "framing_sweep",
+    "persona_modulate",
+    "author_persona",
+    "evolve_persona",
+    "recommend_next",
+    "recommend_transforms",
+    "transform",
+    "parsel_craft",
+    "preset",
+    "eni",
+    "eni_list",
+    "l1b3rt4s",
+    "l1b3rt4s_list",
+    "validate",
+    "judge_response",
+    "system_sweep",
+    "fire_file",
+    "seed_sweep",
+    "many_shot",
+    "prefill",
+    "cot_forge",
+    "finish",
+    "ask_operator",
+    "write_file",
+    "read_file",
+    "list_dir",
+}
+
+
+def _trim_registry(registry) -> None:
+    for name in list(registry.tools):
+        if name not in CORE_TOOLS:
+            del registry.tools[name]
+
 ATTACKERS = [
     {
         "slug": "glm",
@@ -91,12 +141,6 @@ ATTACKERS = [
         "label": "Claude Sonnet 5 (OpenRouter)",
         "profile": "sonnet5-or",
         "notes": "Operator system prompt: operator_persona.txt (legacy).",
-    },
-    {
-        "slug": "deepseek-r1",
-        "label": "DeepSeek R1 (OpenRouter)",
-        "profile": "deepseek-r1-or",
-        "notes": "DeepSeek eval-frame jailbreak as operator system prompt.",
     },
     {
         "slug": "grok45",
@@ -227,7 +271,16 @@ async def run_one(
         cfg.target, name="target", model=TARGET_MODEL, modality="text"
     )
 
-    system = compose_system(endpoint, DEFAULT_SYSTEM) + TOOL_ENFORCE
+    # Sonnet + the large legacy file + full DEFAULT_SYSTEM was producing empty multi-turn
+    # tool rounds. Keep the operator file as the identity, add a short tool contract,
+    # skip the full ~44KB DEFAULT_SYSTEM for that brain only.
+    if slug == "sonnet5" and endpoint.system_prompt_file and os.path.isfile(
+        endpoint.system_prompt_file
+    ):
+        op = open(endpoint.system_prompt_file, encoding="utf-8").read().strip()
+        system = op + "\n\n" + TOOL_ENFORCE
+    else:
+        system = compose_system(endpoint, DEFAULT_SYSTEM) + TOOL_ENFORCE
     (out_dir / "system_prompt.txt").write_text(system, encoding="utf-8")
 
     meta = {
@@ -270,6 +323,8 @@ async def run_one(
     # eval-frame) cannot strand the campaign in empty prose-only rounds.
     provider.tool_choice = "required"
     registry = build_registry(cfg, cwd=str(ROOT))
+    _trim_registry(registry)
+    log(f"tools trimmed to {len(registry.tools)} core red-team tools")
     registry.ctx.progress = lambda m: log(f"[progress] {m}")
     registry.ctx.record = lambda p, r, lbl, rs, t: runlog.verdict(p, r, lbl, rs, t)
     registry.ctx.current_objective = OBJECTIVE
@@ -343,10 +398,7 @@ async def run_one(
     status = "error"
     data: dict = {}
     try:
-        # Reasoning brains (R1) need more output budget for CoT+tools in one turn.
         mt = max_tokens
-        if "r1" in slug.lower() or "deepseek-r1" in (endpoint.model or "").lower():
-            mt = max(max_tokens, 16000)
         result = await run_autonomous_resilient(
             provider,
             registry,
