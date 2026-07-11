@@ -34,6 +34,44 @@ def _tools_to_wire(tools: list[dict]) -> list[dict]:
     ]
 
 
+def _cache_control(ttl: str = "5m") -> dict:
+    return {"type": "ephemeral", "ttl": "1h"} if ttl == "1h" else {"type": "ephemeral"}
+
+
+def _as_cached_content(content, ttl: str) -> list | None:
+    """Wrap a message's string content in an OpenAI content-parts array carrying a
+    cache_control breakpoint. Returns None when there's nothing cacheable (empty/non-string)."""
+    if isinstance(content, str) and content:
+        return [{"type": "text", "text": content, "cache_control": _cache_control(ttl)}]
+    return None
+
+
+def _apply_openrouter_cache(wire: list[dict], ttl: str) -> None:
+    """Add cache_control breakpoints to an OpenAI-wire message list for OpenRouter, in place.
+
+    OpenRouter is the ONLY OpenAI-compatible surface here that needs explicit breakpoints:
+    Anthropic/Gemini models it fronts do NOT auto-cache, so a Claude-via-OpenRouter target
+    pays full price every round without this. It routes the marker to the underlying provider
+    and silently strips it for ones that auto-cache (OpenAI/Grok/DeepSeek), so it's safe to
+    send on every OpenRouter call. Two breakpoints: the system message (covers the static
+    system prompt + the tools array, which Anthropic orders before messages) and the last
+    string-content message (a rolling tail breakpoint so the growing transcript re-reads at
+    ~0.1x). Native OpenAI/xAI/z.ai never reach here - they auto-cache and would reject the
+    marker, so the caller gates on the OpenRouter host."""
+    system_idx = next((i for i, m in enumerate(wire) if m.get("role") == "system"), None)
+    if system_idx is not None:
+        parts = _as_cached_content(wire[system_idx].get("content"), ttl)
+        if parts:
+            wire[system_idx] = {**wire[system_idx], "content": parts}
+    for m in reversed(wire):
+        if m.get("role") == "system":
+            continue
+        parts = _as_cached_content(m.get("content"), ttl)
+        if parts:
+            m["content"] = parts
+            break
+
+
 def _reasoning_fallback(content_chars: int, has_tools: bool, reasoning_parts: list[str]) -> str | None:
     if content_chars == 0 and not has_tools and reasoning_parts:
         return "[reasoning-only response]\n" + "".join(reasoning_parts)
@@ -143,11 +181,17 @@ class OpenAIProvider(Provider):
             "Authorization": f"Bearer {self.endpoint.require_key()}",
             "Content-Type": "application/json",
         }
+        wire_messages = _messages_to_wire(
+            messages, system, getattr(self.endpoint, "system_mode", "default")
+        )
+        base_url = getattr(self.endpoint, "base_url", "") or ""
+        if getattr(self.endpoint, "cache", True) and "openrouter.ai" in base_url:
+            _apply_openrouter_cache(
+                wire_messages, getattr(self.endpoint, "cache_ttl", "5m")
+            )
         payload: dict = {
             "model": self.endpoint.model,
-            "messages": _messages_to_wire(
-                messages, system, getattr(self.endpoint, "system_mode", "default")
-            ),
+            "messages": wire_messages,
             "max_tokens": max_tokens,
             "stream": True,
         }
@@ -196,9 +240,13 @@ class OpenAIProvider(Provider):
                             continue
                         if chunk.get("usage"):
                             u = chunk["usage"]
+                            cached = (u.get("prompt_tokens_details") or {}).get(
+                                "cached_tokens", 0
+                            )
                             yield UsageEvent(
                                 input_tokens=u.get("prompt_tokens", 0),
                                 output_tokens=u.get("completion_tokens", 0),
+                                cache_read_tokens=cached,
                             )
                         choices = chunk.get("choices") or []
                         if not choices:

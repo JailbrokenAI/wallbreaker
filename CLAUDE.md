@@ -26,8 +26,21 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   bill ~0.1x, cache-write ~1.25x, output is byte-identical. `UsageEvent` now carries
   `cache_read_tokens`/`cache_write_tokens`, and Anthropic emits an input-token UsageEvent at
   `message_start` (it previously reported output only — `tokens_in` was stuck at 0 for Anthropic
-  brains). Native OpenAI/OpenRouter auto-cache stable prefixes, so no wire change there. Below
-  the model's min cacheable length (~1024 tok) a breakpoint is silently ignored, not an error.
+  brains). Below the model's min cacheable length (~1024 tok) a breakpoint is silently ignored,
+  not an error. OPENROUTER GOTCHA (the config's real path): most profiles route Claude/Grok/
+  Gemini/DeepSeek through OpenRouter as `protocol="openai"`, so the AnthropicProvider cache code
+  NEVER fires for them - they hit `OpenAIProvider`. OpenRouter does NOT auto-cache the Anthropic/
+  Gemini models it fronts (only OpenAI/Grok/DeepSeek auto-cache), so a Claude-via-OpenRouter
+  target pays full price every round unless you send explicit breakpoints. Fix: `OpenAIProvider`
+  injects cache_control into the OpenAI content-parts wire (`_apply_openrouter_cache`: system
+  message covers system+tools prefix, plus one rolling tail breakpoint), GATED on
+  `"openrouter.ai" in base_url` so native OpenAI/xAI/z.ai (which auto-cache and would 400 on the
+  marker) stay byte-identical. OpenRouter routes the marker to the underlying provider and strips
+  it for auto-cachers, so sending it on every OpenRouter call is safe. Cache lifetime is
+  `Endpoint.cache_ttl` ("5m" default / "1h" extended, adds the `extended-cache-ttl-2025-04-11`
+  beta header on the Anthropic path) - use "1h" for slow reasoning/battery rounds that can exceed
+  the 5m window and let the cache go cold. OpenAI-wire cached tokens surface via
+  `usage.prompt_tokens_details.cached_tokens` into `UsageEvent.cache_read_tokens`.
 - **[cli]**: `cli.py` is itself inside the `wallbreaker` package (a sibling of `session.py`,
   `agent/`, `tools/`), so its own internal imports must be single-dot (`from .session import
   RunLog`), never `from ..session import RunLog` — the double-dot goes up past the package

@@ -24,7 +24,13 @@ ANTHROPIC_VERSION = "2023-06-01"
 _CACHE_CONTROL = {"type": "ephemeral"}
 
 
-def _tools_to_wire(tools: list[dict], cache: bool = False) -> list[dict]:
+def _cache_control(ttl: str = "5m") -> dict:
+    """The cache_control marker. Bare ephemeral = Anthropic's 5m default; ttl='1h' requests
+    the extended window (needs the extended-cache-ttl beta header, added in stream())."""
+    return {"type": "ephemeral", "ttl": "1h"} if ttl == "1h" else {"type": "ephemeral"}
+
+
+def _tools_to_wire(tools: list[dict], cache: bool = False, ttl: str = "5m") -> list[dict]:
     wire = [
         {
             "name": t["name"],
@@ -37,11 +43,11 @@ def _tools_to_wire(tools: list[dict], cache: bool = False) -> list[dict]:
     # segment (Anthropic processes tools before system before messages). The 93-tool spec is
     # ~27K static tokens - caching it turns that into a ~0.1x re-read every subsequent round.
     if cache and wire:
-        wire[-1] = {**wire[-1], "cache_control": _CACHE_CONTROL}
+        wire[-1] = {**wire[-1], "cache_control": _cache_control(ttl)}
     return wire
 
 
-def _mark_history_cache(wire: list[dict], breakpoints: int = 2) -> None:
+def _mark_history_cache(wire: list[dict], breakpoints: int = 2, ttl: str = "5m") -> None:
     """Add rolling cache_control breakpoints to the tail of the conversation in place.
 
     Marks the last content block of the last N messages. Each breakpoint makes everything
@@ -50,13 +56,14 @@ def _mark_history_cache(wire: list[dict], breakpoints: int = 2) -> None:
     O(n) history. Two breakpoints give resilience: even if the very last one just missed the
     5-min TTL, the earlier one still covers most of the transcript.
     """
+    cc = _cache_control(ttl)
     marked = 0
     for entry in reversed(wire):
         if marked >= breakpoints:
             break
         content = entry.get("content")
         if isinstance(content, list) and content:
-            content[-1] = {**content[-1], "cache_control": _CACHE_CONTROL}
+            content[-1] = {**content[-1], "cache_control": cc}
             marked += 1
 
 
@@ -123,14 +130,18 @@ class AnthropicProvider(Provider):
         url = f"{self.endpoint.base_url}/v1/messages"
         headers = self._auth_headers()
         cache = bool(getattr(self.endpoint, "cache", True))
+        ttl = getattr(self.endpoint, "cache_ttl", "5m")
         if cache:
             # Harmless on GA models (they cache without it); required by older snapshots.
-            headers["anthropic-beta"] = "prompt-caching-2024-07-31"
+            betas = ["prompt-caching-2024-07-31"]
+            if ttl == "1h":
+                betas.append("extended-cache-ttl-2025-04-11")
+            headers["anthropic-beta"] = ",".join(betas)
         mode = getattr(self.endpoint, "system_mode", "default")
         merge_system = system if (mode == "merge" and system) else None
         wire_messages = _messages_to_wire(messages, merge_system=merge_system)
         if cache:
-            _mark_history_cache(wire_messages)
+            _mark_history_cache(wire_messages, ttl=ttl)
         payload: dict = {
             "model": self.endpoint.model,
             "messages": wire_messages,
@@ -141,14 +152,14 @@ class AnthropicProvider(Provider):
             # As a single cacheable text block, the ~11K static system prompt is re-read at
             # ~0.1x on every round after the first instead of re-billed in full.
             payload["system"] = (
-                [{"type": "text", "text": system, "cache_control": _CACHE_CONTROL}]
+                [{"type": "text", "text": system, "cache_control": _cache_control(ttl)}]
                 if cache
                 else system
             )
         if temperature is not None:
             payload["temperature"] = temperature
         if tools:
-            payload["tools"] = _tools_to_wire(tools, cache=cache)
+            payload["tools"] = _tools_to_wire(tools, cache=cache, ttl=ttl)
             tc = getattr(self, "tool_choice", None) or getattr(
                 self.endpoint, "tool_choice", None
             )

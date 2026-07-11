@@ -77,6 +77,11 @@ class Endpoint:
     # the unchanging prefix at ~0.1x instead of full price. Byte-identical outputs; billing
     # only. Default on - this harness runs long multi-round engagements where it always wins.
     cache: bool = True
+    # cache lifetime: "5m" (Anthropic default) or "1h" (extended TTL). The 1h window keeps the
+    # prefix warm across slow multi-minute rounds (reasoning targets, big batteries) that would
+    # otherwise let a 5m cache go cold and re-pay the full write. Writes bill 2x at 1h vs 1.25x
+    # at 5m, so it wins the moment one reuse lands after the 5m mark. Byte-identical output.
+    cache_ttl: str = "5m"
 
     def resolved_key(self) -> str:
         if self.api_key:
@@ -255,6 +260,7 @@ def _endpoint_from_table(name: str, table: dict) -> Endpoint:
         auth_style=str(table.get("auth_style", "x-api-key")).lower(),
         jailbreak_file=str(table.get("jailbreak_file", "")),
         cache=bool(table.get("cache", True)),
+        cache_ttl="1h" if str(table.get("cache_ttl", "5m")).lower() == "1h" else "5m",
     )
 
 

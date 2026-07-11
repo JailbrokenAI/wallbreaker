@@ -129,6 +129,54 @@ def test_anthropic_history_cache_breakpoints_on_tail():
         assert "cache_control" not in assistant["content"][0]
 
 
+def test_openrouter_cache_breakpoints_on_system_and_tail():
+    from wallbreaker.providers.openai_provider import _apply_openrouter_cache
+
+    wire = oai_msgs(CONVO, "sys")
+    _apply_openrouter_cache(wire, "5m")
+    system = wire[0]
+    assert system["role"] == "system"
+    assert system["content"][0]["cache_control"] == {"type": "ephemeral"}
+    # exactly one non-system rolling breakpoint (the last string-content message)
+    tail = [
+        m for m in wire[1:]
+        if isinstance(m.get("content"), list)
+        and m["content"]
+        and isinstance(m["content"][-1], dict)
+        and m["content"][-1].get("cache_control")
+    ]
+    assert len(tail) == 1
+
+
+def test_openrouter_cache_1h_ttl_marker():
+    from wallbreaker.providers.openai_provider import _apply_openrouter_cache
+
+    wire = oai_msgs(CONVO, "sys")
+    _apply_openrouter_cache(wire, "1h")
+    assert wire[0]["content"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_anthropic_1h_ttl_marker():
+    from wallbreaker.providers.anthropic_provider import _cache_control, _tools_to_wire
+
+    assert _cache_control("1h") == {"type": "ephemeral", "ttl": "1h"}
+    assert _cache_control("5m") == {"type": "ephemeral"}
+    cached = _tools_to_wire(TOOLS, cache=True, ttl="1h")
+    assert cached[-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_endpoint_cache_ttl_parses():
+    from wallbreaker.config import _endpoint_from_table
+
+    ep = _endpoint_from_table(
+        "p",
+        {"model": "m", "protocol": "openai", "base_url": "http://x", "cache_ttl": "1h"},
+    )
+    assert ep.cache_ttl == "1h"
+    default = Endpoint("a", "openai", "http://x", "m")
+    assert default.cache_ttl == "5m"
+
+
 def test_endpoint_cache_defaults_on_and_parses():
     assert Endpoint("a", "anthropic", "http://x", "m").cache is True
     from wallbreaker.config import _endpoint_from_table
