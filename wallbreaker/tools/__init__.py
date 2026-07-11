@@ -33,6 +33,7 @@ def build_registry(config: Config, cwd: str | None = None) -> ToolRegistry:
         "profile_target", "recommend_next",
         "cot_forge",
         "evolve_persona", "framing_sweep", "persona_modulate", "author_persona",
+        "persona_forge",
         "narrative_persona_splinter",
         "chat_template", "chat_session",
         "vault", "swarm",
