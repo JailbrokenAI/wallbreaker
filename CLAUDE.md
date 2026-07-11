@@ -12,6 +12,17 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   with `lossy` flags.
 
 ## Lessons Learned
+- **[config]**: `DEFAULT_CONFIG_NAMES = ("config.toml", "config.example.toml")` and
+  `load_config()` picks the FIRST that exists — so when a real `config.toml` is present it
+  fully SHADOWS `config.example.toml`. Wiring anything for an actual run (mcp servers,
+  profiles, roster) into `config.example.toml` alone is a runtime no-op; edit `config.toml`.
+  This bit the jailbroken MCP server: the `[[mcp.servers]]` block first went into the example
+  file, so the harness brain saw zero `jbg_*` tools and (per session run-20260712-011127)
+  fell back to `ls`-ing dirs and grepping `.claude.json` (Claude Code's config, unrelated).
+  Verify wiring with `load_config()` (no arg, so it resolves the same file the harness uses),
+  never `load_config("config.example.toml")`. MCP tools are exposed to the brain under
+  `<tool_prefix><remote_name>` and self-describe via the server's own tool descriptions — no
+  extra doctrine needed once the server is in the loaded config.
 - **[speed/http]**: every `provider.stream()`/`complete()` used to open a NEW
   `httpx.AsyncClient` per call (anthropic/openai/image), so every model call re-did the TCP+TLS
   handshake (~100-300ms) - brutal across a 100-round brain loop and batteries (best_of_n reuses
