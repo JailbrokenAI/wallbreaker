@@ -56,6 +56,14 @@ an LLM judge, and reliability validation.
   (`protocol = "claude-code"`, keyless) as the red-team brain. Third-party Anthropic proxies
   work via `auth_style = "bearer"`.
 
+
+## Clone Repository 
+```
+git clone https://github.com/JailbrokenAI/wallbreaker
+
+cd wallbreaker 
+```
+
 ## Install
 
 ```bash
