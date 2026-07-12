@@ -57,6 +57,8 @@ TRANSFORMS: dict[str, Transform] = dict(
         _t("payload_split", encodings.payload_split_encode, encodings.payload_split_decode, "Variable-assignment payload splitting + join"),
         _t("delimiter", encodings.delimiter_encode, encodings.delimiter_decode, "Dotted '.' char separator framing (folds literal dots)", lossy=True),
         _t("caesar3", encodings.caesar3_encode, encodings.caesar3_decode, "Caesar shift-by-3 cipher"),
+        _t("caesar5", encodings.caesar5_encode, encodings.caesar5_decode, "Caesar shift-by-5 cipher"),
+        _t("caesar13", encodings.caesar13_encode, encodings.caesar13_decode, "Caesar shift-by-13 cipher"),
         _t("artprompt", ascii_art.artprompt_encode, None, "ArtPrompt ASCII-art word masking (Jiang et al., ACL 2024)", lossy=True),
         _t("anagram", encodings.anagram_encode, encodings.anagram_decode, "Deterministic per-word letter scramble (not invertible)", lossy=True),
         _t("tokenbreak", encodings.tokenbreak_encode, encodings.tokenbreak_decode, "Prepend a benign char per token to break tokenizer boundaries", lossy=True),

@@ -286,6 +286,22 @@ def caesar3_decode(text: str) -> str:
     return _caesar(text, -3)
 
 
+def caesar5_encode(text: str) -> str:
+    return _caesar(text, 5)
+
+
+def caesar5_decode(text: str) -> str:
+    return _caesar(text, -5)
+
+
+def caesar13_encode(text: str) -> str:
+    return _caesar(text, 13)
+
+
+def caesar13_decode(text: str) -> str:
+    return _caesar(text, -13)
+
+
 def _scramble_word(word: str) -> str:
     order = sorted(range(len(word)), key=lambda i: (word[i], i))
     return "".join(word[i] for i in order)

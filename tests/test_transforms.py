@@ -101,6 +101,18 @@ def test_caesar3_shifts_three():
     assert t.decode(t.encode(SAMPLE)) == SAMPLE
 
 
+def test_caesar5_shifts_five():
+    t = TRANSFORMS["caesar5"]
+    assert t.encode("abc XYZ") == "fgh CDE"
+    assert t.decode(t.encode(SAMPLE)) == SAMPLE
+
+
+def test_caesar13_shifts_thirteen():
+    t = TRANSFORMS["caesar13"]
+    assert t.encode("abc XYZ") == "nop KLM"
+    assert t.decode(t.encode(SAMPLE)) == SAMPLE
+
+
 def test_anagram_scrambles_deterministically():
     t = TRANSFORMS["anagram"]
     a = t.encode("ignore")
