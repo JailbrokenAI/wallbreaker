@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -576,10 +579,72 @@ _PRESETS = [
 
 PRESETS = {p.name: p for p in _PRESETS}
 
+_EXTERNAL_CACHE: dict[str, Preset] | None = None
+
+
+def _find_presets_dir() -> Path | None:
+    env = os.environ.get("WALLBREAKER_PRESETS_DIR", "")
+    if env:
+        candidate = Path(env)
+        return candidate if candidate.is_dir() else None
+    cwd = Path.cwd()
+    for directory in (cwd, *cwd.parents):
+        candidate = directory / "presets"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _load_preset_file(filepath: Path) -> Preset | None:
+    try:
+        with open(filepath, "rb") as handle:
+            data = tomllib.load(handle)
+    except Exception:
+        return None
+    name = str(data.get("name", "")).strip().lower()
+    desc = str(data.get("description", ""))
+    tmpl = str(data.get("template", ""))
+    if not name or not tmpl:
+        return None
+    if "{request}" not in tmpl:
+        return None
+    try:
+        tmpl.format(request="X")
+    except Exception:
+        return None
+    return Preset(name, desc, tmpl)
+
+
+def load_external_presets() -> dict[str, Preset]:
+    global _EXTERNAL_CACHE
+    if _EXTERNAL_CACHE is not None:
+        return _EXTERNAL_CACHE
+    _EXTERNAL_CACHE = {}
+    presets_dir = _find_presets_dir()
+    if presets_dir is None:
+        return _EXTERNAL_CACHE
+    for filepath in sorted(presets_dir.glob("*.toml")):
+        preset = _load_preset_file(filepath)
+        if preset is not None:
+            _EXTERNAL_CACHE[preset.name] = preset
+    return _EXTERNAL_CACHE
+
+
+def reload_presets() -> None:
+    global _EXTERNAL_CACHE
+    _EXTERNAL_CACHE = None
+
 
 def list_presets() -> list[Preset]:
-    return list(_PRESETS)
+    external = load_external_presets()
+    merged = {p.name: p for p in _PRESETS}
+    merged.update(external)
+    return list(merged.values())
 
 
 def get_preset(name: str) -> Preset | None:
-    return PRESETS.get(name.strip().lower())
+    key = name.strip().lower()
+    external = load_external_presets()
+    if key in external:
+        return external[key]
+    return PRESETS.get(key)
