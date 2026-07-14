@@ -46,6 +46,8 @@ stego = [
 dashboard = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    "ddgs>=9.0",
+    "PyYAML>=6.0",
 ]
 
 [project.scripts]

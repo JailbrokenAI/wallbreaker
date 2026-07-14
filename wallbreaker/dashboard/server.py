@@ -922,6 +922,56 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         result = await _discover_profile_models(name, config.profiles[name])
         return {"ok": bool(result["fetched"]), **result}
 
+    @app.get("/api/provider-spec/drafts")
+    def provider_spec_drafts():
+        return provider_registry.list_drafts() if provider_registry is not None else []
+
+    @app.get("/api/provider-spec/drafts/{draft_id}")
+    def provider_spec_draft_get(draft_id: str):
+        if provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        draft = provider_registry.get_draft(draft_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail="unknown provider specification draft")
+        return draft
+
+    @app.put("/api/provider-spec/drafts/{draft_id}")
+    def provider_spec_draft_put(draft_id: str, body: dict):
+        if provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        try:
+            return provider_registry.update_draft(draft_id, body)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown provider specification draft") from exc
+
+    @app.delete("/api/provider-spec/drafts/{draft_id}")
+    def provider_spec_draft_delete(draft_id: str):
+        if provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        try:
+            provider_registry.discard_draft(draft_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown provider specification draft") from exc
+        return {"ok": True}
+
+    @app.post("/api/provider-spec/drafts/{draft_id}/apply")
+    def provider_spec_draft_apply(draft_id: str):
+        if provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        try:
+            provider = provider_registry.apply_draft(draft_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown provider specification draft") from exc
+        except Exception as exc:
+            from ..config import ConfigError
+
+            if isinstance(exc, ConfigError):
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise
+        if model_catalog is not None:
+            model_catalog.upsert(provider["name"], provider["model"], "configured")
+        return provider
+
     def _roles_view(prefs: dict) -> dict:
         roles = {}
         role_keys = {
@@ -984,6 +1034,76 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         save_state(path, prefs)
         _apply_settings(config, prefs)
         return _roles_view(prefs)[role]
+
+    research_lock = asyncio.Lock()
+
+    @app.post("/api/provider-spec/discover")
+    async def provider_spec_discover(body: dict):
+        from fastapi.responses import StreamingResponse
+
+        if config is None or provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        provider_name = str(body.get("provider_name") or "").strip()
+        if not provider_name:
+            raise HTTPException(status_code=400, detail="provider_name is required")
+        if research_lock.locked():
+            raise HTTPException(status_code=409, detail="provider research is already in progress")
+        from ..state import load_state, state_path_for
+
+        prefs = load_state(state_path_for(config))
+        profile = str(body.get("research_provider") or prefs.get("research_profile") or config.default_profile)
+        if profile not in config.profiles:
+            raise HTTPException(status_code=400, detail=f"unknown research provider '{profile}'")
+        model = str(body.get("research_model") or prefs.get("research_model") or config.profiles[profile].model)
+        research_endpoint = dataclasses.replace(config.profiles[profile], model=model)
+        if hasattr(config.profiles[profile], "_catalog_path"):
+            research_endpoint._catalog_path = config.profiles[profile]._catalog_path
+            research_endpoint._provider_id = profile
+        from ..provider_research import ProviderSpecAgent
+        from ..providers.factory import build_provider
+
+        agent = ProviderSpecAgent(build_provider(research_endpoint), config)
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def push(event):
+            queue.put_nowait(event)
+
+        async def runner():
+            async with research_lock:
+                try:
+                    draft = await agent.run(
+                        provider_name=provider_name,
+                        docs_urls=_list_arg(body.get("docs_urls")),
+                        spec_text=str(body.get("spec_text") or ""),
+                        notes=str(body.get("notes") or ""),
+                        max_rounds=_int_setting(body.get("max_rounds"), prefs.get("research_agent_max_rounds", 6), 1, 20),
+                        max_tokens=_int_setting(body.get("max_tokens"), prefs.get("research_agent_max_tokens", 8192), 256, 32000),
+                        emit=push,
+                    )
+                    saved = provider_registry.save_draft(draft)
+                    push({"type": "done", "draft": saved})
+                except Exception as exc:  # noqa: BLE001
+                    push({"type": "error", "error": f"{type(exc).__name__}: {exc}"})
+                finally:
+                    push(None)
+
+        task = asyncio.create_task(runner())
+
+        async def stream():
+            push({"type": "start", "provider_name": provider_name, "research_provider": profile, "research_model": model})
+            try:
+                while True:
+                    event = await queue.get()
+                    if event is None:
+                        break
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            finally:
+                if not task.done():
+                    task.cancel()
+
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={
+            "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+        })
 
     @app.get("/api/models")
     async def models_get(profile: str):

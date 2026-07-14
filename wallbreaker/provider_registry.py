@@ -4,6 +4,8 @@ import dataclasses
 import json
 import os
 import re
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import Config, ConfigError, Endpoint
@@ -198,3 +200,63 @@ class ProviderRegistry:
         self.config.profiles[name] = dataclasses.replace(self.baseline[name])
         self.attach_catalog_context()
         return self.get(name) or {}
+
+    def list_drafts(self) -> list[dict]:
+        drafts = self._document().get("drafts", {})
+        if not isinstance(drafts, dict):
+            return []
+        return sorted(
+            (value for value in drafts.values() if isinstance(value, dict)),
+            key=lambda item: str(item.get("created_at", "")),
+            reverse=True,
+        )
+
+    def get_draft(self, draft_id: str) -> dict | None:
+        return next((item for item in self.list_drafts() if item.get("id") == draft_id), None)
+
+    def save_draft(self, draft: dict) -> dict:
+        doc = self._document()
+        draft = dict(draft)
+        draft.setdefault("id", uuid.uuid4().hex)
+        draft.setdefault("created_at", datetime.now(UTC).isoformat(timespec="seconds"))
+        draft["status"] = "draft"
+        doc["drafts"][draft["id"]] = draft
+        _write(self.path, doc)
+        return draft
+
+    def update_draft(self, draft_id: str, updates: dict) -> dict:
+        doc = self._document()
+        current = doc["drafts"].get(draft_id)
+        if not isinstance(current, dict):
+            raise KeyError(draft_id)
+        allowed = {
+            "provider_name", "protocol", "base_url", "model", "api_key_env",
+            "auth_style", "inference_path", "models_path", "modality",
+            "sources", "confidence", "warnings", "supported", "response_shape",
+        }
+        current.update({key: value for key, value in updates.items() if key in allowed})
+        doc["drafts"][draft_id] = current
+        _write(self.path, doc)
+        return current
+
+    def discard_draft(self, draft_id: str) -> None:
+        doc = self._document()
+        if draft_id not in doc["drafts"]:
+            raise KeyError(draft_id)
+        del doc["drafts"][draft_id]
+        _write(self.path, doc)
+
+    def apply_draft(self, draft_id: str) -> dict:
+        draft = self.get_draft(draft_id)
+        if draft is None:
+            raise KeyError(draft_id)
+        if not draft.get("supported", True) or draft.get("protocol") not in _PROTOCOLS:
+            raise ConfigError("This specification requires a custom provider adapter")
+        name = str(draft.get("provider_name") or "").strip()
+        result = self.save(name, draft)
+        doc = self._document()
+        if draft_id in doc["drafts"]:
+            doc["drafts"][draft_id]["status"] = "applied"
+            doc["drafts"][draft_id]["applied_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+            _write(self.path, doc)
+        return result
