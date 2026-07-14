@@ -68,6 +68,10 @@ class Endpoint:
     # (Authorization: Bearer <key>) for third-party proxies (tokies.cc etc.) that use the
     # ANTHROPIC_AUTH_TOKEN scheme instead of a native Anthropic key.
     auth_style: str = "x-api-key"
+    # Optional compatibility paths discovered from provider documentation. Empty
+    # values retain the protocol defaults used by the provider implementations.
+    inference_path: str = ""
+    models_path: str = ""
 
     def resolved_key(self) -> str:
         if self.api_key:
@@ -226,6 +230,8 @@ def _endpoint_from_table(name: str, table: dict) -> Endpoint:
         system_mode=str(table.get("system_mode", "default")).lower(),
         system_prompt_file=str(table.get("system_prompt_file", "")),
         auth_style=str(table.get("auth_style", "x-api-key")).lower(),
+        inference_path=str(table.get("inference_path", "")),
+        models_path=str(table.get("models_path", "")),
     )
 
 

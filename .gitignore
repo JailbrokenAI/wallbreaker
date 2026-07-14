@@ -10,6 +10,10 @@ dist/
 .env
 config.toml
 .wallbreaker_state.json
+.wallbreaker_providers.json
+.wallbreaker_models.sqlite3
+.wallbreaker_models.sqlite3-shm
+.wallbreaker_models.sqlite3-wal
 .rth_state.json
 
 # fetched-at-runtime jailbreak corpora (not redistributed)

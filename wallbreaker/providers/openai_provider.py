@@ -138,7 +138,8 @@ class OpenAIProvider(Provider):
         max_tokens: int = 4096,
         temperature: float | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        url = f"{self.endpoint.base_url}/chat/completions"
+        path = getattr(self.endpoint, "inference_path", "") or "/chat/completions"
+        url = f"{self.endpoint.base_url}{path if path.startswith('/') else '/' + path}"
         headers = {
             "Authorization": f"Bearer {self.endpoint.require_key()}",
             "Content-Type": "application/json",

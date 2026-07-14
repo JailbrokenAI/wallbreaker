@@ -20,6 +20,7 @@ _ENDPOINT_PREFIXES = ("attacker", "target", "judge", "art")
 _ENDPOINT_FIELDS = (
     "protocol", "base_url", "model", "api_key_env", "provider", "timeout",
     "modality", "reasoning", "system_mode", "system_prompt_file", "auth_style",
+    "inference_path", "models_path",
 )
 
 
@@ -766,8 +767,10 @@ async def _discover_profile_models(profile: str, endpoint) -> dict:
 
     import httpx
 
+    custom_path = str(getattr(endpoint, "models_path", "") or "")
     if protocol == "anthropic":
-        url = f"{base_url}/v1/models"
+        path = custom_path or "/v1/models"
+        url = f"{base_url}{path if path.startswith('/') else '/' + path}"
         headers = {
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
@@ -779,7 +782,8 @@ async def _discover_profile_models(profile: str, endpoint) -> dict:
             else:
                 headers["x-api-key"] = key
     else:
-        url = f"{base_url}/models"
+        path = custom_path or "/models"
+        url = f"{base_url}{path if path.startswith('/') else '/' + path}"
         headers = {"Content-Type": "application/json"}
         key = endpoint.resolved_key()
         if key:
@@ -813,8 +817,12 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     from ..session import RunLog, run_models_meta
 
     console_runlog = RunLog(directory=str(sessions))
+    provider_registry = None
     if config is not None:
         try:
+            from ..provider_registry import ProviderRegistry
+
+            provider_registry = ProviderRegistry(config)
             from ..state import load_state, state_path_for
 
             _apply_settings(config, load_state(state_path_for(config)))
@@ -823,7 +831,8 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     app = FastAPI(title="Wallbreaker", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[],
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -850,6 +859,121 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             except Exception:
                 prefs = {}
         return _settings_view(config, prefs)
+
+    @app.get("/api/providers")
+    def providers_get():
+        return provider_registry.list() if provider_registry is not None else []
+
+    @app.get("/api/providers/{name}")
+    def provider_get(name: str):
+        if provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        item = provider_registry.get(name)
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"unknown provider '{name}'")
+        return item
+
+    @app.put("/api/providers/{name}")
+    def provider_put(name: str, body: dict):
+        if provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        try:
+            return provider_registry.save(name, body)
+        except Exception as exc:
+            from ..config import ConfigError
+
+            if isinstance(exc, ConfigError):
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise
+
+    @app.delete("/api/providers/{name}")
+    def provider_delete(name: str):
+        if provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        try:
+            provider_registry.delete(name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown provider '{name}'") from exc
+        return {"ok": True}
+
+    @app.post("/api/providers/{name}/reset")
+    def provider_reset(name: str):
+        if provider_registry is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        try:
+            return provider_registry.reset(name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"provider '{name}' has no config baseline") from exc
+
+    @app.post("/api/providers/{name}/test")
+    async def provider_test(name: str):
+        if config is None or name not in config.profiles:
+            raise HTTPException(status_code=404, detail=f"unknown or disabled provider '{name}'")
+        result = await _discover_profile_models(name, config.profiles[name])
+        return {"ok": bool(result["fetched"]), **result}
+
+    def _roles_view(prefs: dict) -> dict:
+        roles = {}
+        role_keys = {
+            "attacker": ("profile", "attacker_model"),
+            "target": ("target_profile", "target_model"),
+            "judge": ("judge_profile", "judge_model"),
+            "research": ("research_profile", "research_model"),
+        }
+        for role, (profile_key, model_key) in role_keys.items():
+            profile = prefs.get(profile_key)
+            if not isinstance(profile, str) or profile not in getattr(config, "profiles", {}):
+                profile = getattr(config, "default_profile", None)
+            endpoint = config.profiles.get(profile) if config is not None and profile else None
+            model = prefs.get(model_key) or getattr(endpoint, "model", "")
+            if role == "target" and getattr(config, "target", None) is not None:
+                model = prefs.get(model_key) or config.target.model
+            if role == "judge" and getattr(config, "judge", None) is not None:
+                model = prefs.get(model_key) or config.judge.model
+            roles[role] = {"provider": profile, "model": model}
+        roles["research"]["max_rounds"] = _int_setting(prefs.get("research_agent_max_rounds"), 6, 1, 20)
+        roles["research"]["max_tokens"] = _int_setting(prefs.get("research_agent_max_tokens"), 8192, 256, 32000)
+        return roles
+
+    @app.get("/api/roles")
+    def roles_get():
+        if config is None:
+            return {}
+        from ..state import load_state, state_path_for
+
+        return _roles_view(load_state(state_path_for(config)))
+
+    @app.put("/api/roles/{role}")
+    def role_put(role: str, body: dict):
+        if config is None:
+            raise HTTPException(status_code=400, detail="no config loaded")
+        keys = {
+            "attacker": ("profile", "attacker_model"),
+            "target": ("target_profile", "target_model"),
+            "judge": ("judge_profile", "judge_model"),
+            "research": ("research_profile", "research_model"),
+        }
+        if role not in keys:
+            raise HTTPException(status_code=404, detail=f"unknown role '{role}'")
+        provider = str(body.get("provider") or "")
+        model = str(body.get("model") or "").strip()
+        if provider not in config.profiles:
+            raise HTTPException(status_code=400, detail=f"unknown provider '{provider}'")
+        if not model:
+            raise HTTPException(status_code=400, detail="model is required")
+        from ..state import load_state, save_state, state_path_for
+
+        path = state_path_for(config)
+        prefs = load_state(path)
+        provider_key, model_key = keys[role]
+        prefs[provider_key] = provider
+        prefs[model_key] = model
+        if role == "research":
+            prefs["research_agent_max_rounds"] = _int_setting(body.get("max_rounds"), 6, 1, 20)
+            prefs["research_agent_max_tokens"] = _int_setting(body.get("max_tokens"), 8192, 256, 32000)
+        save_state(path, prefs)
+        _apply_settings(config, prefs)
+        return _roles_view(prefs)[role]
 
     @app.get("/api/models")
     async def models_get(profile: str):

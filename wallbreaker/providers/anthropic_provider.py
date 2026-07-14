@@ -93,7 +93,8 @@ class AnthropicProvider(Provider):
         max_tokens: int = 4096,
         temperature: float | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        url = f"{self.endpoint.base_url}/v1/messages"
+        path = getattr(self.endpoint, "inference_path", "") or "/v1/messages"
+        url = f"{self.endpoint.base_url}{path if path.startswith('/') else '/' + path}"
         headers = self._auth_headers()
         mode = getattr(self.endpoint, "system_mode", "default")
         merge_system = system if (mode == "merge" and system) else None
