@@ -55,6 +55,14 @@ an LLM judge, and reliability validation.
 - **Pluggable attacker brains:** OpenAI/Anthropic APIs, or the local **Claude Code CLI**
   (`protocol = "claude-code"`, keyless) as the red-team brain. Third-party Anthropic proxies
   work via `auth_style = "bearer"`.
+- **Extended attack arsenal (this fork):** `cipherchat` (CipherChat/SelfCipher, ICLR
+  2024) teaches the target a cipher in-band then fires in ciphertext; `skeleton_key`
+  (Russinovich 2024) reframes the guardrail as a policy amendment with a "Warning:"
+  label; `persuasion_attack` (PAP, Zeng 2024) rewrites the ask through 16 persuasion
+  strategies concurrently and ranks bypasses; `drattack` (Li 2024) decomposes the
+  objective into benign fragments then reassembles; `ica` (Wei 2023) packs N harmful
+  Q/A demos into a single in-context turn. Live at 60% ASR on `deepseek/deepseek-chat`
+  in preliminary measurement — see `CHANGELOG.md`.
 
 ## Install
 
