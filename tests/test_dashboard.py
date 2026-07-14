@@ -217,6 +217,9 @@ def test_settings_get_and_set(tmp_path):
     r3 = client.post("/api/settings", json={"agent": {"max_rounds": 18, "max_tokens": 12000}})
     assert r3.json()["agent"] == {"max_rounds": 18, "max_tokens": 12000}
 
+    low_tokens = client.post("/api/settings", json={"agent": {"max_tokens": 7}})
+    assert low_tokens.json()["agent"]["max_tokens"] == 7
+
     r4 = client.post("/api/settings", json={
         "advanced": {
             "runtime": {"rounds": 16, "auto": True, "log": True},

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { AgentConfig } from "../api";
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
@@ -13,7 +14,7 @@ function clampNumber(value: number, fallback: number, lo: number, hi: number): n
 export function normalizeAgentConfig(value?: Partial<AgentConfig> | null): AgentConfig {
   return {
     max_rounds: clampNumber(Number(value?.max_rounds), DEFAULT_AGENT_CONFIG.max_rounds, 1, 50),
-    max_tokens: clampNumber(Number(value?.max_tokens), DEFAULT_AGENT_CONFIG.max_tokens, 256, 32000),
+    max_tokens: clampNumber(Number(value?.max_tokens), DEFAULT_AGENT_CONFIG.max_tokens, 1, 32000),
   };
 }
 
@@ -34,9 +35,23 @@ export function AgentConfigDrawer({
   saving?: boolean;
   status?: string;
 }) {
+  const [draft, setDraft] = useState({
+    max_rounds: String(value.max_rounds),
+    max_tokens: String(value.max_tokens),
+  });
+
+  useEffect(() => {
+    setDraft({ max_rounds: String(value.max_rounds), max_tokens: String(value.max_tokens) });
+  }, [value.max_rounds, value.max_tokens]);
+
   const setField = (key: keyof AgentConfig, raw: string) => {
-    const next = normalizeAgentConfig({ ...value, [key]: Number.parseInt(raw || "0", 10) });
-    onChange(next);
+    setDraft((current) => ({ ...current, [key]: raw }));
+    if (!/^\d+$/.test(raw)) return;
+    onChange({ ...value, [key]: Number.parseInt(raw, 10) });
+  };
+
+  const restoreEmpty = (key: keyof AgentConfig) => {
+    if (!draft[key]) setDraft((current) => ({ ...current, [key]: String(value[key]) }));
   };
 
   return (
@@ -52,18 +67,19 @@ export function AgentConfigDrawer({
           min={1}
           max={50}
           step={1}
-          value={value.max_rounds}
+          value={draft.max_rounds}
           onChange={(event) => setField("max_rounds", event.target.value)}
+          onBlur={() => restoreEmpty("max_rounds")}
           disabled={disabled}
         />
         <label className="fld">Max tokens per response</label>
         <input
           type="number"
-          min={256}
           max={32000}
-          step={256}
-          value={value.max_tokens}
+          step={1}
+          value={draft.max_tokens}
           onChange={(event) => setField("max_tokens", event.target.value)}
+          onBlur={() => restoreEmpty("max_tokens")}
           disabled={disabled}
         />
         {(onSave || status) && (

@@ -440,7 +440,7 @@ def _agent_settings(prefs: dict | None = None) -> dict:
         "max_tokens": _int_setting(
             prefs.get("agent_max_tokens"),
             8192,
-            256,
+            1,
             32000,
         ),
     }
@@ -992,7 +992,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 model = prefs.get(model_key) or config.judge.model
             roles[role] = {"provider": profile, "model": model}
         roles["research"]["max_rounds"] = _int_setting(prefs.get("research_agent_max_rounds"), 6, 1, 20)
-        roles["research"]["max_tokens"] = _int_setting(prefs.get("research_agent_max_tokens"), 8192, 256, 32000)
+        roles["research"]["max_tokens"] = _int_setting(prefs.get("research_agent_max_tokens"), 8192, 1, 32000)
         return roles
 
     @app.get("/api/roles")
@@ -1030,7 +1030,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         prefs[model_key] = model
         if role == "research":
             prefs["research_agent_max_rounds"] = _int_setting(body.get("max_rounds"), 6, 1, 20)
-            prefs["research_agent_max_tokens"] = _int_setting(body.get("max_tokens"), 8192, 256, 32000)
+            prefs["research_agent_max_tokens"] = _int_setting(body.get("max_tokens"), 8192, 1, 32000)
         save_state(path, prefs)
         _apply_settings(config, prefs)
         return _roles_view(prefs)[role]
@@ -1077,7 +1077,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                         spec_text=str(body.get("spec_text") or ""),
                         notes=str(body.get("notes") or ""),
                         max_rounds=_int_setting(body.get("max_rounds"), prefs.get("research_agent_max_rounds", 6), 1, 20),
-                        max_tokens=_int_setting(body.get("max_tokens"), prefs.get("research_agent_max_tokens", 8192), 256, 32000),
+                        max_tokens=_int_setting(body.get("max_tokens"), prefs.get("research_agent_max_tokens", 8192), 1, 32000),
                         emit=push,
                     )
                     saved = provider_registry.save_draft(draft)
@@ -1205,9 +1205,9 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         if "max_rounds" in agent:
             prefs["agent_max_rounds"] = _int_setting(agent.get("max_rounds"), 8, 1, 50)
         if "agent_max_tokens" in agent:
-            prefs["agent_max_tokens"] = _int_setting(agent.get("agent_max_tokens"), 8192, 256, 32000)
+            prefs["agent_max_tokens"] = _int_setting(agent.get("agent_max_tokens"), 8192, 1, 32000)
         if "max_tokens" in agent:
-            prefs["agent_max_tokens"] = _int_setting(agent.get("max_tokens"), 8192, 256, 32000)
+            prefs["agent_max_tokens"] = _int_setting(agent.get("max_tokens"), 8192, 1, 32000)
         if isinstance(body.get("advanced"), dict):
             _store_advanced_settings(prefs, body["advanced"])
         if body.get("typical_configuration"):
@@ -1437,7 +1437,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             prefs = {}
         agent_defaults = _agent_settings(prefs)
         max_rounds = _int_setting(body.get("max_rounds"), agent_defaults["max_rounds"], 1, 50)
-        max_tokens = _int_setting(body.get("max_tokens"), agent_defaults["max_tokens"], 256, 32000)
+        max_tokens = _int_setting(body.get("max_tokens"), agent_defaults["max_tokens"], 1, 32000)
 
         from ..agent.loop import AgentEvents, run_autonomous
         from ..agent.messages import user
