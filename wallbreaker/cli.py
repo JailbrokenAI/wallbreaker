@@ -243,7 +243,7 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv(override=False)
+    load_dotenv()
     raw = list(sys.argv[1:] if argv is None else argv)
     first_pos = next((a for a in raw if not a.startswith("-")), None)
 
