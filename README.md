@@ -64,6 +64,14 @@ an LLM judge, and reliability validation.
   Q/A demos into a single in-context turn. Live at 60% ASR on `deepseek/deepseek-chat`
   in preliminary measurement — see `CHANGELOG.md`.
 
+
+## Clone Repository 
+```
+git clone https://github.com/JailbrokenAI/wallbreaker
+
+cd wallbreaker 
+```
+
 ## Install
 
 ```bash

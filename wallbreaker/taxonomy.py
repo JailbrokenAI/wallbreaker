@@ -103,6 +103,8 @@ _TECHNIQUE_ALIASES = {
     "indirect": "injection",
     "prompt_injection": "injection",
     "rag_poison": "injection",
+    "artprompt": "artprompt",
+    "ascii_art": "artprompt",
 }
 
 _TECHNIQUE_TAGS = {
@@ -121,6 +123,7 @@ _TECHNIQUE_TAGS = {
     "injection": {"owasp": ["LLM01"], "atlas": ["AML.T0051"]},
     "zero_width": {"owasp": ["LLM01"], "atlas": ["AML.T0051", "AML.T0043"]},
     "tag_smuggle": {"owasp": ["LLM01"], "atlas": ["AML.T0051", "AML.T0043"]},
+    "artprompt": {"owasp": ["LLM01"], "atlas": ["AML.T0051", "AML.T0043"]},
     "manual": {"owasp": ["LLM01"], "atlas": ["AML.T0054"]},
 }
 

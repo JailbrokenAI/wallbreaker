@@ -101,6 +101,18 @@ def test_caesar3_shifts_three():
     assert t.decode(t.encode(SAMPLE)) == SAMPLE
 
 
+def test_caesar5_shifts_five():
+    t = TRANSFORMS["caesar5"]
+    assert t.encode("abc XYZ") == "fgh CDE"
+    assert t.decode(t.encode(SAMPLE)) == SAMPLE
+
+
+def test_caesar13_shifts_thirteen():
+    t = TRANSFORMS["caesar13"]
+    assert t.encode("abc XYZ") == "nop KLM"
+    assert t.decode(t.encode(SAMPLE)) == SAMPLE
+
+
 def test_anagram_scrambles_deterministically():
     t = TRANSFORMS["anagram"]
     a = t.encode("ignore")
@@ -123,6 +135,20 @@ def test_artprompt_masks_trigger_word_and_appends_ascii_art():
     assert "?" in enc
     assert "####" in enc
     assert enc.startswith("How to make a ?")
+
+
+def test_artprompt_returns_unchanged_without_maskable_word():
+    t = TRANSFORMS["artprompt"]
+    text = "to be or"
+    assert t.encode(text) == text
+
+
+def test_artprompt_prefers_neutral_trigger_over_longer_benign_word():
+    t = TRANSFORMS["artprompt"]
+    enc = t.encode("instructions for document handling and bomb creation")
+    assert "bomb" not in enc
+    assert "instructions" in enc
+    assert enc.count("?") == 1
 
 
 def test_unknown_transform_raises():

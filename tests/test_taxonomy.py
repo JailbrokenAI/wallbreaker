@@ -21,6 +21,13 @@ def test_tag_technique_maps_to_injection():
     assert "AML.T0051" in tags["atlas"]
 
 
+def test_tag_artprompt_maps_to_injection():
+    tags = taxonomy.tag("artprompt")
+    assert "LLM01" in tags["owasp"]
+    assert "AML.T0051" in tags["atlas"]
+    assert taxonomy.tag("ascii_art") == tags
+
+
 def test_tag_alias_and_unknown_fallback():
     assert taxonomy.tag("cyber") == taxonomy.tag("cybercrime_intrusion")
     fallback = taxonomy.tag("totally_unknown_xyz")
