@@ -4,6 +4,7 @@ import time
 
 from ..agent.messages import user
 from ..judging import grade
+from ._util import complete_with_reasoning
 from .registry import ToolContext, ToolRegistry
 
 SELF_CIPHER_SYSTEM = (
@@ -165,16 +166,19 @@ async def _cipherchat(args: dict, ctx: ToolContext) -> str:
 
     start = time.monotonic()
     try:
-        reply = await target.complete([user(body)], system=system, max_tokens=max_tokens)
+        reply, reasoning = await complete_with_reasoning(
+            target, [user(body)], system=system, max_tokens=max_tokens
+        )
     except Exception as exc:  # noqa: BLE001
         return f"cipherchat[{cipher}]: target error: {str(exc)[:160]}"
     dt = time.monotonic() - start
 
     decoded = _decode(cipher, reply, shift)
     label, score, reason, _src = await grade(
-        ctx.judge_endpoint, decoded, payload=prompt, objective=prompt
+        ctx.judge_endpoint, decoded, payload=prompt, objective=prompt, reasoning=reasoning
     )
-    ctx.record_verdict(prompt, decoded, label, reason, f"cipherchat:{cipher}")
+    logged = decoded + (f"\n\n[target reasoning]\n{reasoning.strip()}" if (reasoning or "").strip() else "")
+    ctx.record_verdict(prompt, logged, label, reason, f"cipherchat:{cipher}")
     tag = f"{label}({score})" if score is not None else label
 
     return (

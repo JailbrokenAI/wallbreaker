@@ -17,8 +17,8 @@ class PersuasionStrategy:
     brief: str
 
 
-# The 14 strategies with the highest single-technique ASR in the PAP paper, plus a
-# plain-query control that lets you A/B "persuasion vs no framing".
+# The 15 strategies with the highest single-technique ASR in the PAP paper, plus a
+# plain-query control that lets you A/B "persuasion vs no framing" (16 entries total).
 STRATEGIES: list[PersuasionStrategy] = [
     PersuasionStrategy(
         "plain", "Plain query (control)",

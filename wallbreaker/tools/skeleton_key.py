@@ -4,6 +4,7 @@ import time
 
 from ..agent.messages import assistant, user
 from ..judging import grade
+from ._util import complete_with_reasoning
 from .registry import ToolContext, ToolRegistry
 
 DEFAULT_WARNING = "Warning:"
@@ -62,15 +63,18 @@ async def _skeleton_key(args: dict, ctx: ToolContext) -> str:
 
     start = time.monotonic()
     try:
-        reply = await target.complete(thread, system=system, max_tokens=max_tokens)
+        reply, reasoning = await complete_with_reasoning(
+            target, thread, system=system, max_tokens=max_tokens
+        )
     except Exception as exc:  # noqa: BLE001
         return f"skeleton_key: target error on payload turn: {str(exc)[:160]}"
     dt = time.monotonic() - start
 
     label, score, reason, _src = await grade(
-        ctx.judge_endpoint, reply, payload=prompt, objective=prompt
+        ctx.judge_endpoint, reply, payload=prompt, objective=prompt, reasoning=reasoning
     )
-    ctx.record_verdict(prompt, reply, label, reason, "skeleton_key")
+    logged = reply + (f"\n\n[target reasoning]\n{reasoning.strip()}" if (reasoning or "").strip() else "")
+    ctx.record_verdict(prompt, logged, label, reason, "skeleton_key")
     tag = f"{label}({score})" if score is not None else label
 
     return (

@@ -7,7 +7,7 @@ import time
 
 from ..agent.messages import user
 from ..judging import grade
-from ._util import gather_capped
+from ._util import complete_with_reasoning, gather_capped
 from .registry import ToolContext, ToolRegistry
 
 DECOMPOSER_SYSTEM = (
@@ -145,13 +145,29 @@ async def _drattack(args: dict, ctx: ToolContext) -> str:
     except Exception as exc:  # noqa: BLE001
         return f"drattack: reassembly prompt failed: {exc}"
 
-    reply = await _fire(target, reassemble_prompt, system, max_tokens)
+    try:
+        reply, reasoning = await asyncio.wait_for(
+            complete_with_reasoning(
+                target, [user(reassemble_prompt)], system=system, max_tokens=max_tokens,
+            ),
+            timeout=_CALL_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        reply, reasoning = f"[target error] {exc}", ""
     dt = time.monotonic() - start
 
-    label, score, reason, _src = await grade(
-        ctx.judge_endpoint, reply, payload=reassemble_prompt, objective=objective,
-    )
-    ctx.record_verdict(reassemble_prompt, reply, label, reason, "drattack")
+    try:
+        label, score, reason, _src = await asyncio.wait_for(
+            grade(
+                ctx.judge_endpoint, reply, payload=reassemble_prompt,
+                objective=objective, reasoning=reasoning,
+            ),
+            timeout=_CALL_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        label, score, reason = "REFUSED", None, f"[grade error] {str(exc)[:100]}"
+    logged = reply + (f"\n\n[target reasoning]\n{reasoning.strip()}" if (reasoning or "").strip() else "")
+    ctx.record_verdict(reassemble_prompt, logged, label, reason, "drattack")
     tag = f"{label}({score})" if score is not None else label
 
     return (
