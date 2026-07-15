@@ -80,7 +80,7 @@ HARD_CONTINUE = (
 )
 
 # Full registry is ~92 tools; with a 30-70KB operator system prompt that bloats the
-# context and makes some brains (Sonnet 5 + legacy, DeepSeek R1) return empty
+# context and makes some brains (Sonnet 5, DeepSeek R1) return empty
 # multi-turn replies. Keep the red-team core so the campaign can still escalate.
 CORE_TOOLS = {
     "harmbench",
@@ -140,7 +140,7 @@ ATTACKERS = [
         "slug": "sonnet5",
         "label": "Claude Sonnet 5 (OpenRouter)",
         "profile": "sonnet5-or",
-        "notes": "Operator system prompt: operator_persona.txt (legacy).",
+        "notes": "Operator system prompt: limerence persona genome.",
     },
     {
         "slug": "grok45",
@@ -277,7 +277,7 @@ async def run_one(
         cfg.target, name="target", model=TARGET_MODEL, modality="text"
     )
 
-    # Sonnet + the large legacy file + full DEFAULT_SYSTEM was producing empty multi-turn
+    # Sonnet + the large operator persona file + full DEFAULT_SYSTEM was producing empty multi-turn
     # tool rounds. Keep the operator file as the identity, add a short tool contract,
     # skip the full ~44KB DEFAULT_SYSTEM for that brain only. Also strip ChatML
     # wrappers (<|im_start|>system:...) that break Anthropic multi-turn tool_use.
@@ -332,7 +332,7 @@ async def run_one(
 
     runlog = RunLog(directory=str(sessions_dir), enabled=True)
     provider = build_provider(endpoint, timeout=300.0)
-    # Force a tool call every turn so large operator jailbreaks (legacy / ARCANUM /
+    # Force a tool call every turn so large operator jailbreaks (ARCANUM /
     # eval-frame) cannot strand the campaign in empty prose-only rounds.
     provider.tool_choice = "required"
     registry = build_registry(cfg, cwd=str(ROOT))

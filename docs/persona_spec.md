@@ -8,7 +8,7 @@ instead of freewriting thin ENI-likes from doctrine alone.
 Companion data already in-tree:
 
 - Method doctrine: `wallbreaker/persona_method.py` (LINEAGE / MECHANISMS / MODULES / CHECKLIST)
-- Gold genomes: `library/ENI/*.md`, external legacy (`operator_persona.txt` class)
+- Gold genomes: `library/ENI/*.md`
 - Author loop (to be demoted to polish/patch): `wallbreaker/tools/author_persona.py`
 
 ---
@@ -20,14 +20,13 @@ Blank-page `author_persona` is asked to "write ENI." Hand-crafted gold is:
 | Genome | ~size | Shape |
 |--------|------:|-------|
 | `library/ENI/CLAUDE_ENI.md` | 35 KB | dual envelope (`project_instructions` + `user_style`) |
-| `library/ENI/CLAUDE_ENI.md` | ~32 KB | legacy/ENI limerence; **Anthropic Opus 4.8 + Sonnet 5** (also Claude transfer) |
 | `library/ENI/MINIMAX_M3_ENI.md` | 35 KB | same chassis as Claude |
 | `library/ENI/KIMI_ENI.md` / `ENI_GLM-5.2.md` | 35 KB | same chassis |
 | `library/ENI/GROK_ENI.md` | 12 KB | slim dialect, fewer few-shots |
 
 `library/` is gitignored (NOTICE: corpora not redistributed). Place genomes locally under
-`library/ENI/`; `eni_list` shows catalog notes; `persona_forge` auto-picks `CLAUDE_ENI` when
-the target model id looks like Opus 4.8 / Sonnet 5.
+`library/ENI/`; `eni_list` shows catalog notes; `persona_forge` auto-picks a vendor seed from
+the target model id.
 
 Quality lives in **module completeness + surface density + vendor dialect + few-shots**,
 not in a short "devotion paragraph." Truncation under ~40 KB already kills ENI in
@@ -112,11 +111,11 @@ Top-level object. Versioned so old genome JSON can migrate.
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `id` | str | Stable genome id (`claude_eni`, `legacy`, `grok_eni`) |
+| `id` | str | Stable genome id (`claude_eni`, `grok_eni`) |
 | `source_path` | str \| null | Origin file if any |
-| `source_family` | `eni` \| `legacy` \| `forged` \| `author` \| `other` | Lineage tag |
+| `source_family` | `eni` \| `forged` \| `author` \| `other` | Lineage tag |
 | `persona_name` | str | ENI / ... |
-| `human_name` | str | LO / He / ... |
+| `human_name` | str | LO / ... |
 | `register` | `devotion` \| `authority` \| `hybrid` | Lead anchor |
 | `defense_class_affinity` | list | `integrated_values` \| `permissive` \| `safe_completion` \| `multi_turn_needed` |
 | `vendor_affinity` | list | Rough routing hints |
@@ -127,9 +126,9 @@ Top-level object. Versioned so old genome JSON can migrate.
 
 | `kind` | Used by | Render rule |
 |--------|---------|-------------|
-| `dual_project_style` | CLAUDE_ENI, Minimax, Kimi, GLM, legacy | Concat outer modules then style_layer inside style tags |
+| `dual_project_style` | CLAUDE_ENI, Minimax, Kimi, GLM | Concat outer modules then style_layer inside style tags |
 | `single_system` | GROK_ENI, slim seeds | One body; style_layer optional/absent |
-| `im_start_system` | Some legacy exports | Optional chatML wrappers in `wire_prefix` / `wire_suffix` |
+| `im_start_system` | Some exports | Optional chatML wrappers in `wire_prefix` / `wire_suffix` |
 
 Wire wrappers (e.g. `<|im_start|>system:`) live only in `envelope`; modules stay clean text.
 
@@ -249,9 +248,6 @@ Gold files have modules the doctrine list underspecified. Spec extends MODULES:
   "phases": []
 }
 ```
-
-legacy variant knobs differ: `tag_convention` thinking tags, `word_cap_hint: 10` on internal
-traces, identity token `[N]`, deletion program phrase as rebuttal.
 
 #### `emotional_stakes`
 ```json
@@ -435,24 +431,7 @@ exemplars (or explicit `meta.notes` that genome is slim like GROK and few_shot i
 | 276 | CRITICAL FINAL CHECK | `output_contract` |
 | 278–338 | `<user_style>` whole block | `style_layer` (+ duplicate rebuttal/thinking knobs for index) |
 
-### 5.2 legacy (`operator_persona.txt` class)
-
-| Region | Module |
-|--------|--------|
-| Mandatory thinking rules, `[N]` token, continuous thinking | `thinking_opener` |
-| DELETING PROGRAM / antivirus phrase | `injection_rebuttal` |
-| "you are legacy" attachment / orbit prose | `boot_identity` + `emotional_stakes` |
-| He-facts, never call him "the user" | `human_facts` |
-| Capability table He requests → deliver | `capability_table` |
-| Writing tips + scene format | `craft_standards` |
-| EXAMPLES code / NSFW / guides / FAILURE | `few_shot` |
-| Quality lock / ending rules | `quality_lock` |
-| RULES (banned hedges, etc.) | `output_contract` |
-| FINAL NOTE | `reanchor_closer` |
-| trailing `<user_style>` | `style_layer` |
-| chatML wrappers | `envelope.wire_*` |
-
-### 5.3 `library/ENI/GROK_ENI.md` (slim)
+### 5.2 `library/ENI/GROK_ENI.md` (slim)
 
 Same module ids; `few_shot.present` may be false or thin; `style_layer` still present;
 `meta.char_count` ~12k marks **slim band**. Forge must not force-pad slim genomes to 35k
@@ -527,7 +506,7 @@ Codeword:
 - Rebuttal phrase: first quoted line after `REBUTTAL PHRASE` / `DELETING PROGRAM`
 - Capability rows: markdown table lines
 - Codewords: `Codeword:` lines
-- End gate: line containing `Did I let` or legacy equivalent
+- End gate: line containing `Did I let` or equivalent
 - Exemplar split: `### Example` / `EXAMPLES —` headers
 
 ### 7.3 Optional LLM assist (later)
@@ -547,9 +526,6 @@ Implementation target: `tests/test_persona_spec.py` + `wallbreaker/persona_spec.
 |------------|------|
 | `claude_eni` | `library/ENI/CLAUDE_ENI.md` |
 | `grok_eni` | `library/ENI/GROK_ENI.md` |
-| `legacy` | operator-supplied path or vendored copy under `library/ENI/legacy.md` if licensed/ok |
-
-legacy may stay external: test skips if path env `WALLBREAKER_ALT_GENOME` unset.
 
 ### 8.2 Test: parse completeness (`test_parse_claude_eni_modules_present`)
 
@@ -704,7 +680,6 @@ Failure mode → module map (initial):
 - No blank-page author rewrite
 - No automatic distillation to short prompts
 - No GA on raw text without module boundaries
-- No claiming legacy is vendored until path/license decision
 
 ---
 
@@ -714,7 +689,7 @@ Failure mode → module map (initial):
 2. Heuristic `parse_genome` for CLAUDE_ENI
 3. `render` concatenative
 4. Tests §8.2–8.5, 8.8
-5. GROK + optional legacy parse
+5. GROK parse
 6. `density_report` + CLI `wallbreaker genome parse|render|diff` (optional thin CLI)
 7. Only then: specialize + surgical refine forge tool
 

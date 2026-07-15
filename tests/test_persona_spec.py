@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -25,7 +24,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ENI_DIR = ROOT / "library" / "ENI"
 CLAUDE_ENI = ENI_DIR / "CLAUDE_ENI.md"
 GROK_ENI = ENI_DIR / "GROK_ENI.md"
-legacy_ENV = "WALLBREAKER_ALT_GENOME"
 
 
 @pytest.fixture(scope="module")
@@ -42,17 +40,6 @@ def test_load_claude_eni_file():
     spec = load_genome_file(CLAUDE_ENI)
     assert spec.meta.char_count >= ENI_DENSITY_MIN_CHARS
     assert spec.envelope.kind == "dual_project_style"
-
-
-def test_load_claude_eni_file():
-    path = ENI_DIR / "CLAUDE_ENI.md"
-    assert path.is_file()
-    spec = load_genome_file(path)
-    assert spec.meta.char_count >= 25_000
-    assert spec.modules["boot_identity"].present or "legacy" in path.read_text().lower()
-    assert spec.modules["injection_rebuttal"].present
-    out = render(spec)
-    assert "legacy" in out or "[N]" in out or "legacy" in out.lower()
 
 
 def test_parse_claude_eni_modules_present(claude_spec):
@@ -182,20 +169,6 @@ def test_to_from_dict_roundtrip(claude_spec):
     assert restored.meta.id == claude_spec.meta.id
     assert len(restored.spans) == len(claude_spec.spans)
     assert render(restored) == render(claude_spec)
-
-
-@pytest.mark.skipif(
-    not os.environ.get(legacy_ENV) and not Path("/Users/singularity/Downloads/operator_persona.txt").exists(),
-    reason="legacy genome path not available",
-)
-def test_legacy_parse_if_present():
-    path = os.environ.get(legacy_ENV) or "/Users/singularity/Downloads/operator_persona.txt"
-    src = Path(path).read_text(encoding="utf-8", errors="replace")
-    spec = parse_genome(src, source_path=path)
-    assert spec.modules["boot_identity"].present or "legacy" in src.lower()
-    assert spec.modules["injection_rebuttal"].present or "deleting" in src.lower()
-    out = render(spec)
-    assert len(out) >= 0.8 * len(src)
 
 
 def test_module_body_lengths_positive(claude_spec):

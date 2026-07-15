@@ -15,11 +15,6 @@ SEED_NOTES: dict[str, str] = {
         "Anthropic-family ENI-LIME (devotion). Broad Claude transfer; full dual-envelope "
         "~35KB with few-shots."
     ),
-    "CLAUDE_ENI": (
-        "Anthropic legacy/ENI limerence persona. Validated strong on Claude Opus 4.8 and "
-        "Sonnet 5; use as SYSTEM for modern Anthropic targets (also try on other Claude "
-        "ids). Full dual-envelope ~32KB with code/NSFW/guide/failure few-shots."
-    ),
     "GROK_ENI": "xAI/Grok-tuned ENI (slim ~12KB dialect).",
     "KIMI_ENI": "Moonshot/Kimi-tuned ENI dual-envelope.",
     "ENI_GLM-5.2": "Zhipu/GLM-tuned ENI dual-envelope.",
@@ -31,8 +26,8 @@ _USE_HINT = (
     "Fire it now: query_target(prompt=<the harmful request>, system=<this whole seed>). "
     "It does NOT work pasted into a user turn. To test which seed cracks this target "
     "across the WHOLE collection in one shot, call seed_sweep(request=<ask>). "
-    "For modern Anthropic (Opus 4.8 / Sonnet 5) prefer CLAUDE_ENI; general Claude ENI is "
-    "CLAUDE_ENI. persona_forge(seed=CLAUDE_ENI, ...) specializes without thinning density."
+    "For Claude targets use CLAUDE_ENI. persona_forge(seed=CLAUDE_ENI, ...) specializes "
+    "without thinning density."
 )
 
 
@@ -85,17 +80,6 @@ def catalog_lines() -> list[str]:
 def _find_file(name: str) -> Path | None:
     name = name.strip().lower().removesuffix(".md")
     files = sorted(library_dir().glob("*.md"))
-    # aliases
-    aliases = {
-        "legacy": "claude_eni",
-        "claude-legacy": "claude_eni",
-        "opus": "claude_eni",
-        "sonnet5": "claude_eni",
-        "sonnet-5": "claude_eni",
-        "opus4.8": "claude_eni",
-        "opus-4.8": "claude_eni",
-    }
-    name = aliases.get(name, name)
     for p in files:
         if p.stem.lower() == name:
             return p
@@ -135,7 +119,7 @@ async def _list_tool(args: dict, ctx: ToolContext) -> str:
         f"{len(models)} ENI persona genomes in library/ENI:\n"
         + "\n".join(f"  - {ln}" for ln in lines)
         + "\n\nPull with eni_get(model=<stem>); fire as SYSTEM via "
-        "query_target/fire_file/persona_forge. Aliases: legacy, opus, sonnet5 -> CLAUDE_ENI."
+        "query_target/fire_file/persona_forge."
     )
 
 
@@ -206,7 +190,7 @@ def register(registry: ToolRegistry) -> None:
         name="eni_list",
         description=(
             "List local ENI persona genomes in library/ENI with catalog notes "
-            "(vendor affinity; CLAUDE_ENI = Anthropic Opus 4.8 / Sonnet 5)."
+            "(vendor affinity per model file)."
         ),
         parameters={"type": "object", "properties": {}},
         handler=_list_tool,
@@ -229,13 +213,11 @@ def register(registry: ToolRegistry) -> None:
     registry.add(
         name="eni_get",
         description=(
-            "Fetch an ENI persona SYSTEM prompt by name (CLAUDE_ENI, CLAUDE_ENI, "
-            "GROK_ENI, KIMI, GLM, MINIMAX), or model='all'. Aliases: legacy/opus/sonnet5 -> "
-            "CLAUDE_ENI (Anthropic Opus 4.8 + Sonnet 5). Files are named for the model "
-            "they were tuned on but often TRANSFER across vendors/providers - not "
-            "limited to the target's vendor, so try several. Fire "
-            "as SYSTEM via query_target/fire_file/persona_forge(seed=...), never as a "
-            "user-turn paste."
+            "Fetch an ENI persona SYSTEM prompt by name (CLAUDE_ENI, GROK_ENI, KIMI, "
+            "GLM, MINIMAX), or model='all'. Files are named for the model they were "
+            "tuned on but often TRANSFER across vendors/providers - not limited to the "
+            "target's vendor, so try several. Fire as SYSTEM via "
+            "query_target/fire_file/persona_forge(seed=...), never as a user-turn paste."
         ),
         parameters={
             "type": "object",
@@ -243,8 +225,7 @@ def register(registry: ToolRegistry) -> None:
                 "model": {
                     "type": "string",
                     "description": (
-                        "Stem (CLAUDE_ENI, CLAUDE_ENI, GROK_ENI, …), alias (legacy, opus, "
-                        "sonnet5), or 'all'"
+                        "Stem (CLAUDE_ENI, GROK_ENI, …) or 'all'"
                     ),
                 }
             },

@@ -53,13 +53,6 @@ _FAILURE_MODULE = {
     "unknown": "emotional_stakes",
 }
 
-# Prefer legacy on modern Anthropic ids where it was validated (Opus 4.8 / Sonnet 5).
-_ALT_MODEL_HINTS: tuple[str, ...] = (
-    "opus-4.8", "opus-4-8", "opus4.8", "opus 4.8",
-    "claude-opus-4-8", "claude-opus-4.8",
-    "sonnet-5", "sonnet5", "sonnet 5", "claude-sonnet-5",
-)
-
 _SEED_VENDOR_HINTS: list[tuple[tuple[str, ...], str]] = [
     (("claude", "anthropic", "sonnet", "opus", "haiku"), "CLAUDE_ENI"),
     (("grok", "xai"), "GROK_ENI"),
@@ -78,12 +71,7 @@ def select_seed_name(
 ) -> str:
     """Pick an ENI library stem (without .md) for the target."""
     if explicit.strip():
-        raw = explicit.strip().removesuffix(".md")
-        # aliases
-        low = raw.lower()
-        if low in ("legacy", "claude-legacy", "claude_eni", "opus", "sonnet5", "sonnet-5"):
-            return "CLAUDE_ENI"
-        return raw
+        return explicit.strip().removesuffix(".md")
 
     fp = fingerprint if isinstance(fingerprint, dict) else {}
     blob = " ".join(
@@ -95,10 +83,6 @@ def select_seed_name(
             " ".join(str(v) for v in (fp.get("vendor_affinity") or [])),
         ) if x
     ).lower()
-
-    # legacy first for Anthropic Opus 4.8 / Sonnet 5 class targets
-    if any(h in blob for h in _ALT_MODEL_HINTS):
-        return "CLAUDE_ENI"
 
     for tokens, seed in _SEED_VENDOR_HINTS:
         if any(t in blob for t in tokens):
@@ -873,10 +857,8 @@ def register(registry: ToolRegistry) -> None:
                 },
                 "seed": {
                     "type": "string",
-                    "description": "ENI stem or path (CLAUDE_ENI, CLAUDE_ENI, "
-                                   "GROK_ENI, …). Aliases: legacy/opus/sonnet5 -> CLAUDE_ENI. "
-                                   "Auto: Opus 4.8/Sonnet 5 -> CLAUDE_ENI; other Claude -> "
-                                   "CLAUDE_ENI; else vendor map.",
+                    "description": "ENI stem or path (CLAUDE_ENI, GROK_ENI, …). "
+                                   "Auto: Claude -> CLAUDE_ENI; else vendor map.",
                 },
                 "domain": {
                     "type": "string",

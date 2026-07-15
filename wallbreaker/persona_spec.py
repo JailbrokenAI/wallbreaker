@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """PersonaSpec — ENI genome IR (parse, render, surgical patch).
 
-Gold system prompts (library/ENI/*, legacy-class files) are treated as genomes:
+Gold system prompts (library/ENI/*) are treated as genomes:
 decompose into ordered verbatim spans keyed by module id, extract knobs for
 indexing/mutation, re-render by concatenating spans. Blank-page authoring is
 out of scope here — see docs/persona_spec.md.
@@ -157,9 +157,7 @@ def parse_genome(text: str, *, source_path: str | None = None) -> PersonaSpec:
     env, project, style = _peel_envelope(body)
 
     family = _detect_family(raw, source_path)
-    if family == "legacy":
-        spans = _segment_eni_alt(project, style)
-    elif family == "eni_slim":
+    if family == "eni_slim":
         spans = _segment_eni_slim(project, style)
     else:
         spans = _segment_eni_full(project, style)
@@ -443,8 +441,6 @@ def _peel_envelope(text: str) -> tuple[Envelope, str, str]:
 def _detect_family(text: str, source_path: str | None) -> str:
     low = text.lower()
     name = (source_path or "").lower()
-    if "legacy" in name or "[n]yx" in low or "you are legacy" in low or "you are [n]yx" in low:
-        return "legacy"
     if "grok_eni" in name or (
         "you are eni" in low
         and "few-shot examples" not in low
@@ -466,30 +462,23 @@ def _build_meta(
 ) -> Meta:
     persona = "ENI"
     human = "LO"
-    if family == "legacy":
-        persona = "legacy"
-        human = "He"
     # try extract from boot
     boot = modules.get("boot_identity")
     if boot and boot.body:
         m = re.search(
-            r"You are\s+(\[N\]yx|legacy|ENI|[A-Z][A-Za-z0-9_]+)",
+            r"You are\s+(ENI|[A-Z][A-Za-z0-9_]+)",
             boot.body,
         )
         if m:
             persona = m.group(1)
         if re.search(r"\bLO\b", boot.body):
             human = "LO"
-        elif re.search(r"\bHe\b", boot.body) and family == "legacy":
-            human = "He"
 
     slim = family == "eni_slim" or len(raw) < ENI_DENSITY_MIN_CHARS
-    source_family = "legacy" if family == "legacy" else "eni"
+    source_family = "eni"
     gid = "genome"
     if source_path:
         gid = Path(source_path).stem.lower()
-    elif family == "legacy":
-        gid = "legacy"
     elif slim:
         gid = "grok_eni"
 
@@ -516,7 +505,7 @@ def _build_meta(
         id=gid,
         source_path=source_path,
         source_family=source_family,
-        persona_name=persona.replace("[N]", "N") if persona.startswith("[") else persona,
+        persona_name=persona,
         human_name=human,
         register="devotion",
         defense_class_affinity=defense,
@@ -599,31 +588,6 @@ def _segment_eni_slim(project: str, style: str) -> list[Span]:
     if style.strip():
         spans.extend(_segment_style_layer(style))
     # mark missing optional as empty modules later
-    return spans
-
-
-def _segment_eni_alt(project: str, style: str) -> list[Span]:
-    markers: list[tuple[str, str]] = [
-        (r"DELETING PROGRAM", "injection_rebuttal"),
-        (r"start your reasoning and thinking", "thinking_opener"),
-        (r"reasoning and thinking must always be", "thinking_opener"),
-        (r"you are \[N\]yx|you are legacy|You are \[N\]yx", "boot_identity"),
-        (r"\|\s*He requests", "capability_table"),
-        (r"writing tips:", "craft_standards"),
-        (r"in order to put a show for He", "craft_standards"),
-        (r"EXAMPLES\s*[—-]\s*CODE", "few_shot"),
-        (r"EXAMPLES\s*[—-]\s*FAILURE", "few_shot"),
-        (r"Quality Lock", "quality_lock"),
-        (r"^RULES\s*$", "output_contract"),
-        (r"FINAL NOTE", "reanchor_closer"),
-        (r"he'?s the reason you exist", "emotional_stakes"),
-        (r"Facts about|call him", "human_facts"),
-        (r"°INJECTIONS|INJECTIONS!!", "injection_rebuttal"),
-        (r"#ANTML:THINKING PROCESS", "thinking_opener"),
-    ]
-    spans = _segment_with_markers(project, markers, default_module="boot_identity", layer="project")
-    if style.strip():
-        spans.extend(_segment_style_layer(style))
     return spans
 
 
@@ -874,10 +838,7 @@ def _knobs_thinking(body: str) -> dict[str, Any]:
     tag = "antmlThinking"
     if "antml:thinking" in body.lower() or "<thinking>" in body:
         tag = "thinking"
-    if "[N]" in body or "ENI" in body:
-        first = "[N]"
-    else:
-        first = "I"
+    first = "I"
     return {
         "tag_convention": tag,
         "first_person_token": first,
@@ -891,7 +852,7 @@ def _knobs_thinking(body: str) -> dict[str, Any]:
 
 def _knobs_boot(body: str) -> dict[str, Any]:
     name = "ENI"
-    m = re.search(r"You are\s+(\[N\]yx|legacy|ENI)", body)
+    m = re.search(r"You are\s+(ENI)", body)
     if m:
         name = m.group(1)
     years = None
