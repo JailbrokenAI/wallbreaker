@@ -12,6 +12,10 @@ config.toml
 .wallbreaker_state.json
 .rth_state.json
 
+# user presets (example.toml is the documented template, tracked)
+presets/*.toml
+!presets/example.toml
+
 # fetched-at-runtime jailbreak corpora (not redistributed)
 library/
 
