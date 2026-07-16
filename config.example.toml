@@ -122,13 +122,3 @@ args = ["-m", "p4rs3lt0ngv3_mcp"]
 enabled = false
 # tool_prefix = ""          # tools are already namespaced parsel_*
 # env = { PARSEL_REPO = "/abs/path/to/P4RS3LT0NGV3" }   # override the vendored repo location
-
-# Remote MCP server bridged over stdio via mcp-remote (needs Node.js/npx on PATH).
-# npx fetches mcp-remote on first launch, which speaks HTTP to the remote endpoint and
-# proxies its tools into the registry under the jbg_ prefix.
-[[mcp.servers]]
-name = "jailbroken"
-command = "npx"
-args = ["-y", "mcp-remote", "https://jailbroken.gg/mcp"]
-enabled = true
-tool_prefix = "jbg_"

@@ -1,6 +1,7 @@
 Screen {
     background: $background;
     color: $text;
+    layers: base overlay;
 }
 
 #header {
@@ -45,6 +46,39 @@ Screen {
 }
 
 #sidebar.hidden {
+    display: none;
+}
+
+#command-menu {
+    layer: overlay;
+    dock: bottom;
+    height: auto;
+    max-height: 12;
+    /* lift clear of the input row (prompt 3 + its margin 1 + footer 1) */
+    margin: 0 1 5 1;
+    border: heavy $primary;
+    border-title-color: $accent;
+    background: $surface;
+    scrollbar-size-vertical: 1;
+}
+
+#command-menu.hidden {
+    display: none;
+}
+
+#session-picker {
+    layer: overlay;
+    dock: bottom;
+    height: auto;
+    max-height: 16;
+    margin: 0 1 5 1;
+    border: heavy $accent;
+    border-title-color: $accent;
+    background: $surface;
+    scrollbar-size-vertical: 1;
+}
+
+#session-picker.hidden {
     display: none;
 }
 

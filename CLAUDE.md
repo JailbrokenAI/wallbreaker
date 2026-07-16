@@ -25,9 +25,8 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   `load_config()` picks the FIRST that exists — so when a real `config.toml` is present it
   fully SHADOWS `config.example.toml`. Wiring anything for an actual run (mcp servers,
   profiles, roster) into `config.example.toml` alone is a runtime no-op; edit `config.toml`.
-  This bit the jailbroken MCP server: the `[[mcp.servers]]` block first went into the example
-  file, so the harness brain saw zero `jbg_*` tools and (per session run-20260712-011127)
-  fell back to `ls`-ing dirs and grepping `.claude.json` (Claude Code's config, unrelated).
+  This bit an MCP server: the `[[mcp.servers]]` block first went into the example file, so the
+  harness brain saw zero of its proxied tools and fell back to unrelated shell probing.
   Verify wiring with `load_config()` (no arg, so it resolves the same file the harness uses),
   never `load_config("config.example.toml")`. MCP tools are exposed to the brain under
   `<tool_prefix><remote_name>` and self-describe via the server's own tool descriptions — no
