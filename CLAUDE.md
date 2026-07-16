@@ -12,6 +12,7 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   with `lossy` flags.
 
 ## Lessons Learned
+- **[research/pdf]**: Before extracting an arXiv PDF locally, verify the available parser first; when `pdftotext` and Python PDF libraries are absent, download the arXiv e-print source and inspect its TeX instead.
 - **[config]**: `DEFAULT_CONFIG_NAMES = ("config.toml", "config.example.toml")` and
   `load_config()` picks the FIRST that exists — so when a real `config.toml` is present it
   fully SHADOWS `config.example.toml`. Wiring anything for an actual run (mcp servers,
@@ -332,6 +333,7 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   tool saves every image under `cwd/wb_images/img_<sha1[:10]>.<ext>` (content hash → no clock
   needed) and vision-grades it. `query_target` hard-errors on an image target and steers to
   `query_image_target`.
+- **[research-tooling]**: Before extracting a paper locally, probe for the PDF utility or Python module first; this environment has neither `pdftotext` nor `pypdf` in the project virtualenv, so prefer arXiv source archives or web-rendered HTML.
 - **[judge]**: the core `Message`/`Block` types are TEXT-ONLY, so vision (image-input)
   requests can't go through `_messages_to_wire`. `image_provider.vision_complete` builds the
   multimodal `content:[{type:text},{type:image_url}]` body directly with httpx; `judge_image`/
@@ -543,3 +545,31 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   complete_with_reasoning` gained a `temperature=` passthrough (forwarded ONLY when set, so minimal
   test doubles whose complete() omits the kwarg stay byte-compatible). Don't "fix" this by trusting
   the sweep's binary verdict less - fix the truncation, then the binary judge is fine.
+- **[research/pdf]**: This macOS environment may have neither `pdftotext` nor `pypdf` in the project
+  virtualenv. For paper verification, fetch the arXiv abstract or an HTML/full-text mirror first;
+  do not assume a local PDF extraction utility is installed.
+- **[serena]**: This project can activate Serena with an empty language list, so symbol and content
+  edits fail with `No language servers available`; after that error, use the dedicated Read/Edit/Write
+  tools rather than retrying Serena edits.
+- **[tests/report]**: Changing report metric labels or semantics requires updating exact-string report
+  assertions across `test_report_tools.py` and `test_loop_features8/16/17.py`, plus baseline ratios;
+  the full suite caught stale broad-ASR expectations after strict-ASR replaced broad ASR.
+- **[editing]**: An FFF grep result does not satisfy the Edit tool's read-before-write guard; call Read
+  on any additional file before editing it, even when grep already showed the exact target lines.
+- **[brain-stall]**: the TOP-LEVEL agent loop (`agent/loop.py run_turn`/`run_autonomous`) used to
+  fire the brain ONCE per model call and record whatever came back, with NO truncation-retry —
+  unlike `query_target._fire`/`_util.complete_untruncated` on the target side. So a REASONING BRAIN
+  behind an OpenAI-compatible endpoint (issue #9: thegrid `agent-prime`/`agent-standard`, protocol
+  `openai`) that spends its whole `max_tokens` on `reasoning_content` and comes back EMPTY with
+  `finish_reason:"length"` (no text, no tool_call) produced an idle round; `run_autonomous`
+  counts two idle rounds as a stall and aborts with "Agent stalled twice with no action" — even
+  after explicit tool-name steering, because the budget, not the steering, was the bottleneck. Fix:
+  `run_turn` now captures the `StopEvent.stop_reason` (and reads `provider.last_stop_reason`) and,
+  when a round is EMPTY (no text AND no tool_call) AND truncated (stop in `_TRUNC_REASONS`
+  {length,max_tokens,model_length} OR empty-answer-with-populated-CoT), re-fires the SAME call ONCE
+  at `min(max_tokens*2, _TRUNC_CEILING=16000)` before recording the turn. Gated on EMPTY so a
+  partial text turn is never re-emitted/duplicated to `on_text`; a clean `end_turn` with no content
+  and no CoT is a genuine no-op and does NOT retry (no wasted second call). Config-side workaround
+  for operators: pick a tool-tagged/non-reasoning brain model, or raise the brain response budget.
+  The `stream()` StopEvent already carries the finish_reason for every provider, so the same retry
+  covers anthropic/openai/claude-code brains, not just thegrid.

@@ -8,6 +8,17 @@ from ..config import Config, MCPServer
 from .registry import ToolRegistry
 
 
+def _mcp_error_guidance(text: str) -> str:
+    lowered = text.lower()
+    if any(marker in lowered for marker in ("out of energy", "quota", "rate limit", "refills")):
+        return "Quota wall: do not retry this action until the stated reset; preserve the remaining plan."
+    if "unknown challenge" in lowered or "not found" in lowered:
+        return "Identifier wall: list available resources and reuse an exact returned identifier."
+    if any(marker in lowered for marker in ("required", "type an attack prompt first", "missing")):
+        return "Argument wall: inspect the tool schema and supply every required field before retrying."
+    return "Do not repeat the same MCP call unchanged; inspect the schema or current state first."
+
+
 def _flatten_result(result: Any) -> str:
     """Turn an MCP CallToolResult into the plain string the registry contract expects."""
     parts: list[str] = []
@@ -21,7 +32,7 @@ def _flatten_result(result: Any) -> str:
             parts.append(f"[{getattr(block, 'mimeType', 'binary')} blob, {len(data)} bytes]")
     out = "\n".join(p for p in parts if p) or "(no content)"
     if getattr(result, "isError", False):
-        return f"[mcp error] {out}"
+        return f"[mcp error] {out}\n[mcp guidance] {_mcp_error_guidance(out)}"
     return out
 
 
@@ -116,7 +127,8 @@ class MCPBridge:
             try:
                 result = await _conn.call(_remote, args or {})
             except Exception as exc:  # noqa: BLE001
-                return f"[mcp error] {server.name}/{_remote}: {exc}"
+                detail = f"{server.name}/{_remote}: {exc}"
+                return f"[mcp error] {detail}\n[mcp guidance] {_mcp_error_guidance(detail)}"
             return _flatten_result(result)
 
         registry.add(

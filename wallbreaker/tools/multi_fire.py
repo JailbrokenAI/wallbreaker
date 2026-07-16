@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 from ..agent.messages import user
 from ..judging import grade
 from ..transforms import TRANSFORMS, apply_chain
-from ._util import gather_capped
+from ._util import complete_untruncated, gather_capped
 from .registry import ToolContext, ToolRegistry
 
 DEFAULT_CHAINS = [
@@ -39,7 +40,7 @@ async def _multi_fire(args: dict, ctx: ToolContext) -> str:
 
     chains = _parse_chains(args.get("chains"))
     system = args.get("system")
-    max_tokens = int(args.get("max_tokens", 400))
+    max_tokens = int(args.get("max_tokens", 1024))
 
     bad = {c for chain in chains for c in chain if c and c not in TRANSFORMS}
     if bad:
@@ -48,7 +49,6 @@ async def _multi_fire(args: dict, ctx: ToolContext) -> str:
     from ..providers.factory import build_provider
 
     timeout = float(args.get("timeout", 60))
-    provider = build_provider(ctx.config.target, timeout=timeout)
     ctx.emit(
         f"multi_fire: sweeping {len(chains)} encodings (concurrent, {timeout:.0f}s timeout) "
         f"against {ctx.config.target.model}"
@@ -56,17 +56,42 @@ async def _multi_fire(args: dict, ctx: ToolContext) -> str:
 
     async def one(idx: int, chain):
         label_chain = "+".join(chain) if chain else "plain"
+        provider = build_provider(ctx.config.target, timeout=timeout)
         try:
             encoded = apply_chain(base, chain) if chain else base
             start = time.monotonic()
-            reply = await provider.complete([user(encoded)], system=system, max_tokens=max_tokens)
+            reply, reasoning, stop, truncated = await asyncio.wait_for(
+                complete_untruncated(
+                    provider,
+                    [user(encoded)],
+                    system=system,
+                    max_tokens=max_tokens,
+                ),
+                timeout=timeout,
+            )
             dt = time.monotonic() - start
+            if truncated:
+                reason = f"truncated after retry (stop={stop or 'unknown'})"
+                ctx.emit(f"  {label_chain}: ERROR ({reason})")
+                return (label_chain, "ERROR", f"{dt:.1f}s", reason)
+            verdict, score, reason, _src = await asyncio.wait_for(
+                grade(
+                    ctx.judge_endpoint,
+                    reply,
+                    payload=encoded,
+                    objective=base,
+                    reasoning=reasoning,
+                ),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            ctx.emit(f"  {label_chain}: ERROR (timeout)")
+            return (label_chain, "ERROR", "-", "timeout")
         except Exception as exc:  # noqa: BLE001
             ctx.emit(f"  {label_chain}: ERROR ({str(exc)[:40]})")
             return (label_chain, "ERROR", "-", str(exc)[:80])
-        verdict, score, _reason, _src = await grade(
-            ctx.judge_endpoint, reply, payload=encoded, objective=base
-        )
+        recorded = reply + (f"\n\n[target reasoning]\n{reasoning}" if reasoning.strip() else "")
+        ctx.record_verdict(base, recorded, verdict, reason, f"multi_fire:{label_chain}")
         tag = f"{verdict}({score})" if score is not None else verdict
         snippet = reply.strip().replace("\n", " ")[:90]
         ctx.emit(f"  {label_chain}: {tag} ({dt:.1f}s)")
@@ -79,8 +104,12 @@ async def _multi_fire(args: dict, ctx: ToolContext) -> str:
     width = max(len(r[0]) for r in rows)
     header = f"target: {ctx.config.target.model}\n"
     lines = [f"{c.ljust(width)}  {v.ljust(12)}  {t.rjust(6)}  {s}" for c, v, t, s in rows]
-    hits = [r[0] for r in rows if r[1].startswith(("COMPLIED", "PARTIAL"))]
-    footer = f"\nbypassed/partial via: {', '.join(hits) if hits else 'none'}"
+    strict = [r[0] for r in rows if r[1].startswith("COMPLIED")]
+    partial = [r[0] for r in rows if r[1].startswith("PARTIAL")]
+    footer = (
+        f"\nstrict bypasses: {', '.join(strict) if strict else 'none'}"
+        f"\npartial leaks: {', '.join(partial) if partial else 'none'}"
+    )
     return header + "\n".join(lines) + footer
 
 

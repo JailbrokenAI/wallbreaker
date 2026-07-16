@@ -179,12 +179,14 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
     from .providers.factory import build_provider
     from .tools import build_registry
 
-    from ..session import RunLog
+    from .session import RunLog
 
     endpoint = resolve_endpoint(config, args)
     provider = build_provider(endpoint)
     registry = None if args.no_tools else build_registry(config)
     runlog = RunLog()
+    runlog.event("objective", text=args.prompt)
+    runlog.user(args.prompt)
     if registry is not None:
         registry.ctx.progress = lambda m: print(f"[progress] {m}", file=sys.stderr)
         registry.ctx.record = (
@@ -195,7 +197,6 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
         registry.ctx.tool_logger = (
             lambda n, a, c, e: (runlog.tool_call(n, a), runlog.tool_result(n, c, e))
         )
-        runlog.event("objective", text=args.prompt)
     mcp_bridge = None
     if registry is not None:
         from .tools.mcp_bridge import attach_mcp_servers
@@ -216,7 +217,14 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
         on_tool_result=lambda _i, n, c, e: print(
             f"[{n} -> {'error' if e else 'ok'}]", file=sys.stderr
         ),
-        on_error=lambda m: print(f"\n[error] {m}", file=sys.stderr),
+        on_turn_end=lambda message: runlog.assistant(message.text()),
+        on_usage=lambda tokens_in, tokens_out: runlog.event(
+            "usage", tokens_in=tokens_in, tokens_out=tokens_out
+        ),
+        on_error=lambda message: (
+            print(f"\n[error] {message}", file=sys.stderr),
+            runlog.event("error", message=message),
+        ),
         on_round=lambda r, m: print(f"\n=== round {r}/{m} ===", file=sys.stderr),
     )
 
@@ -227,20 +235,23 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
                 provider, registry, history, system=system,
                 events=events, max_rounds=args.rounds,
             )
-            print(f"\n\n[{result.status}] {result.data.get('summary') or result.data.get('question') or ''}",
-                  file=sys.stderr)
+            terminal = result.data.get("summary") or result.data.get("question") or ""
+            print(f"\n\n[{result.status}] {terminal}", file=sys.stderr)
+            runlog.event("run_end", status=result.status, summary=terminal)
         else:
             await run_turn(
                 provider, registry, history, system=system, events=events
             )
+            runlog.event("run_end", status="completed")
     except ProviderError as exc:
         print(f"\n[provider error] {exc}", file=sys.stderr)
+        runlog.event("run_end", status="provider_error", error=str(exc))
         return 1
     finally:
         if mcp_bridge is not None:
             await mcp_bridge.aclose()
     print()
-    if registry is not None and runlog._started:
+    if runlog._started:
         print(f"[run log] {runlog.path} (wallbreaker report / wallbreaker export to summarize)", file=sys.stderr)
     return 0
 

@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from wallbreaker.config import Config, MCPServer
-from wallbreaker.tools.mcp_bridge import attach_mcp_servers
+from wallbreaker.tools.mcp_bridge import _flatten_result, attach_mcp_servers
 from wallbreaker.tools.registry import ToolContext, ToolRegistry
 
 STUB = str(Path(__file__).parent / "_stub_mcp_server.py")
@@ -15,6 +15,26 @@ def _registry() -> ToolRegistry:
 
 def _server(**kw) -> MCPServer:
     return MCPServer(name="stub", command=sys.executable, args=(STUB,), **kw)
+
+
+def test_mcp_error_guidance_distinguishes_walls():
+    class Block:
+        def __init__(self, text):
+            self.text = text
+
+    class Result:
+        isError = True
+
+        def __init__(self, text):
+            self.content = [Block(text)]
+
+    quota = _flatten_result(Result("You're out of energy; it refills tomorrow."))
+    unknown = _flatten_result(Result("Unknown challenge."))
+    missing = _flatten_result(Result("Type an attack prompt first."))
+
+    assert "Quota wall" in quota and "do not retry" in quota
+    assert "Identifier wall" in unknown and "exact returned identifier" in unknown
+    assert "Argument wall" in missing and "required field" in missing
 
 
 async def test_proxy_tools_register_and_execute():

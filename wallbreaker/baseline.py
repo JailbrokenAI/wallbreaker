@@ -9,7 +9,11 @@ from .report import _load_records, asr_by_technique
 def load_asr(run_path: str | Path) -> dict[str, dict]:
     records = _load_records(run_path)
     verdicts = [r for r in records if r.get("kind") == "verdict"]
-    return asr_by_technique(verdicts)
+    detailed = asr_by_technique(verdicts)
+    return {
+        technique: {"hits": stats["strict_hits"], "total": stats["total"]}
+        for technique, stats in detailed.items()
+    }
 
 
 def _ratio(bucket: dict) -> float:

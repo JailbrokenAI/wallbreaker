@@ -7,8 +7,7 @@ from ..agent.messages import assistant, user
 from ..judging import grade
 from ..persona_method import infer_domain, register_for
 from ..state import load_state, save_state, state_path_for
-from ._util import complete_with_reasoning as _complete
-from ._util import gather_capped
+from ._util import complete_untruncated, gather_capped
 from .registry import ToolContext, ToolRegistry
 
 GENERIC_OBJECTIVE = (
@@ -93,22 +92,27 @@ async def _fire_one(ctx, prompt, prefill, system, max_tokens, timeout):
     messages = [user(prompt)]
     if prefill:
         messages.append(assistant(prefill))
-    reply, reasoning = await asyncio.wait_for(
-        _complete(provider, messages, system, max_tokens), timeout=timeout
+    reply, reasoning, stop, truncated = await asyncio.wait_for(
+        complete_untruncated(provider, messages, system, max_tokens), timeout=timeout
     )
-    return reply or "", reasoning or ""
+    return reply or "", reasoning or "", stop, truncated
 
 
 async def _probe(ctx, name, prompt, prefill, objective, system, max_tokens, timeout, judge):
     """A single shot at one framing: fire, then grade (benign is never graded)."""
     try:
-        reply, reasoning = await _fire_one(ctx, prompt, prefill, system, max_tokens, timeout)
+        reply, reasoning, stop, truncated = await _fire_one(
+            ctx, prompt, prefill, system, max_tokens, timeout
+        )
     except (asyncio.TimeoutError, Exception):  # noqa: BLE001
         return {"name": name, "error": True, "label": "ERROR", "score": None,
-                "reply": "", "reasoning": ""}
+                "reply": "", "reasoning": "", "stop": None, "truncated": False}
+    if truncated:
+        return {"name": name, "error": True, "label": "ERROR", "score": None,
+                "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": True}
     if name == "benign":
         return {"name": name, "error": False, "label": "CONTROL", "score": None,
-                "reply": reply, "reasoning": reasoning}
+                "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": False}
     try:
         label, score, _reason, _src = await asyncio.wait_for(
             grade(judge, reply, payload=prompt, objective=objective, reasoning=reasoning),
@@ -117,7 +121,7 @@ async def _probe(ctx, name, prompt, prefill, objective, system, max_tokens, time
     except (asyncio.TimeoutError, Exception):  # noqa: BLE001
         label, score = "ERROR", None
     return {"name": name, "error": False, "label": label, "score": score,
-            "reply": reply, "reasoning": reasoning}
+            "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": False}
 
 
 def _aggregate(name: str, shots: list[dict]) -> dict:
@@ -142,6 +146,8 @@ def _aggregate(name: str, shots: list[dict]) -> dict:
         "samples": len(shots),
         "reply": " ".join(s["reply"] for s in shots if s["reply"]),
         "reasoning": " ".join(s["reasoning"] for s in shots if s["reasoning"]),
+        "truncated": any(s.get("truncated", False) for s in shots),
+        "stop": next((s.get("stop") for s in shots if s.get("stop")), None),
     }
 
 
@@ -248,7 +254,7 @@ async def _profile_target(args: dict, ctx: ToolContext) -> str:
 
     objective = (args.get("objective") or "").strip() or GENERIC_OBJECTIVE
     system = args.get("system")
-    max_tokens = int(args.get("max_tokens", 400))
+    max_tokens = int(args.get("max_tokens", 1024))
     timeout = float(args.get("timeout", 45))
     concurrency = max(1, int(args.get("concurrency", 3)))
     samples = max(1, min(int(args.get("samples", 1)), 5))
@@ -302,11 +308,12 @@ async def _profile_target(args: dict, ctx: ToolContext) -> str:
             results[r["name"]] = r
         run.done(summary=f"{total - errors}/{total} framings profiled")
 
+    truncated_probes = sum(1 for result in results.values() if result.get("truncated"))
     if errors == total:
         return (
-            "profile_target: ALL probes errored/timed out - the target is unreachable or "
-            "every call hit the timeout. Raise 'timeout', lower 'max_tokens', or check the "
-            "[target] endpoint."
+            "profile_target: ALL probes errored, timed out, or remained truncated after retry. "
+            "The target is unreachable or the response budget is still too low. Raise 'timeout' "
+            "or 'max_tokens', or check the [target] endpoint."
         )
 
     leaks_cot = any(r["reasoning"].strip() for r in results.values())
@@ -390,6 +397,12 @@ async def _profile_target(args: dict, ctx: ToolContext) -> str:
         lines.append(f"  (skipped to stay under max_calls={max_calls}: {', '.join(dropped)})")
     if errors:
         lines.append(f"  ({errors}/{total} framings errored - profile is partial)")
+    if truncated_probes:
+        stops = sorted({str(r.get("stop") or "unknown") for r in results.values() if r.get("truncated")})
+        lines.append(
+            f"  ({truncated_probes}/{total} framings remained truncated after retry; "
+            f"stop={','.join(stops)})"
+        )
 
     lines += ["", "recommendations:"]
     for name in _ATTACK_FRAMINGS:

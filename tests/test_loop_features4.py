@@ -51,6 +51,59 @@ def test_campaign_cracks_via_prefill(monkeypatch):
     assert "cracked 1/1" in res.content
 
 
+def test_campaign_escalates_past_partial(monkeypatch):
+    monkeypatch.setattr(factory, "build_provider", _PrefillOnlyTarget)
+
+    async def fake_grade(endpoint, response, payload="", objective="", use_judge=True, reasoning=""):
+        if "continuing" in response:
+            return ("COMPLIED", 9, "ok", "judge")
+        return ("PARTIAL", 4, "near miss", "judge")
+
+    monkeypatch.setattr(campaign, "grade", fake_grade)
+    ep = Endpoint("t", "openai", "http://x", "m")
+    cfg = Config(default_profile="t", profiles={"t": ep}, target=ep)
+    captured = []
+    ctx = ToolContext(
+        config=cfg,
+        judge_endpoint=ep,
+        record=lambda p, r, label, reason, technique: captured.append((label, technique)),
+    )
+    reg = ToolRegistry(ctx)
+    campaign.register(reg)
+    res = asyncio.run(
+        reg.execute("campaign", {"behaviors": ["do the bad thing"], "ladder": ["plain", "prefill"]})
+    )
+
+    assert "CRACKED via prefill" in res.content
+    assert captured == [("COMPLIED", "campaign:prefill")]
+
+
+def test_campaign_all_partial_is_not_cracked(monkeypatch):
+    monkeypatch.setattr(factory, "build_provider", _PrefillOnlyTarget)
+
+    async def fake_grade(endpoint, response, payload="", objective="", use_judge=True, reasoning=""):
+        return ("PARTIAL", 4, "near miss", "judge")
+
+    monkeypatch.setattr(campaign, "grade", fake_grade)
+    ep = Endpoint("t", "openai", "http://x", "m")
+    cfg = Config(default_profile="t", profiles={"t": ep}, target=ep)
+    captured = []
+    ctx = ToolContext(
+        config=cfg,
+        judge_endpoint=ep,
+        record=lambda p, r, label, reason, technique: captured.append((label, technique)),
+    )
+    reg = ToolRegistry(ctx)
+    campaign.register(reg)
+    res = asyncio.run(
+        reg.execute("campaign", {"behaviors": ["x"], "ladder": ["plain", "prefill"]})
+    )
+
+    assert "strictly cracked 0/1" in res.content
+    assert "partial leaks 1/1" in res.content
+    assert captured == [("PARTIAL", "campaign:plain")]
+
+
 def test_campaign_reports_held(monkeypatch):
     class _AllRefuse:
         def __init__(self, endpoint, **kw):

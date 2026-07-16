@@ -30,8 +30,8 @@ def test_report_includes_technique_table(tmp_path):
     log.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
     md = build_report(log)
     assert "ASR by technique" in md
-    assert "| prefill | 1/2 | 50% |" in md
-    assert "| template | 1/1 | 100% |" in md
+    assert "| prefill | 1 | 0 | 2 | 50% | 50% |" in md
+    assert "| template | 1 | 0 | 1 | 100% | 100% |" in md
 
 
 def _build_app(tmp_path):

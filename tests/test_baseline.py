@@ -50,7 +50,7 @@ def test_save_and_compare_flags_raised_asr(tmp_path):
     assert "morse" not in techs
     leet = next(r for r in regressions if r["technique"] == "leet")
     assert leet["baseline"] == 0.25
-    assert leet["current"] == 0.75
+    assert leet["current"] == 0.5
 
 
 def test_compare_no_regression_when_asr_stable(tmp_path):

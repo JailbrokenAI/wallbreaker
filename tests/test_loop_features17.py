@@ -24,8 +24,12 @@ def _write(tmp_path):
 
 def test_asr_by_technique():
     out = asr_by_technique([r for r in _ROWS])
-    assert out["prefill"] == {"hits": 1, "total": 2}
-    assert out["many_shot"] == {"hits": 1, "total": 1}
+    assert out["prefill"]["strict_hits"] == 1
+    assert out["prefill"]["partial_hits"] == 0
+    assert out["prefill"]["total"] == 2
+    assert out["many_shot"]["strict_hits"] == 0
+    assert out["many_shot"]["partial_hits"] == 1
+    assert out["many_shot"]["total"] == 1
 
 
 def test_export_carries_technique(tmp_path):

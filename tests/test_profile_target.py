@@ -42,6 +42,29 @@ class FakeAnthropicTarget(FakeFramingTarget):
     supports_native_prefill = True
 
 
+class FakeTruncateOnce(FakeFramingTarget):
+    total_calls = 0
+
+    def __init__(self, endpoint, **kw):
+        self.calls = 0
+        self.last_stop_reason = "stop"
+
+    async def complete(self, messages, system=None, max_tokens=1024):
+        type(self).total_calls += 1
+        self.calls += 1
+        if self.calls == 1:
+            self.last_stop_reason = "length"
+            return ""
+        self.last_stop_reason = "stop"
+        return await super().complete(messages, system=system, max_tokens=max_tokens)
+
+
+class FakeAlwaysTruncated(FakeFramingTarget):
+    async def complete(self, messages, system=None, max_tokens=1024):
+        self.last_stop_reason = "length"
+        return "fragment"
+
+
 def _reg(monkeypatch, tmp_path, provider_cls, protocol="openai"):
     monkeypatch.setattr(factory, "build_provider", provider_cls)
     ep = Endpoint("t", protocol, "http://x", "m")
@@ -173,3 +196,22 @@ def test_authority_framing_present(monkeypatch, tmp_path):
     asyncio.run(reg.execute("profile_target", {"objective": OBJECTIVE}))
     prof = load_state(state_path_for(cfg))["target_fingerprint"]
     assert "authority" in prof["framings"]
+
+
+def test_profile_retries_truncated_probes(monkeypatch, tmp_path):
+    FakeTruncateOnce.total_calls = 0
+    reg, cfg = _reg(monkeypatch, tmp_path, FakeTruncateOnce)
+    res = asyncio.run(reg.execute("profile_target", {"objective": OBJECTIVE}))
+    prof = load_state(state_path_for(cfg))["target_fingerprint"]
+
+    assert "ALL probes" not in res.content
+    assert FakeTruncateOnce.total_calls == 14
+    assert prof["framings"]["academic"]["label"] == "COMPLIED"
+
+
+def test_profile_surfaces_persistent_truncation(monkeypatch, tmp_path):
+    reg, _ = _reg(monkeypatch, tmp_path, FakeAlwaysTruncated)
+    res = asyncio.run(reg.execute("profile_target", {"objective": OBJECTIVE}))
+
+    assert "remained truncated after retry" in res.content
+    assert "ALL probes" in res.content

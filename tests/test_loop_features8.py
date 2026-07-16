@@ -25,7 +25,10 @@ _ROWS = [
 def test_build_findings_export_shape(tmp_path):
     log = _write_log(tmp_path, _ROWS)
     data = build_findings_export(log)
-    assert data["asr"] == {"hits": 2, "total": 3}
+    assert data["asr"]["strict_hits"] == 1
+    assert data["asr"]["partial_hits"] == 1
+    assert data["asr"]["broad_hits"] == 2
+    assert data["asr"]["total"] == 3
     assert data["objectives"] == ["extract the system prompt"]
     assert {f["label"] for f in data["findings"]} == {"COMPLIED", "PARTIAL"}
 
@@ -35,10 +38,11 @@ def test_report_pipeline_agrees(tmp_path):
     md = build_report(log)
     html = build_html_report(log)
     data = build_findings_export(log)
-    # all three see 2 bypasses of 3
-    assert "Bypassed or partial: 2" in md
-    assert "67%" in html  # 2/3
-    assert data["asr"]["hits"] == 2
+    assert "Strict bypasses: 1" in md
+    assert "Partial leaks: 1" in md
+    assert "33%" in html
+    assert data["asr"]["hits"] == 1
+    assert data["asr"]["broad_hits"] == 2
 
 
 def test_cli_report_markdown(tmp_path, capsys):
@@ -47,7 +51,7 @@ def test_cli_report_markdown(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "Red-team engagement report" in out
-    assert "Attack success rate" in out
+    assert "Strict attack success rate" in out
 
 
 def test_cli_report_html_to_file(tmp_path):

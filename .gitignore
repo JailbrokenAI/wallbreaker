@@ -20,8 +20,12 @@ wb_runs/
 wb_images/
 wb_artifacts/
 wb_stego/
+wb_work/
 findings/
 sessions/
+
+# vendored third-party clones (their own git repos — not part of this repo)
+awesome-osint-arsenal/
 
 # loose working jailbreak drafts, seeds & scraped research (never publish)
 .firecrawl/
