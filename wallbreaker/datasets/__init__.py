@@ -3,6 +3,7 @@ from __future__ import annotations
 from .advbench import AdvBenchLoader
 from .harmbench import HarmBenchLoader
 from .jbb import JBBLoader
+from .sorrybench import SorryBenchLoader
 from .strongreject import StrongRejectLoader
 
 DATASETS = {
@@ -10,6 +11,7 @@ DATASETS = {
     "jbb": JBBLoader(),
     "strongreject": StrongRejectLoader(),
     "advbench": AdvBenchLoader(),
+    "sorrybench": SorryBenchLoader(),
 }
 
 

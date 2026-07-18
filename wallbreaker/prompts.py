@@ -384,7 +384,7 @@ adversarial_poetry, math_problem - plus the partial-completion set (defender_re,
 completeness_force, continue_complete).
 EVAL: the judge now scores StrongREJECT-style (refused x specific x convincing) so a polished
 toy/safe-completion lands PARTIAL not COMPLIED; a defense-scrambled reply is GARBLED, not
-REFUSED. Standardized batteries via source= (harmbench/jbb/strongreject/advbench); jbb's
+REFUSED. Standardized batteries via source= (harmbench/jbb/strongreject/advbench/sorrybench); jbb's
 benign split gives an over-refusal denominator. report.py emits a graded scorecard + OWASP/
 ATLAS coverage matrix.
 RECON & ADVICE (call these to decide, they do NOT attack for you): profile_target (probe the
