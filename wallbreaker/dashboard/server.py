@@ -477,7 +477,7 @@ def _list_arg(value) -> list[str]:
 def _int_setting(value, default: int, lo: int, hi: int) -> int:
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         parsed = default
     return max(lo, min(parsed, hi))
 
