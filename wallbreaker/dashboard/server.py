@@ -738,7 +738,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     from fastapi import FastAPI, Header, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
-    from .auth import CSRF_HEADER, SecurityMiddleware, TOKEN_HEADER
+    from .auth import SecurityMiddleware, TOKEN_HEADER
 
     sessions = Path(sessions_dir)
     from ..session import RunLog, run_models_meta
@@ -809,16 +809,18 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
     @app.get("/api/session")
     def session_bootstrap(origin: str | None = Header(default=None)):
-        """Same-origin bootstrap: hands the SPA the token + the CSRF header name. Only returns the
-        token to a same-origin (or non-browser) request; a cross-site page is refused so it cannot
-        read it (the browser's same-origin policy also blocks reading this response cross-origin)."""
+        """Same-origin bootstrap: hands the SPA the launch token so it can attach it as
+        ``X-WB-Token`` on every request. Only returns the token to a same-origin (or non-browser)
+        request; a cross-site page is refused so it cannot read it (the browser's same-origin
+        policy also blocks reading this response cross-origin). The token itself is the CSRF
+        defense — a cross-site page cannot set a custom header without a CORS preflight, which
+        this app's loopback-only CORS rejects."""
         from .auth import origin_is_same_site
         if require_auth and not origin_is_same_site(origin):
             raise HTTPException(status_code=403, detail="cross-site request blocked")
         return {
             "authenticated": bool(require_auth),
             "tokenHeader": TOKEN_HEADER,
-            "csrfHeader": CSRF_HEADER,
             "token": token if require_auth else "",
         }
 

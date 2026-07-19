@@ -234,6 +234,32 @@ def test_health_and_session_exempt_from_auth():
     assert body["authenticated"] is True and body["token"] == "secret-tok"
 
 
+def test_session_bootstrap_shape_for_spa():
+    """TG1.4 contract: /api/session hands the SPA the token header name + the token, and the
+    token itself is the CSRF defense (no separate csrfHeader is exposed). Locks the shape the
+    SPA's ensureToken() depends on."""
+    from wallbreaker.dashboard.auth import TOKEN_HEADER
+    c = _client(require_auth=True, auth_token="secret-tok")
+    body = c.get("/api/session").json()
+    assert body["tokenHeader"] == TOKEN_HEADER == "x-wb-token"
+    assert body["token"] == "secret-tok"
+    assert body["authenticated"] is True
+    # The token IS the CSRF defense: no separate csrf header is exposed or enforced.
+    assert "csrfHeader" not in body
+    # A cross-site Origin must not receive the token.
+    r = c.get("/api/session", headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403
+
+
+def test_no_auth_mode_session_returns_empty_token():
+    """When auth is off (test factory / embedders), /api/session reports unauthenticated and no
+    token, so the SPA's withAuth() sends no header and the app still works."""
+    c = _client()  # require_auth defaults False
+    body = c.get("/api/session").json()
+    assert body["authenticated"] is False
+    assert body["token"] == ""
+
+
 def test_no_auth_mode_is_open_for_back_compat():
     c = _client()  # require_auth defaults False (test factory / embedders)
     assert c.get("/api/config").status_code == 200

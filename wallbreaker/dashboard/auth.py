@@ -21,8 +21,12 @@ import secrets
 from pathlib import Path
 from urllib.parse import urlsplit
 
+# The token IS the CSRF defense, not a separate header: it rides in a custom header a
+# cross-site page cannot set (a cross-site fetch with a custom header triggers a CORS preflight,
+# which this app's loopback-only CORS rejects), and cannot read (same-origin policy blocks
+# /api/session). The Origin / Sec-Fetch-Site same-origin check is an independent, explicit
+# CSRF guard. There is no cookie auth, so a double-submit CSRF token would add nothing.
 TOKEN_HEADER = "x-wb-token"
-CSRF_HEADER = "x-wb-csrf"
 TOKEN_FILENAME = ".wallbreaker_dashboard_token"
 
 # Paths reachable without a token (health probe + the same-origin bootstrap the SPA uses to
