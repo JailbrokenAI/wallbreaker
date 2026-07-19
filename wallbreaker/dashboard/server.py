@@ -1234,6 +1234,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
     dashboard_inference_lock = asyncio.Lock()
     agent_active = False
+    agent_task: asyncio.Task | None = None  # retained strong ref so the runner isn't GC'd mid-run (REL-6); cleared in runner() finally and /api/agent/stop.
     agent_control = None
 
     @app.post("/api/compose")
@@ -1421,7 +1422,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
     @app.post("/api/agent/run")
     async def agent_run(body: dict):
-        nonlocal agent_active, agent_control
+        nonlocal agent_active, agent_control, agent_task
         from fastapi.responses import StreamingResponse
 
         if config is None:
@@ -1456,6 +1457,17 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         from ..providers.request_gate import configure_request_gate
 
         configure_request_gate(concurrency, request_delay_ms)
+
+        # REL-7: overall wall-clock deadline so a trickling/hung target can't keep a round (and
+        # thus the run) alive forever. Generous and overridable: operator can pass run_timeout_s
+        # in the body; else default to max_rounds * 180s (3 min/round) floored at 300s, capped at
+        # 7200s — long enough to never kill a legitimate long run, short enough to recover a
+        # wedged one. A timed-out run emits a terminal SSE event and clears state in finally.
+        _requested_timeout = body.get("run_timeout_s")
+        if _requested_timeout is not None:
+            overall_timeout = float(_int_setting(_requested_timeout, 1800, 30, 72000))
+        else:
+            overall_timeout = min(7200.0, max(300.0, max_rounds * 180.0))
 
         from ..agent.loop import AgentEvents, run_autonomous
         from ..agent.messages import user
@@ -1501,7 +1513,12 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 "enabled_techniques": enabled_techniques,
             },
         )
-        queue: asyncio.Queue = asyncio.Queue()
+        # REL-6: bound the pre-detach SSE queue so a slow consumer can't grow memory forever.
+        # Drop-oldest on overflow (never block the producer): a disconnected/slow client must not
+        # stall the agent loop — the run completes server-side regardless of the client (the
+        # original `stream_attached` no-op is preserved below). The terminal None sentinel always
+        # gets through because an attached consumer drains the queue.
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
         stream_attached = True
 
         def push(ev) -> None:
@@ -1509,8 +1526,18 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 return
             try:
                 queue.put_nowait(ev)
-            except Exception:
-                pass
+            except asyncio.QueueFull:
+                # Drop the oldest event to make room (never block the producer / never stall the
+                # run). A slow-but-attached client loses intermediate transcript but keeps the
+                # latest; a disconnected client already short-circuits above.
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(ev)
+                except asyncio.QueueFull:
+                    pass  # still full after one drop (rare): drop the new event rather than block
 
         def progress(message) -> None:
             text = str(message)
@@ -1613,25 +1640,48 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 agent_control["pause_ready"] = False
 
         async def runner():
-            nonlocal agent_active, agent_control
+            nonlocal agent_active, agent_control, agent_task
             from ..session import inference_logging
 
             async with dashboard_inference_lock:
                 try:
                     with inference_logging(runlog):
-                        res = await run_autonomous(
-                            provider, registry, history, system=compose_system(brain),
-                            events=events, max_rounds=max_rounds, max_tokens=max_tokens,
-                            feedback=drain_feedback,
-                            before_model=pause_checkpoint,
-                        )
-                    data = res.data or {}
-                    summary = data.get("summary") or data.get("question") or ""
-                    runlog.event("agent_done", status=res.status, summary=summary)
-                    push({
-                        "type": "done", "status": res.status,
-                        "summary": summary, "run_log": runlog.path.name,
-                    })
+                        try:
+                            res = await asyncio.wait_for(
+                                run_autonomous(
+                                    provider, registry, history, system=compose_system(brain),
+                                    events=events, max_rounds=max_rounds, max_tokens=max_tokens,
+                                    feedback=drain_feedback, before_model=pause_checkpoint,
+                                ),
+                                timeout=overall_timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            # REL-7: emit a terminal event BEFORE closing the stream so the client
+                            # doesn't hang on a timed-out run.
+                            runlog.event("agent_done", status="timeout", summary="run timed out")
+                            push({
+                                "type": "done", "status": "timeout",
+                                "summary": "run timed out", "run_log": runlog.path.name,
+                            })
+                            res = None
+                        except asyncio.CancelledError:
+                            # /api/agent/stop cancelled this task: emit a terminal event, let the
+                            # finally clear state. Don't re-raise: we want the task to complete
+                            # cleanly so the stop endpoint's await returns normally.
+                            runlog.event("agent_done", status="stopped", summary="run stopped")
+                            push({
+                                "type": "done", "status": "stopped",
+                                "summary": "run stopped", "run_log": runlog.path.name,
+                            })
+                            res = None
+                        else:
+                            data = res.data or {}
+                            summary = data.get("summary") or data.get("question") or ""
+                            runlog.event("agent_done", status=res.status, summary=summary)
+                            push({
+                                "type": "done", "status": res.status,
+                                "summary": summary, "run_log": runlog.path.name,
+                            })
                 except Exception as exc:  # noqa: BLE001
                     error_event(f"{type(exc).__name__}: {exc}")
                 finally:
@@ -1642,13 +1692,18 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                         await provider.aclose()
                     except Exception:
                         pass
+                    # REL-6: every exit path (normal, exception, wait_for timeout, force-stop
+                    # cancellation) lands here — clear agent_active + the task ref + control so a
+                    # wedged run can't wedge the dashboard forever and a new run can start.
                     agent_active = False
+                    agent_task = None
                     resume_event.set()
                     agent_control = None
                     push(None)
 
         agent_active = True
         task = asyncio.create_task(runner())
+        agent_task = task  # REL-6: retain a strong ref so the runner isn't GC'd mid-flight and /api/agent/stop can cancel it.
 
         async def gen():
             nonlocal stream_attached
@@ -1671,6 +1726,38 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 stream_attached = False
 
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/agent/stop")
+    async def agent_stop():
+        """Force-stop a wedged/hung agent run (REL-6). Idempotent: returns {stopped: false} (200)
+        when nothing is running, never errors. When a run is active, cancels the retained task
+        and waits for its finally to clear agent_active / agent_task / agent_control so a new run
+        can start immediately after. Auth + CSRF already enforced by SecurityMiddleware."""
+        nonlocal agent_active, agent_control, agent_task
+        if not agent_active or agent_task is None:
+            # Defensive: ensure state is clean even if the runner already finished but somehow
+            # left a flag set (e.g. a prior crash). Idempotent — never error on a no-op stop.
+            agent_active = False
+            agent_control = None
+            agent_task = None
+            return {"stopped": False}
+        task = agent_task
+        try:
+            task.cancel()
+            # Let the runner's finally run (it clears agent_active/agent_task/agent_control and
+            # pushes the terminal None). Await with a short grace so the endpoint returns after
+            # the run is actually stopped, not before.
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                pass
+        finally:
+            # Belt-and-suspenders: the runner's finally should have done this, but make the
+            # endpoint's contract independent of the runner's exit path.
+            agent_active = False
+            agent_control = None
+            agent_task = None
+        return {"stopped": True}
 
     dist = _web_dist(web_dir)
     if dist is not None:

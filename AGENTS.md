@@ -12,6 +12,15 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   with `lossy` flags.
 
 ## Lessons Learned
+- **[provider-lifecycle]**: tools MUST NOT cache a `build_provider()` result for reuse across
+  separate `ToolRegistry.execute()` calls. `ToolRegistry.execute` wraps each call in
+  `providers.provider_scope()`, which tracks every `build_provider()` made during the call and
+  `aclose()`s them at the call boundary (audit REL-2). A provider you stash on `ctx`/`self`/a
+  module global for reuse on a *later* call will be closed out from under you → use-after-close.
+  Rebuild per call (as `continue_target` already does), or, for a genuinely long-lived provider
+  like the dashboard brain, build it *outside* `reg.execute` (where the bucket is None and the
+  scope won't touch it) and own its `aclose()` yourself. This invariant is the only debt the
+  REL-2 chokepoint design introduces (AD-12); violating it rediscovers the leak as a bug.
 - **[cli]**: a function-local `import X` anywhere in `main()` makes `X` a LOCAL name across the
   ENTIRE function (Python binds locals per-function at compile time), so any OTHER branch that
   uses `X` before that import runs raises `UnboundLocalError` — even with a module-level `import X`

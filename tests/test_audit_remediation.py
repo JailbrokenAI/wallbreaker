@@ -6,14 +6,20 @@ REL-3/RACE-1 (atomic state). Runs offline; no network, no real subprocess.
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, given, settings, strategies as st
 
 from wallbreaker import state
+from wallbreaker.config import Endpoint
+from wallbreaker.dashboard.server import create_app
+from wallbreaker.providers.base import Provider
 from wallbreaker.session import redact_args
 from wallbreaker.tools import egress_guard as eg
 from wallbreaker.tools import tool_policy
@@ -435,3 +441,194 @@ def test_live_attacker_provider_aclose_closes_brain_and_switch_closes_old():
         assert second._client is None, "aclose must close the active brain provider"
 
     asyncio.run(run())
+
+
+# ------------------------------------------------------------------------- REL-6/7 run lifecycle (TG4.3)
+# The problems: the runner task ref was discarded (GC risk, no cancel handle); agent_active
+# cleared only in finally so a hung run wedged the dashboard forever (409 on every new run);
+# no overall wall-clock timeout so a trickling target hung indefinitely; the SSE queue was
+# unbounded. The original design's correct behavior — a run keeps draining server-side after
+# the client disconnects — must be preserved (the audit praised it; REL-6 only bounds memory).
+
+def _agent_run_app(monkeypatch, tmp_path, provider_obj, *, run_timeout_s=None):
+    """Wire an app whose dashboard agent_run uses `provider_obj` as the brain, and return the
+    TestClient + the sessions dir so tests can inspect the run log."""
+    import wallbreaker.providers.factory as factory_mod
+    import wallbreaker.tools as tools_mod
+    from wallbreaker.config import Config, Endpoint
+    from wallbreaker.providers.base import Provider
+    from wallbreaker.tools.registry import ToolContext, ToolRegistry
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    attacker = Endpoint("attacker", "openai", "http://attacker", "attack-model")
+    target = Endpoint("target", "openai", "http://target", "target-model")
+    cfg = Config(
+        default_profile="attacker", profiles={"attacker": attacker},
+        target=target, path=tmp_path / "config.toml",
+    )
+    registry = ToolRegistry(ToolContext(config=cfg))
+    monkeypatch.setattr(factory_mod, "build_provider", lambda _endpoint: provider_obj)
+    monkeypatch.setattr(tools_mod, "build_registry", lambda _config: registry)
+    app = create_app(config=cfg, sessions_dir=sessions)
+    client = TestClient(app)
+    return client, sessions, app
+
+
+class _TricklingProvider(Provider):
+    """Never yields a StopEvent — the round (and thus the run) hangs until the overall
+    wall-clock timeout cancels it. Models the REL-7 trickling-target threat."""
+
+    def __init__(self, endpoint):
+        super().__init__(endpoint)
+
+    async def stream(self, messages, tools=None, system=None, max_tokens=4096, temperature=None):
+        # Yield one tiny delta then hang forever — so we don't return before the timeout
+        # fires, and the run genuinely can't complete on its own.
+        from wallbreaker.agent.messages import TextDelta
+        yield TextDelta("thinking")
+        await asyncio.Event().wait()  # never set
+
+
+def test_overall_timeout_trips_on_a_trickling_target(monkeypatch, tmp_path):
+    """TG4.9: a target that never returns (trickle/hang) trips the overall wall-clock timeout
+    instead of hanging the run forever; a terminal 'timeout' SSE event is emitted."""
+    provider = _TricklingProvider(Endpoint("attacker", "openai", "http://attacker", "attack-model"))
+    body = {"objective": "go", "max_rounds": 5, "run_timeout_s": 1}  # 1s deadline
+    client, sessions, _app = _agent_run_app(monkeypatch, tmp_path, provider, run_timeout_s=1)
+
+    with client.stream("POST", "/api/agent/run", json=body) as response:
+        assert response.status_code == 200
+        stream_text = "".join(response.iter_text())
+
+    assert '"status": "timeout"' in stream_text, "must emit a terminal timeout SSE event"
+    # The run must have ended cleanly (agent_active cleared) — a new run can start (409 gone).
+    r2 = client.post("/api/agent/run", json={"objective": "again", "max_rounds": 1, "run_timeout_s": 1})
+    # 409 means still active (wedged) — must NOT happen; a stream response is 200.
+    assert r2.status_code != 409, "agent_active must be cleared after a timed-out run"
+
+
+def test_force_stop_ends_a_wedged_run_and_new_run_can_start(monkeypatch, tmp_path):
+    """TG4.9: /api/agent/stop cancels a wedged/hung run; agent_active clears; a new run can
+    start immediately after. The stop endpoint is idempotent (200 {stopped:false} when idle).
+
+    Drives the ASGI app with httpx.AsyncClient + ASGITransport on ONE event loop so the
+    background runner task and the stop request genuinely share state (Starlette's
+    synchronous TestClient runs each request on a fresh loop, so agent_active set by one
+    request is invisible to another). A controllable provider blocks the run on an Event
+    until the test releases it, so the stop request lands while the run is genuinely active."""
+    import httpx
+
+    release = asyncio.Event()
+
+    class _BlockedProvider(Provider):
+        async def stream(self, messages, tools=None, system=None, max_tokens=4096, temperature=None):
+            from wallbreaker.agent.messages import TextDelta
+            yield TextDelta("thinking")
+            await release.wait()  # held until the test releases (or the run is cancelled)
+
+    provider = _BlockedProvider(Endpoint("attacker", "openai", "http://attacker", "attack-model"))
+    client_sync, sessions, app = _agent_run_app(monkeypatch, tmp_path, provider)
+
+    async def scenario():
+        import httpx
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            # Run a slow stream consumer and the stop request concurrently on this one loop.
+            # The consumer iterates the SSE body slowly (one chunk then awaits), which drives the
+            # StreamingResponse body generator and lets the background runner task actually
+            # start. The stop task waits a beat for the runner to set agent_active=True, then
+            # cancels it. Both share the loop so agent_active is visible to the stop request.
+            stopped_result = {}
+            run_done = asyncio.Event()
+
+            async def consume_run():
+                async with ac.stream("POST", "/api/agent/run",
+                                     json={"objective": "go", "max_rounds": 5, "run_timeout_s": 600}) as r:
+                    assert r.status_code == 200
+                    # Pull exactly one chunk so the body generator runs and the runner starts,
+                    # then hold the stream open (don't fully drain) until stop releases us.
+                    got_one = False
+                    async for chunk in r.aiter_raw():
+                        got_one = True
+                        break
+                    assert got_one, "the run stream must emit at least one chunk"
+                    await run_done.wait()
+                    # The stream was cancelled; just exit — no second iteration.
+
+            async def do_stop():
+                await asyncio.sleep(0.1)  # let the runner start + set agent_active
+                stop = await ac.post("/api/agent/stop")
+                stopped_result["status"] = stop.status_code
+                stopped_result["body"] = stop.json()
+                release.set()  # unblock the provider so the cancelled runner exits promptly
+                run_done.set()
+
+            await asyncio.gather(consume_run(), do_stop())
+            assert stopped_result.get("status") == 200
+            assert stopped_result.get("body") == {"stopped": True}, "a running task must be stopped"
+
+            # Idempotent: stopping again when nothing is running returns {stopped: false}.
+            stop2 = await ac.post("/api/agent/stop")
+            assert stop2.status_code == 200
+            assert stop2.json() == {"stopped": False}
+
+            # A new run can start immediately (agent_active cleared). Swap to a quick brain.
+            from wallbreaker.agent.messages import StopEvent, TextDelta, ToolUseEvent
+            import wallbreaker.providers.factory as factory_mod
+
+            class _FinishQuickly(Provider):
+                async def stream(self, messages, tools=None, system=None, max_tokens=4096, temperature=None):
+                    yield TextDelta("done")
+                    yield ToolUseEvent("f-1", "finish", {"summary": "ok"})
+                    yield StopEvent("tool_use")
+            monkeypatch.setattr(factory_mod, "build_provider", lambda _e: _FinishQuickly(Endpoint("a", "openai", "http://x", "m")))
+            async with ac.stream("POST", "/api/agent/run",
+                                 json={"objective": "again", "max_rounds": 1, "run_timeout_s": 30}) as r2:
+                assert r2.status_code == 200
+                body = "".join([seg async for seg in r2.aiter_text()])
+            assert '"type": "done"' in body
+
+    asyncio.run(scenario())
+
+
+def test_client_disconnect_lets_run_finish_server_side(monkeypatch, tmp_path):
+    """TG4.9 regression guard (PM directive): a client that disconnects mid-stream must NOT
+    abandon the inference — the run completes server-side (its run log records agent_done),
+    preserving the correct behavior the original audit praised. REL-6 bounds memory, it does
+    NOT kill runs on disconnect."""
+    from wallbreaker.agent.messages import StopEvent, TextDelta, ToolUseEvent
+
+    class _FinishesAfterAStream(Provider):
+        async def stream(self, messages, tools=None, system=None, max_tokens=4096, temperature=None):
+            yield TextDelta("working")
+            yield ToolUseEvent("f-1", "finish", {"summary": "completed server-side"})
+            yield StopEvent("tool_use")
+
+    provider = _FinishesAfterAStream(Endpoint("attacker", "openai", "http://attacker", "attack-model"))
+    client, sessions, _app = _agent_run_app(monkeypatch, tmp_path, provider)
+
+    # Open the stream, read only the first event, then close (disconnect) — don't drain it.
+    stream_ctx = client.stream("POST", "/api/agent/run", json={"objective": "go", "max_rounds": 1})
+    response = stream_ctx.__enter__()
+    assert response.status_code == 200
+    # Consume one SSE frame then drop the connection.
+    _ = next(response.iter_lines(), None)
+    stream_ctx.__exit__(None, None, None)  # disconnect
+
+    # The runner kept going server-side; its run log must record a completed run. Poll briefly
+    # (the runner is an async task; TestClient runs the event loop on each request).
+    import time
+    log = None
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and log is None:
+        logs = list(sessions.glob("run-*.jsonl"))
+        if logs:
+            log = logs[0]
+        else:  # nudge the loop with a cheap request so the runner task can progress
+            client.get("/api/health")
+    assert log is not None, "a run log must have been created"
+    records = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    statuses = [r.get("status") for r in records if r.get("kind") == "agent_done"]
+    assert statuses, "the run must have completed server-side despite the client disconnect"
+    assert statuses[0] in ("finished", "stopped", "timeout", "max_rounds", "error")
