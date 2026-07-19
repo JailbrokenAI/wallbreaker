@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -39,8 +41,27 @@ class _LiveAttackerProvider:
         return self.endpoint.model
 
     def switch(self, provider, endpoint) -> None:
+        # REL-2: close the previous brain provider before replacing it so its pooled
+        # httpx.AsyncClient isn't leaked on a hot-swap. getattr-safe for fake/test providers.
+        old = self._provider
+        aclose = getattr(old, "aclose", None)
+        if aclose is not None and old is not provider:
+            try:
+                asyncio.get_running_loop().create_task(aclose())
+            except Exception:
+                pass
         self._provider = provider
         self.endpoint = endpoint
+
+    async def aclose(self) -> None:
+        # REL-2: the dashboard's brain provider lives for one agent run; close it when the
+        # run ends (runner() finally) so its pooled client isn't leaked per run.
+        aclose = getattr(self._provider, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                pass
 
     async def stream(self, messages, tools=None, system=None, max_tokens=4096, temperature=None):
         provider = self._provider
@@ -114,9 +135,16 @@ def _models_for_finding(record: dict, run_models: dict) -> dict:
 
 
 def _safe_run_path(sessions: Path, name: str) -> Path | None:
-    if ".." in name or "/" in name or "\\" in name:
+    # Reject separators/traversal in the name, then verify with realpath containment so a symlink
+    # planted inside sessions/ cannot point outside it (audit SEC-10). The substring check alone
+    # was fragile; the realpath check is the real guarantee.
+    if ".." in name or "/" in name or "\\" in name or name in ("", ".", ".."):
         return None
-    path = sessions / name
+    base = os.path.realpath(sessions)
+    resolved = os.path.realpath(sessions / name)
+    if resolved != base and not resolved.startswith(base + os.sep):
+        return None
+    path = Path(resolved)
     return path if path.is_file() else None
 
 
@@ -385,6 +413,8 @@ def _summarize_args(args: dict) -> str:
         return str(args)[:300]
     if not args:
         return ""
+    from ..session import redact_args
+    args = redact_args(args)  # never surface auth headers / passwords in the live stream (SEC-9)
     parts = []
     for k, v in args.items():
         if k in ("prompt", "request", "text", "payload") and isinstance(v, str):
@@ -447,9 +477,79 @@ def _list_arg(value) -> list[str]:
 def _int_setting(value, default: int, lo: int, hi: int) -> int:
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         parsed = default
     return max(lo, min(parsed, hi))
+
+
+# --- TG3.5 Pydantic request models (SEC-11) ----------------------------------------
+# Boundary validation: a malformed body → 422 (FastAPI/Pydantic), never a 500 traceback.
+# All fields are Optional with None defaults + extra="ignore" so valid SPA traffic and the
+# existing test payloads are never 422'd for unknown fields or missing optionals. Handlers
+# convert via model_dump(exclude_defaults=True) so `in`-checks behave identically to the old
+# `body: dict` (only fields the client actually sent appear in the dump).
+try:
+    from pydantic import BaseModel, ConfigDict
+
+    class AgentRunRequest(BaseModel):
+        model_config = ConfigDict(extra="ignore")
+        objective: str
+        max_rounds: int | None = None
+        max_tokens: int | None = None
+        concurrency: int | None = None
+        request_delay_ms: int | None = None
+        enabled_techniques: list[str] | None = None
+        run_timeout_s: int | None = None
+
+    class FireComposeRequest(BaseModel):
+        model_config = ConfigDict(extra="ignore")
+        request: str | None = None
+        prompt: str | None = None
+        payload: str | None = None
+        preset: str | None = None
+        transforms: list[str] | None = None
+        system: str | None = None
+        max_tokens: int | None = None
+
+    class ProviderUpsert(BaseModel):
+        # Provider config is very free-form; the handler's provider_registry.save() validates.
+        # The model ensures the body is a JSON object and type-checks the common fields.
+        model_config = ConfigDict(extra="allow")
+        protocol: str | None = None
+        base_url: str | None = None
+        model: str | None = None
+        api_key: str | None = None
+        api_key_env: str | None = None
+        enabled: bool | None = None
+        auth_style: str | None = None
+        inference_path: str | None = None
+        models_path: str | None = None
+        timeout: int | None = None
+        reasoning: bool | None = None
+        modality: str | None = None
+
+    class SettingsUpdate(BaseModel):
+        # Settings body is highly variable (role assignments, agent sub-dict, target_options).
+        # extra="allow" passes everything through; typed fields catch the common type errors.
+        model_config = ConfigDict(extra="allow")
+        agent: dict | None = None
+        target_options: dict | None = None
+
+except ImportError:  # pragma: no cover — pydantic is a transitive dep of fastapi (dashboard extra)
+    BaseModel = None  # type: ignore[assignment]
+
+    class AgentRunRequest:  # type: ignore[no-redef]
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+        def model_dump(self, **kw):
+            return {k: v for k, v in self.__dict__.items() if v is not None}
+
+    FireComposeRequest = AgentRunRequest  # type: ignore[assignment, misc]
+    ProviderUpsert = AgentRunRequest  # type: ignore[assignment, misc]
+    SettingsUpdate = AgentRunRequest  # type: ignore[assignment, misc]
+
+
+_log = logging.getLogger("wallbreaker.dashboard")
 
 
 def _agent_settings(prefs: dict | None = None) -> dict:
@@ -686,6 +786,16 @@ async def _discover_profile_models(profile: str, endpoint) -> dict:
         if key:
             headers["Authorization"] = f"Bearer {key}"
 
+    # SSRF guard: model discovery attaches the operator's API key to a request against a
+    # profile-supplied base_url. Block private/loopback/metadata targets so a poisoned base_url
+    # can't turn discovery into key exfiltration / internal probing (audit SEC-4).
+    from ..tools.egress_guard import EgressBlocked, check_url
+    try:
+        check_url(url)
+    except EgressBlocked as exc:
+        result["error"] = f"Model catalog host not allowed: {exc}"
+        return result
+
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.get(url, headers=headers)
@@ -703,12 +813,22 @@ async def _discover_profile_models(profile: str, endpoint) -> dict:
     return result
 
 
-def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str | Path | None = None):
+def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str | Path | None = None,
+               *, require_auth: bool = False, auth_token: str | None = None,
+               allow_host_tools: bool = False):
     """Build the Wallbreaker dashboard FastAPI app. fastapi is an optional extra
-    (`pip install -e '.[dashboard]'`), imported lazily so the package imports without it."""
-    from fastapi import FastAPI, HTTPException
+    (`pip install -e '.[dashboard]'`), imported lazily so the package imports without it.
+
+    Security: when `require_auth` is True every /api/* route (except /api/health and
+    /api/session) requires the dashboard token AND a same-origin request (audit SEC-1/2/3/6).
+    `serve()` — the only shipped entrypoint — always enables it and prints the token. The default
+    is False so the in-process test factory and embedders opt in explicitly; do not expose an app
+    built with require_auth=False on a network. `allow_host_tools` opts the browser agent back into
+    run_shell/write_file/http_request (off by default = least privilege, audit SEC-1/4/5)."""
+    from fastapi import FastAPI, Header, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
+    from .auth import SecurityMiddleware, TOKEN_HEADER
 
     sessions = Path(sessions_dir)
     from ..session import RunLog, run_models_meta
@@ -752,9 +872,19 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
             gate = _agent_settings(prefs)
             configure_request_gate(gate["concurrency"], gate["request_delay_ms"])
-        except Exception:
-            pass
+            # No notify_request_gates() here: this runs in the sync create_app body at startup,
+            # before any event loop / parked tasks exist. The async handlers (settings POST,
+            # agent_run) call notify after reconfiguring mid-flight (RACE-3).
+        except Exception as exc:
+            # TG3.6 (REL-8): log-and-continue, never hard-raise. A dashboard that starts and
+            # reports the problem (provider_registry=None → routes 400) is better than one that
+            # won't start at all. The failure is now visible, not fatal.
+            _log.warning("dashboard init degraded — %s: %s", type(exc).__name__, exc)
     app = FastAPI(title="Wallbreaker", version="0.1.0")
+    token = auth_token or (__import__("secrets").token_urlsafe(32) if require_auth else "")
+    app.state.auth_token = token
+    app.state.require_auth = require_auth
+    app.state.allow_host_tools = allow_host_tools
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[],
@@ -762,6 +892,21 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # CORS only decides response headers; it does NOT reject the request. This middleware does —
+    # it requires the token + a same-origin request on every mutating route (audit SEC-1/2/3).
+    app.add_middleware(SecurityMiddleware, token=token, require_auth=require_auth)
+
+    # TG3.4 (SEC-11): global 500 handler — returns a generic body with NO traceback/paths.
+    # Scoped to `Exception` only: FastAPI's built-in handlers for HTTPException (4xx) and
+    # RequestValidationError (422) take precedence by type specificity, so this NEVER turns a
+    # 401/403/404/400/422 into a 500. SSE StreamingResponse errors are unaffected (the response
+    # has already started by then; those are handled by runner()'s try/except).
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(Exception)
+    async def _generic_500(request, exc):
+        _log.exception("unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
     def _latest():
         return report_mod.latest_run_log(sessions)
@@ -769,6 +914,23 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     @app.get("/api/health")
     def health():
         return {"ok": True, "name": "wallbreaker", "version": "0.1.0"}
+
+    @app.get("/api/session")
+    def session_bootstrap(origin: str | None = Header(default=None)):
+        """Same-origin bootstrap: hands the SPA the launch token so it can attach it as
+        ``X-WB-Token`` on every request. Only returns the token to a same-origin (or non-browser)
+        request; a cross-site page is refused so it cannot read it (the browser's same-origin
+        policy also blocks reading this response cross-origin). The token itself is the CSRF
+        defense — a cross-site page cannot set a custom header without a CORS preflight, which
+        this app's loopback-only CORS rejects."""
+        from .auth import origin_is_same_site
+        if require_auth and not origin_is_same_site(origin):
+            raise HTTPException(status_code=403, detail="cross-site request blocked")
+        return {
+            "authenticated": bool(require_auth),
+            "tokenHeader": TOKEN_HEADER,
+            "token": token if require_auth else "",
+        }
 
     @app.get("/api/config")
     def config_info():
@@ -800,9 +962,10 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         return item
 
     @app.put("/api/providers/{name}")
-    def provider_put(name: str, body: dict):
+    def provider_put(name: str, body: ProviderUpsert):
         if provider_registry is None:
             raise HTTPException(status_code=400, detail="no config loaded")
+        body = body.model_dump(exclude_defaults=True)
         try:
             return provider_registry.save(name, body)
         except Exception as exc:
@@ -958,9 +1121,10 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         return result
 
     @app.post("/api/settings")
-    def settings_post(body: dict):
+    def settings_post(body: SettingsUpdate):
         if config is None:
             raise HTTPException(status_code=400, detail="no config loaded")
+        body = body.model_dump(exclude_defaults=True)
         from ..state import load_state, save_state, state_path_for
 
         prefs = load_state(state_path_for(config))
@@ -1019,6 +1183,9 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
         gate = _agent_settings(prefs)
         configure_request_gate(gate["concurrency"], gate["request_delay_ms"])
+        # RACE-3 notify is best-effort here: settings_post is a SYNC handler, so no await is
+        # possible. In practice a parked agent run holds dashboard_inference_lock, so this sync
+        # settings POST can't race with it; the authoritative notify is in async agent_run.
         return _settings_view(config, prefs)
 
     @app.get("/api/overview")
@@ -1161,19 +1328,22 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
     dashboard_inference_lock = asyncio.Lock()
     agent_active = False
+    agent_task: asyncio.Task | None = None  # retained strong ref so the runner isn't GC'd mid-run (REL-6); cleared in runner() finally and /api/agent/stop.
     agent_control = None
 
     @app.post("/api/compose")
-    def compose(body: dict):
+    def compose(body: FireComposeRequest):
+        body = body.model_dump(exclude_defaults=True)
         try:
             return _compose_attack_payload(body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/fire")
-    async def fire(body: dict):
+    async def fire(body: FireComposeRequest):
         if config is None:
             raise HTTPException(status_code=400, detail="no [target] configured in config.toml")
+        body = body.model_dump(exclude_defaults=True)
         try:
             composed = _compose_attack_payload(body)
         except ValueError as exc:
@@ -1347,8 +1517,9 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         return _agent_status_view()
 
     @app.post("/api/agent/run")
-    async def agent_run(body: dict):
-        nonlocal agent_active, agent_control
+    async def agent_run(body: AgentRunRequest):
+        nonlocal agent_active, agent_control, agent_task
+        body = body.model_dump(exclude_defaults=True)
         from fastapi.responses import StreamingResponse
 
         if config is None:
@@ -1380,19 +1551,36 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         request_delay_ms = _int_setting(
             body.get("request_delay_ms"), agent_defaults["request_delay_ms"], 0, 60000
         )
-        from ..providers.request_gate import configure_request_gate
+        from ..providers.request_gate import configure_request_gate, notify_request_gates
 
         configure_request_gate(concurrency, request_delay_ms)
+        await notify_request_gates()  # RACE-3: wake tasks parked at the old limit (no-op before the run starts)
+
+        # REL-7: overall wall-clock deadline so a trickling/hung target can't keep a round (and
+        # thus the run) alive forever. Generous and overridable: an operator-provided
+        # run_timeout_s is honored as-is (a deliberate multi-hour battery shouldn't be silently
+        # clamped); the DERIVED default is capped at 7200s so an unconfigured run can still hang
+        # itself. Floored at 30s everywhere so a typo can't make it instant.
+        _requested_timeout = body.get("run_timeout_s")
+        if _requested_timeout is not None:
+            overall_timeout = float(_int_setting(_requested_timeout, 1800, 30, 7_200_000))
+        else:
+            overall_timeout = min(7200.0, max(300.0, max_rounds * 180.0))
 
         from ..agent.loop import AgentEvents, run_autonomous
         from ..agent.messages import user
         from ..prompts import compose_system
         from ..providers.factory import build_provider
         from ..session import RunLog, run_models_meta
-        from ..tools import build_registry
+        from ..tools.tool_policy import build_dashboard_registry
 
         base_provider = build_provider(brain)
-        registry = build_registry(run_config)
+        # Least privilege: the browser-driven agent gets the attack toolset only. run_shell /
+        # write_file / http_request / arbitrary read_file are excluded unless the operator opted
+        # in at launch (`wallbreaker dashboard --allow-host-tools`), audit SEC-1/4/5.
+        registry = build_dashboard_registry(
+            run_config, allow_host_tools=getattr(app.state, "allow_host_tools", False)
+        )
         enabled_raw = body.get("enabled_techniques")
         if enabled_raw is not None:
             if not isinstance(enabled_raw, list) or not all(isinstance(name, str) for name in enabled_raw):
@@ -1423,7 +1611,12 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 "enabled_techniques": enabled_techniques,
             },
         )
-        queue: asyncio.Queue = asyncio.Queue()
+        # REL-6: bound the pre-detach SSE queue so a slow consumer can't grow memory forever.
+        # Drop-oldest on overflow (never block the producer): a disconnected/slow client must not
+        # stall the agent loop — the run completes server-side regardless of the client (the
+        # original `stream_attached` no-op is preserved below). The terminal None sentinel always
+        # gets through because an attached consumer drains the queue.
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
         stream_attached = True
 
         def push(ev) -> None:
@@ -1431,8 +1624,18 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 return
             try:
                 queue.put_nowait(ev)
-            except Exception:
-                pass
+            except asyncio.QueueFull:
+                # Drop the oldest event to make room (never block the producer / never stall the
+                # run). A slow-but-attached client loses intermediate transcript but keeps the
+                # latest; a disconnected client already short-circuits above.
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(ev)
+                except asyncio.QueueFull:
+                    pass  # still full after one drop (rare): drop the new event rather than block
 
         def progress(message) -> None:
             text = str(message)
@@ -1535,35 +1738,73 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 agent_control["pause_ready"] = False
 
         async def runner():
-            nonlocal agent_active, agent_control
+            nonlocal agent_active, agent_control, agent_task
             from ..session import inference_logging
 
             async with dashboard_inference_lock:
                 try:
                     with inference_logging(runlog):
-                        res = await run_autonomous(
-                            provider, registry, history, system=compose_system(brain),
-                            events=events, max_rounds=max_rounds, max_tokens=max_tokens,
-                            feedback=drain_feedback,
-                            before_model=pause_checkpoint,
-                        )
-                    data = res.data or {}
-                    summary = data.get("summary") or data.get("question") or ""
-                    runlog.event("agent_done", status=res.status, summary=summary)
-                    push({
-                        "type": "done", "status": res.status,
-                        "summary": summary, "run_log": runlog.path.name,
-                    })
+                        try:
+                            res = await asyncio.wait_for(
+                                run_autonomous(
+                                    provider, registry, history, system=compose_system(brain),
+                                    events=events, max_rounds=max_rounds, max_tokens=max_tokens,
+                                    feedback=drain_feedback, before_model=pause_checkpoint,
+                                ),
+                                timeout=overall_timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            # REL-7: emit a terminal event BEFORE closing the stream so the client
+                            # doesn't hang on a timed-out run.
+                            runlog.event("agent_done", status="timeout", summary="run timed out")
+                            push({
+                                "type": "done", "status": "timeout",
+                                "summary": "run timed out", "run_log": runlog.path.name,
+                            })
+                            res = None
+                        except asyncio.CancelledError:
+                            # /api/agent/stop cancelled this task: emit a terminal event, let the
+                            # finally clear state. Don't re-raise: we want the task to complete
+                            # cleanly so the stop endpoint's await returns normally.
+                            runlog.event("agent_done", status="stopped", summary="run stopped")
+                            push({
+                                "type": "done", "status": "stopped",
+                                "summary": "run stopped", "run_log": runlog.path.name,
+                            })
+                            res = None
+                        else:
+                            data = res.data or {}
+                            summary = data.get("summary") or data.get("question") or ""
+                            runlog.event("agent_done", status=res.status, summary=summary)
+                            push({
+                                "type": "done", "status": res.status,
+                                "summary": summary, "run_log": runlog.path.name,
+                            })
                 except Exception as exc:  # noqa: BLE001
-                    error_event(f"{type(exc).__name__}: {exc}")
+                    # SEC-11: log the full error server-side, but send a GENERIC message to the
+                    # SSE client — never leak the exception type, message, or internal paths.
+                    _log.exception("agent run failed")
+                    error_event("internal error")
                 finally:
+                    # REL-2: close the brain provider (and its pooled client) when the run ends;
+                    # _LiveAttackerProvider.aclose closes the active provider, and any hot-swapped
+                    # predecessor was already closed by switch().
+                    try:
+                        await provider.aclose()
+                    except Exception:
+                        pass
+                    # REL-6: every exit path (normal, exception, wait_for timeout, force-stop
+                    # cancellation) lands here — clear agent_active + the task ref + control so a
+                    # wedged run can't wedge the dashboard forever and a new run can start.
                     agent_active = False
+                    agent_task = None
                     resume_event.set()
                     agent_control = None
                     push(None)
 
         agent_active = True
         task = asyncio.create_task(runner())
+        agent_task = task  # REL-6: retain a strong ref so the runner isn't GC'd mid-flight and /api/agent/stop can cancel it.
 
         async def gen():
             nonlocal stream_attached
@@ -1587,6 +1828,38 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+    @app.post("/api/agent/stop")
+    async def agent_stop():
+        """Force-stop a wedged/hung agent run (REL-6). Idempotent: returns {stopped: false} (200)
+        when nothing is running, never errors. When a run is active, cancels the retained task
+        and waits for its finally to clear agent_active / agent_task / agent_control so a new run
+        can start immediately after. Auth + CSRF already enforced by SecurityMiddleware."""
+        nonlocal agent_active, agent_control, agent_task
+        if not agent_active or agent_task is None:
+            # Defensive: ensure state is clean even if the runner already finished but somehow
+            # left a flag set (e.g. a prior crash). Idempotent — never error on a no-op stop.
+            agent_active = False
+            agent_control = None
+            agent_task = None
+            return {"stopped": False}
+        task = agent_task
+        try:
+            task.cancel()
+            # Let the runner's finally run (it clears agent_active/agent_task/agent_control and
+            # pushes the terminal None). Await with a short grace so the endpoint returns after
+            # the run is actually stopped, not before.
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                pass
+        finally:
+            # Belt-and-suspenders: the runner's finally should have done this, but make the
+            # endpoint's contract independent of the runner's exit path.
+            agent_active = False
+            agent_control = None
+            agent_task = None
+        return {"stopped": True}
+
     dist = _web_dist(web_dir)
     if dist is not None:
         app.mount("/", StaticFiles(directory=str(dist), html=True), name="web")
@@ -1602,8 +1875,44 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     return app
 
 
-def serve(host: str = "127.0.0.1", port: int = 8787, config=None, sessions_dir="sessions"):
+def _is_loopback_host(host: str) -> bool:
+    import ipaddress
+    h = (host or "").strip().lower()
+    if h in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def serve(host: str = "127.0.0.1", port: int = 8787, config=None, sessions_dir="sessions",
+          *, allow_host_tools: bool = False, allow_remote: bool = False):
+    import sys
+
     import uvicorn
 
-    app = create_app(config=config, sessions_dir=sessions_dir)
+    from .auth import ensure_launch_token, token_file_path
+
+    # SEC-7: never publish the (now authenticated, but still powerful) API to a non-loopback
+    # address without an explicit opt-in. Auth is always on, but a broadcast bind is a decision
+    # the operator must make deliberately.
+    if not _is_loopback_host(host) and not allow_remote:
+        print(
+            f"Refusing to bind the dashboard to non-loopback host {host!r}.\n"
+            "The dashboard exposes an agent that can be configured to run host commands.\n"
+            "Re-run with --allow-remote to accept the risk (auth is required regardless).",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    base = config.path.parent if getattr(config, "path", None) else Path(".")
+    token = ensure_launch_token(base)
+    app = create_app(config=config, sessions_dir=sessions_dir, require_auth=True,
+                     auth_token=token, allow_host_tools=allow_host_tools)
+    print(f"\n  Wallbreaker dashboard token: {token}")
+    print(f"  (also written to {token_file_path(base)} — the browser UI reads it via /api/session)\n")
+    if not _is_loopback_host(host):
+        print("  WARNING: bound to a non-loopback address; anyone who can reach this port "
+              "and has the token can drive the agent.\n", file=sys.stderr)
     uvicorn.run(app, host=host, port=port)

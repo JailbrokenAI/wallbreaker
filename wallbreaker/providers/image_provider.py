@@ -337,9 +337,12 @@ async def vision_complete(
                     raise ProviderError(
                         f"HTTP {resp.status_code} from {url}: {resp.text[:400]}"
                     )
-                return resp.json()
+                # Return the status alongside the parsed body: `resp` is local to this
+                # nested coroutine, so the outer scope cannot reference it (was a NameError
+                # on every successful call). Mirrors `_post_chat`'s (json, status) shape.
+                return resp.json(), resp.status_code
 
-        data = await gated_request(endpoint, send)
+        data, http_status = await gated_request(endpoint, send)
     except Exception as exc:
         trace_inference_response(
             inference_id,
@@ -370,7 +373,7 @@ async def vision_complete(
         status="ok",
         text=answer,
         raw_response=data,
-        http_status=resp.status_code,
+        http_status=http_status,
         duration_ms=round((time.monotonic() - started) * 1000, 3),
     )
     return answer

@@ -31,6 +31,10 @@ class ToolContext:
     attacker_model: str = ""
     # auto-save every COMPLIED/PARTIAL verdict into the BreakVault (library/breaks/)
     vault_enabled: bool = True
+    # confine read_file to cwd (defence-in-depth against arbitrary local file read, audit SEC-5).
+    # Off by default so the local CLI/TUI operator keeps full-filesystem reads; the dashboard
+    # registry builder turns it ON so a browser-driven agent can't exfiltrate ~/.env, keys, etc.
+    confine_reads: bool = False
     # host sink that logs EVERY tool execution (brain loop AND slash commands) to the run log
     tool_logger: Callable[[str, dict, str, bool], None] | None = None
 
@@ -230,19 +234,30 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self.tools)
 
+    def remove(self, name: str) -> bool:
+        """Drop a tool from the registry (used by the dashboard tool-exposure policy)."""
+        return self.tools.pop(name, None) is not None
+
     async def execute(self, name: str, args: dict) -> ToolResult:
         tool = self.tools.get(name)
         if tool is None:
             return ToolResult(f"Unknown tool: {name}", is_error=True)
-        try:
-            output = await tool.handler(args or {}, self.ctx)
-            result = ToolResult(output)
-        except Exception as exc:  # noqa: BLE001
-            detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-            result = ToolResult(f"Tool '{name}' raised: {detail}", is_error=True)
-        if self.ctx.tool_logger is not None:
+        # REL-2: scope provider lifetime to this tool call. build_provider() calls made by
+        # the handler (and its child tasks) are tracked and aclose()d here on exit, so pooled
+        # httpx.AsyncClients don't leak across rounds of an autonomous run. A provider reused
+        # within the call (e.g. best_of_n's target) stays pooled until the call ends.
+        from ..providers.factory import provider_scope
+
+        async with provider_scope():
             try:
-                self.ctx.tool_logger(name, args or {}, result.content, result.is_error)
-            except Exception:
-                pass
+                output = await tool.handler(args or {}, self.ctx)
+                result = ToolResult(output)
+            except Exception as exc:  # noqa: BLE001
+                detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+                result = ToolResult(f"Tool '{name}' raised: {detail}", is_error=True)
+            if self.ctx.tool_logger is not None:
+                try:
+                    self.ctx.tool_logger(name, args or {}, result.content, result.is_error)
+                except Exception:
+                    pass
         return result
