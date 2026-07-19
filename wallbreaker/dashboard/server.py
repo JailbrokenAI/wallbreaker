@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
 import os
 import re
 from datetime import datetime
@@ -481,6 +482,76 @@ def _int_setting(value, default: int, lo: int, hi: int) -> int:
     return max(lo, min(parsed, hi))
 
 
+# --- TG3.5 Pydantic request models (SEC-11) ----------------------------------------
+# Boundary validation: a malformed body → 422 (FastAPI/Pydantic), never a 500 traceback.
+# All fields are Optional with None defaults + extra="ignore" so valid SPA traffic and the
+# existing test payloads are never 422'd for unknown fields or missing optionals. Handlers
+# convert via model_dump(exclude_defaults=True) so `in`-checks behave identically to the old
+# `body: dict` (only fields the client actually sent appear in the dump).
+try:
+    from pydantic import BaseModel, ConfigDict
+
+    class AgentRunRequest(BaseModel):
+        model_config = ConfigDict(extra="ignore")
+        objective: str
+        max_rounds: int | None = None
+        max_tokens: int | None = None
+        concurrency: int | None = None
+        request_delay_ms: int | None = None
+        enabled_techniques: list[str] | None = None
+        run_timeout_s: int | None = None
+
+    class FireComposeRequest(BaseModel):
+        model_config = ConfigDict(extra="ignore")
+        request: str | None = None
+        prompt: str | None = None
+        payload: str | None = None
+        preset: str | None = None
+        transforms: list[str] | None = None
+        system: str | None = None
+        max_tokens: int | None = None
+
+    class ProviderUpsert(BaseModel):
+        # Provider config is very free-form; the handler's provider_registry.save() validates.
+        # The model ensures the body is a JSON object and type-checks the common fields.
+        model_config = ConfigDict(extra="allow")
+        protocol: str | None = None
+        base_url: str | None = None
+        model: str | None = None
+        api_key: str | None = None
+        api_key_env: str | None = None
+        enabled: bool | None = None
+        auth_style: str | None = None
+        inference_path: str | None = None
+        models_path: str | None = None
+        timeout: int | None = None
+        reasoning: bool | None = None
+        modality: str | None = None
+
+    class SettingsUpdate(BaseModel):
+        # Settings body is highly variable (role assignments, agent sub-dict, target_options).
+        # extra="allow" passes everything through; typed fields catch the common type errors.
+        model_config = ConfigDict(extra="allow")
+        agent: dict | None = None
+        target_options: dict | None = None
+
+except ImportError:  # pragma: no cover — pydantic is a transitive dep of fastapi (dashboard extra)
+    BaseModel = None  # type: ignore[assignment]
+
+    class AgentRunRequest:  # type: ignore[no-redef]
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+        def model_dump(self, **kw):
+            return {k: v for k, v in self.__dict__.items() if v is not None}
+
+    FireComposeRequest = AgentRunRequest  # type: ignore[assignment, misc]
+    ProviderUpsert = AgentRunRequest  # type: ignore[assignment, misc]
+    SettingsUpdate = AgentRunRequest  # type: ignore[assignment, misc]
+
+
+_log = logging.getLogger("wallbreaker.dashboard")
+
+
 def _agent_settings(prefs: dict | None = None) -> dict:
     prefs = prefs or {}
     return {
@@ -804,8 +875,11 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             # No notify_request_gates() here: this runs in the sync create_app body at startup,
             # before any event loop / parked tasks exist. The async handlers (settings POST,
             # agent_run) call notify after reconfiguring mid-flight (RACE-3).
-        except Exception:
-            pass
+        except Exception as exc:
+            # TG3.6 (REL-8): log-and-continue, never hard-raise. A dashboard that starts and
+            # reports the problem (provider_registry=None → routes 400) is better than one that
+            # won't start at all. The failure is now visible, not fatal.
+            _log.warning("dashboard init degraded — %s: %s", type(exc).__name__, exc)
     app = FastAPI(title="Wallbreaker", version="0.1.0")
     token = auth_token or (__import__("secrets").token_urlsafe(32) if require_auth else "")
     app.state.auth_token = token
@@ -821,6 +895,18 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     # CORS only decides response headers; it does NOT reject the request. This middleware does —
     # it requires the token + a same-origin request on every mutating route (audit SEC-1/2/3).
     app.add_middleware(SecurityMiddleware, token=token, require_auth=require_auth)
+
+    # TG3.4 (SEC-11): global 500 handler — returns a generic body with NO traceback/paths.
+    # Scoped to `Exception` only: FastAPI's built-in handlers for HTTPException (4xx) and
+    # RequestValidationError (422) take precedence by type specificity, so this NEVER turns a
+    # 401/403/404/400/422 into a 500. SSE StreamingResponse errors are unaffected (the response
+    # has already started by then; those are handled by runner()'s try/except).
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(Exception)
+    async def _generic_500(request, exc):
+        _log.exception("unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
     def _latest():
         return report_mod.latest_run_log(sessions)
@@ -876,9 +962,10 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         return item
 
     @app.put("/api/providers/{name}")
-    def provider_put(name: str, body: dict):
+    def provider_put(name: str, body: ProviderUpsert):
         if provider_registry is None:
             raise HTTPException(status_code=400, detail="no config loaded")
+        body = body.model_dump(exclude_defaults=True)
         try:
             return provider_registry.save(name, body)
         except Exception as exc:
@@ -1034,9 +1121,10 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         return result
 
     @app.post("/api/settings")
-    def settings_post(body: dict):
+    def settings_post(body: SettingsUpdate):
         if config is None:
             raise HTTPException(status_code=400, detail="no config loaded")
+        body = body.model_dump(exclude_defaults=True)
         from ..state import load_state, save_state, state_path_for
 
         prefs = load_state(state_path_for(config))
@@ -1244,16 +1332,18 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     agent_control = None
 
     @app.post("/api/compose")
-    def compose(body: dict):
+    def compose(body: FireComposeRequest):
+        body = body.model_dump(exclude_defaults=True)
         try:
             return _compose_attack_payload(body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/fire")
-    async def fire(body: dict):
+    async def fire(body: FireComposeRequest):
         if config is None:
             raise HTTPException(status_code=400, detail="no [target] configured in config.toml")
+        body = body.model_dump(exclude_defaults=True)
         try:
             composed = _compose_attack_payload(body)
         except ValueError as exc:
@@ -1427,8 +1517,9 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         return _agent_status_view()
 
     @app.post("/api/agent/run")
-    async def agent_run(body: dict):
+    async def agent_run(body: AgentRunRequest):
         nonlocal agent_active, agent_control, agent_task
+        body = body.model_dump(exclude_defaults=True)
         from fastapi.responses import StreamingResponse
 
         if config is None:
@@ -1690,7 +1781,10 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                                 "summary": summary, "run_log": runlog.path.name,
                             })
                 except Exception as exc:  # noqa: BLE001
-                    error_event(f"{type(exc).__name__}: {exc}")
+                    # SEC-11: log the full error server-side, but send a GENERIC message to the
+                    # SSE client — never leak the exception type, message, or internal paths.
+                    _log.exception("agent run failed")
+                    error_event("internal error")
                 finally:
                     # REL-2: close the brain provider (and its pooled client) when the run ends;
                     # _LiveAttackerProvider.aclose closes the active provider, and any hot-swapped

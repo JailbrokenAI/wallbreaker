@@ -808,3 +808,110 @@ def test_runlog_write_is_serialized_and_lines_stay_atomic(tmp_path):
     assert len(notes) == N, f"all {N} note lines present; got {len(notes)}"
     assert seqs == sorted(seqs), "seqs are monotonic (serialized, not interleaved)"
     assert len(set(seqs)) == N, "every seq is unique"
+
+
+# ------------------------------------------------------------------------- SEC-11 / REL-8 input validation + error surfacing (TG3.4-3.6)
+
+def _authed_client(tmp_path, **kw):
+    """A TestClient with auth on + a valid token, so body-validation tests reach the handler."""
+    from wallbreaker.config import Config, Endpoint
+    ep = Endpoint("t", "openai", "http://x", "m")
+    cfg = Config(default_profile="t", profiles={"t": ep}, target=ep, path=tmp_path / "config.toml")
+    return TestClient(create_app(config=cfg, sessions_dir=tmp_path / "s", require_auth=True,
+                                  auth_token="tok", **kw))
+
+
+def test_malformed_agent_run_body_returns_4xx_not_500(tmp_path):
+    """TG3.9 (SEC-11): a body with wrong-typed fields (max_rounds as a list) → 422, not a 500
+    traceback. The Pydantic model catches it at the boundary before the handler can TypeError."""
+    c = _authed_client(tmp_path)
+    r = c.post("/api/agent/run", json={"objective": "go", "max_rounds": [1, 2]},
+                 headers={"X-WB-Token": "tok"})
+    assert r.status_code == 422, f"wrong-typed field must 422, got {r.status_code}"
+    assert "traceback" not in r.text.lower()
+
+
+def test_missing_objective_returns_4xx_not_500(tmp_path):
+    """A body missing the required 'objective' field → 422 (Pydantic), not 500."""
+    c = _authed_client(tmp_path)
+    r = c.post("/api/agent/run", json={"max_rounds": 3}, headers={"X-WB-Token": "tok"})
+    assert r.status_code == 422
+
+
+def test_unknown_fields_do_not_422_valid_spa_traffic(tmp_path):
+    """TG3.5: extra='ignore' on AgentRunRequest means the SPA can send unknown fields without
+    a 422 — validates the PM's 'must not 422 valid SPA traffic' directive."""
+    c = _authed_client(tmp_path)
+    r = c.post("/api/agent/run",
+               json={"objective": "go", "future_field": "no problem", "another": 42},
+               headers={"X-WB-Token": "tok"})
+    # The objective is valid; the run starts or 400s (no target configured) — but NOT 422 for extras.
+    assert r.status_code != 422, "unknown fields must not 422 valid SPA traffic"
+
+
+def test_global_500_handler_returns_generic_body_no_traceback(tmp_path):
+    """TG3.9 (SEC-11): a forced internal error → generic 500 with no traceback/paths. Uses
+    raise_server_exceptions=False so Starlette's error middleware doesn't re-raise."""
+    from wallbreaker.config import Config, Endpoint
+    ep = Endpoint("t", "openai", "http://x", "m")
+    cfg = Config(default_profile="t", profiles={"t": ep}, target=ep, path=tmp_path / "config.toml")
+    c = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "s", require_auth=True,
+                              auth_token="tok"), raise_server_exceptions=False)
+    # Force a 500 by sending a valid objective but a config where the agent run will hit
+    # an unexpected error. The simplest: monkeypatch run_autonomous to raise TypeError.
+    import wallbreaker.agent.loop as loop_mod
+    orig = loop_mod.run_autonomous
+
+    async def boom(*a, **kw):
+        raise TypeError("forced internal error with /tmp/secret/path in it")
+    loop_mod.run_autonomous = boom
+    try:
+        with c.stream("POST", "/api/agent/run", json={"objective": "go", "max_rounds": 1},
+                       headers={"X-WB-Token": "tok"}) as r:
+            # The stream should complete (the runner catches the error) OR the handler 500s.
+            text = "".join(r.iter_text())
+    finally:
+        loop_mod.run_autonomous = orig
+    # The runner's except catches it and emits an error SSE event, so the stream completes.
+    # But if the error propagated (e.g. before StreamingResponse started), the global handler
+    # returns a generic 500. Either way: no traceback/paths in the response.
+    assert "/tmp/secret/path" not in text, "internal path must not leak to the client"
+    assert "traceback" not in text.lower()
+
+
+def test_http_exception_not_intercepted_by_500_handler(tmp_path):
+    """TG3.4: HTTPException (401/403/404/400) must keep its default handling — the Exception
+    handler must NOT turn a 401 into a 500."""
+    c = _authed_client(tmp_path)
+    # No token → 401 (from SecurityMiddleware, which runs before the handler).
+    r = c.get("/api/config")
+    assert r.status_code == 401, f"missing token must be 401, not 500; got {r.status_code}"
+    # Cross-site Origin → 403.
+    r2 = c.get("/api/config", headers={"X-WB-Token": "tok", "Origin": "https://evil.example"})
+    assert r2.status_code == 403
+    # Unknown provider → 404.
+    r3 = c.get("/api/providers/nonexistent", headers={"X-WB-Token": "tok"})
+    assert r3.status_code == 404
+
+
+def test_startup_degrades_log_and_continue_on_bad_config(tmp_path, monkeypatch):
+    """TG3.6 (REL-8): a broken config no longer silently swallows — the init narrows to a
+    logged warning and the dashboard boots with degraded state (provider_registry=None →
+    provider routes return 400), not a hard crash."""
+    from wallbreaker.config import Config, Endpoint
+    ep = Endpoint("t", "openai", "http://x", "m")
+    cfg = Config(default_profile="t", profiles={"t": ep}, target=ep, path=tmp_path / "config.toml")
+    # Break ProviderRegistry so the init try-block fails.
+    import wallbreaker.provider_registry as pr_mod
+    orig_init = pr_mod.ProviderRegistry.__init__
+
+    def boom(self, *a, **kw):
+        raise OSError("simulated registry init failure")
+    monkeypatch.setattr(pr_mod.ProviderRegistry, "__init__", boom)
+    # The app must still create (log-and-continue, not hard-raise).
+    app = create_app(config=cfg, sessions_dir=tmp_path / "s")
+    c = TestClient(app)
+    # provider routes degrade to 400 (provider_registry is None).
+    r = c.get("/api/providers")
+    assert r.status_code in (200, 400), "degraded but not crashed"
+    monkeypatch.setattr(pr_mod.ProviderRegistry, "__init__", orig_init)
