@@ -105,6 +105,11 @@ _TECHNIQUE_ALIASES = {
     "rag_poison": "injection",
     "artprompt": "artprompt",
     "ascii_art": "artprompt",
+    "cjk_lookalike": "homoglyph",
+    "cjk_traditional": "homoglyph",
+    "cjk_variant": "homoglyph",
+    "cjk_punct": "homoglyph",
+    "cjk_zwsp": "zero_width",
 }
 
 _TECHNIQUE_TAGS = {
