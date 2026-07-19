@@ -170,6 +170,11 @@ def build_sub_parser() -> argparse.ArgumentParser:
     dash.add_argument("--port", type=int, default=8787, help="Bind port (default 8787)")
     dash.add_argument("--sessions", default="sessions", help="Run-log directory (default sessions/)")
     dash.add_argument("--config", help="Path to config.toml")
+    dash.add_argument("--allow-host-tools", action="store_true",
+                      help="Let the browser-driven agent use run_shell/write_file/http_request "
+                           "(off by default for least privilege)")
+    dash.add_argument("--allow-remote", action="store_true",
+                      help="Permit binding to a non-loopback --host (auth is required regardless)")
 
     return parser
 
@@ -378,7 +383,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"Wallbreaker dashboard -> http://{args.host}:{args.port}  (target: {tgt})",
                 file=sys.stderr,
             )
-            serve(host=args.host, port=args.port, config=config, sessions_dir=args.sessions)
+            serve(host=args.host, port=args.port, config=config, sessions_dir=args.sessions,
+                   allow_host_tools=args.allow_host_tools, allow_remote=args.allow_remote)
             return 0
         if args.command == "baseline":
             from .baseline import compare_baseline, format_regressions, save_baseline

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -18,6 +19,28 @@ from .agent.messages import (
 )
 
 INFERENCE_ACTION_KINDS = {"attack", "target", "judge", "scaffold", "art", "vision"}
+
+# Keys whose values are secrets and must never be written to run logs (audit SEC-9). The agent's
+# http_request tool routinely carries an Authorization/x-api-key header; st3gg carries a password.
+_SECRET_KEYS = frozenset({
+    "authorization", "proxy-authorization", "x-api-key", "api-key", "apikey",
+    "api_key", "password", "passphrase", "secret", "token", "cookie", "set-cookie",
+})
+_REDACTED = "***redacted***"
+
+
+def redact_args(obj):
+    """Recursively redact secret-bearing dict keys (case-insensitive) in tool args/results
+    before they are logged. Only values under known secret KEYS are removed, so prompt/response
+    text is untouched."""
+    if isinstance(obj, dict):
+        return {
+            k: (_REDACTED if isinstance(k, str) and k.lower() in _SECRET_KEYS else redact_args(v))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return [redact_args(v) for v in obj]
+    return obj
 
 
 def inference_action_kind(endpoint, operation: str = "completion") -> str:
@@ -301,6 +324,10 @@ class RunLog:
     def _ensure(self) -> None:
         if not self._started:
             self.dir.mkdir(parents=True, exist_ok=True)
+            try:  # run logs can contain harmful content + (until redaction) secrets — keep them private
+                os.chmod(self.dir, 0o700)
+            except OSError:
+                pass
             self._started = True
             if self._run_meta:
                 self._write({
@@ -320,8 +347,14 @@ class RunLog:
     def _write(self, record: dict) -> None:
         self._seq += 1
         record.setdefault("seq", self._seq)
+        new_file = not self.path.exists()
         with open(self.path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        if new_file:
+            try:
+                os.chmod(self.path, 0o600)
+            except OSError:
+                pass
 
     def set_run_meta(self, **data) -> None:
         """Store static run metadata to write as the first JSONL row on first use."""
@@ -335,7 +368,7 @@ class RunLog:
             return
         self._ensure()
         record = {"ts": datetime.now().isoformat(timespec="seconds"), "kind": kind}
-        record.update(data)
+        record.update(redact_args(data))
         self._write(record)
 
     def _json_value(self, value):

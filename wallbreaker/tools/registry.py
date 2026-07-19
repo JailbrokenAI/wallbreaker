@@ -31,6 +31,10 @@ class ToolContext:
     attacker_model: str = ""
     # auto-save every COMPLIED/PARTIAL verdict into the BreakVault (library/breaks/)
     vault_enabled: bool = True
+    # confine read_file to cwd (defence-in-depth against arbitrary local file read, audit SEC-5).
+    # Off by default so the local CLI/TUI operator keeps full-filesystem reads; the dashboard
+    # registry builder turns it ON so a browser-driven agent can't exfiltrate ~/.env, keys, etc.
+    confine_reads: bool = False
     # host sink that logs EVERY tool execution (brain loop AND slash commands) to the run log
     tool_logger: Callable[[str, dict, str, bool], None] | None = None
 
@@ -229,6 +233,10 @@ class ToolRegistry:
 
     def names(self) -> list[str]:
         return list(self.tools)
+
+    def remove(self, name: str) -> bool:
+        """Drop a tool from the registry (used by the dashboard tool-exposure policy)."""
+        return self.tools.pop(name, None) is not None
 
     async def execute(self, name: str, args: dict) -> ToolResult:
         tool = self.tools.get(name)

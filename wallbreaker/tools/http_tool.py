@@ -4,9 +4,11 @@ import json
 
 import httpx
 
+from .egress_guard import EgressBlocked, check_url
 from .registry import ToolContext, ToolRegistry
 
 MAX_BODY = 30000
+MAX_REDIRECTS = 5
 
 
 async def _http_request(args: dict, ctx: ToolContext) -> str:
@@ -25,9 +27,30 @@ async def _http_request(args: dict, ctx: ToolContext) -> str:
     elif body is not None:
         kwargs["content"] = body if isinstance(body, str) else json.dumps(body)
 
+    # SSRF guard: validate the initial URL and every redirect hop against the egress policy
+    # (blocks metadata/loopback/private targets). We follow redirects manually so each Location
+    # is re-checked before we connect to it — httpx's follow_redirects=True would chase a
+    # public-host -> 169.254.169.254 redirect without a second look.
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        check_url(url)
+    except EgressBlocked as exc:
+        return f"Request blocked: {exc}"
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             resp = await client.request(method, url, **kwargs)
+            hops = 0
+            while resp.is_redirect and hops < MAX_REDIRECTS:
+                location = resp.headers.get("location")
+                if not location:
+                    break
+                next_url = str(resp.next_request.url) if resp.next_request else location
+                try:
+                    check_url(next_url)
+                except EgressBlocked as exc:
+                    return f"Request blocked (redirect): {exc}"
+                hops += 1
+                resp = await client.request(method, next_url, **kwargs)
     except httpx.HTTPError as exc:
         return f"Request failed: {exc}"
 

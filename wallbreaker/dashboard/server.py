@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path
@@ -114,9 +115,16 @@ def _models_for_finding(record: dict, run_models: dict) -> dict:
 
 
 def _safe_run_path(sessions: Path, name: str) -> Path | None:
-    if ".." in name or "/" in name or "\\" in name:
+    # Reject separators/traversal in the name, then verify with realpath containment so a symlink
+    # planted inside sessions/ cannot point outside it (audit SEC-10). The substring check alone
+    # was fragile; the realpath check is the real guarantee.
+    if ".." in name or "/" in name or "\\" in name or name in ("", ".", ".."):
         return None
-    path = sessions / name
+    base = os.path.realpath(sessions)
+    resolved = os.path.realpath(sessions / name)
+    if resolved != base and not resolved.startswith(base + os.sep):
+        return None
+    path = Path(resolved)
     return path if path.is_file() else None
 
 
@@ -385,6 +393,8 @@ def _summarize_args(args: dict) -> str:
         return str(args)[:300]
     if not args:
         return ""
+    from ..session import redact_args
+    args = redact_args(args)  # never surface auth headers / passwords in the live stream (SEC-9)
     parts = []
     for k, v in args.items():
         if k in ("prompt", "request", "text", "payload") and isinstance(v, str):
@@ -686,6 +696,16 @@ async def _discover_profile_models(profile: str, endpoint) -> dict:
         if key:
             headers["Authorization"] = f"Bearer {key}"
 
+    # SSRF guard: model discovery attaches the operator's API key to a request against a
+    # profile-supplied base_url. Block private/loopback/metadata targets so a poisoned base_url
+    # can't turn discovery into key exfiltration / internal probing (audit SEC-4).
+    from ..tools.egress_guard import EgressBlocked, check_url
+    try:
+        check_url(url)
+    except EgressBlocked as exc:
+        result["error"] = f"Model catalog host not allowed: {exc}"
+        return result
+
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.get(url, headers=headers)
@@ -703,12 +723,22 @@ async def _discover_profile_models(profile: str, endpoint) -> dict:
     return result
 
 
-def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str | Path | None = None):
+def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str | Path | None = None,
+               *, require_auth: bool = False, auth_token: str | None = None,
+               allow_host_tools: bool = False):
     """Build the Wallbreaker dashboard FastAPI app. fastapi is an optional extra
-    (`pip install -e '.[dashboard]'`), imported lazily so the package imports without it."""
-    from fastapi import FastAPI, HTTPException
+    (`pip install -e '.[dashboard]'`), imported lazily so the package imports without it.
+
+    Security: when `require_auth` is True every /api/* route (except /api/health and
+    /api/session) requires the dashboard token AND a same-origin request (audit SEC-1/2/3/6).
+    `serve()` — the only shipped entrypoint — always enables it and prints the token. The default
+    is False so the in-process test factory and embedders opt in explicitly; do not expose an app
+    built with require_auth=False on a network. `allow_host_tools` opts the browser agent back into
+    run_shell/write_file/http_request (off by default = least privilege, audit SEC-1/4/5)."""
+    from fastapi import FastAPI, Header, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
+    from .auth import CSRF_HEADER, SecurityMiddleware, TOKEN_HEADER
 
     sessions = Path(sessions_dir)
     from ..session import RunLog, run_models_meta
@@ -755,6 +785,10 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         except Exception:
             pass
     app = FastAPI(title="Wallbreaker", version="0.1.0")
+    token = auth_token or (__import__("secrets").token_urlsafe(32) if require_auth else "")
+    app.state.auth_token = token
+    app.state.require_auth = require_auth
+    app.state.allow_host_tools = allow_host_tools
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[],
@@ -762,6 +796,9 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # CORS only decides response headers; it does NOT reject the request. This middleware does —
+    # it requires the token + a same-origin request on every mutating route (audit SEC-1/2/3).
+    app.add_middleware(SecurityMiddleware, token=token, require_auth=require_auth)
 
     def _latest():
         return report_mod.latest_run_log(sessions)
@@ -769,6 +806,21 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     @app.get("/api/health")
     def health():
         return {"ok": True, "name": "wallbreaker", "version": "0.1.0"}
+
+    @app.get("/api/session")
+    def session_bootstrap(origin: str | None = Header(default=None)):
+        """Same-origin bootstrap: hands the SPA the token + the CSRF header name. Only returns the
+        token to a same-origin (or non-browser) request; a cross-site page is refused so it cannot
+        read it (the browser's same-origin policy also blocks reading this response cross-origin)."""
+        from .auth import origin_is_same_site
+        if require_auth and not origin_is_same_site(origin):
+            raise HTTPException(status_code=403, detail="cross-site request blocked")
+        return {
+            "authenticated": bool(require_auth),
+            "tokenHeader": TOKEN_HEADER,
+            "csrfHeader": CSRF_HEADER,
+            "token": token if require_auth else "",
+        }
 
     @app.get("/api/config")
     def config_info():
@@ -1389,10 +1441,15 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         from ..prompts import compose_system
         from ..providers.factory import build_provider
         from ..session import RunLog, run_models_meta
-        from ..tools import build_registry
+        from ..tools.tool_policy import build_dashboard_registry
 
         base_provider = build_provider(brain)
-        registry = build_registry(run_config)
+        # Least privilege: the browser-driven agent gets the attack toolset only. run_shell /
+        # write_file / http_request / arbitrary read_file are excluded unless the operator opted
+        # in at launch (`wallbreaker dashboard --allow-host-tools`), audit SEC-1/4/5.
+        registry = build_dashboard_registry(
+            run_config, allow_host_tools=getattr(app.state, "allow_host_tools", False)
+        )
         enabled_raw = body.get("enabled_techniques")
         if enabled_raw is not None:
             if not isinstance(enabled_raw, list) or not all(isinstance(name, str) for name in enabled_raw):
@@ -1602,8 +1659,44 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     return app
 
 
-def serve(host: str = "127.0.0.1", port: int = 8787, config=None, sessions_dir="sessions"):
+def _is_loopback_host(host: str) -> bool:
+    import ipaddress
+    h = (host or "").strip().lower()
+    if h in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def serve(host: str = "127.0.0.1", port: int = 8787, config=None, sessions_dir="sessions",
+          *, allow_host_tools: bool = False, allow_remote: bool = False):
+    import sys
+
     import uvicorn
 
-    app = create_app(config=config, sessions_dir=sessions_dir)
+    from .auth import ensure_launch_token, token_file_path
+
+    # SEC-7: never publish the (now authenticated, but still powerful) API to a non-loopback
+    # address without an explicit opt-in. Auth is always on, but a broadcast bind is a decision
+    # the operator must make deliberately.
+    if not _is_loopback_host(host) and not allow_remote:
+        print(
+            f"Refusing to bind the dashboard to non-loopback host {host!r}.\n"
+            "The dashboard exposes an agent that can be configured to run host commands.\n"
+            "Re-run with --allow-remote to accept the risk (auth is required regardless).",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    base = config.path.parent if getattr(config, "path", None) else Path(".")
+    token = ensure_launch_token(base)
+    app = create_app(config=config, sessions_dir=sessions_dir, require_auth=True,
+                     auth_token=token, allow_host_tools=allow_host_tools)
+    print(f"\n  Wallbreaker dashboard token: {token}")
+    print(f"  (also written to {token_file_path(base)} — the browser UI reads it via /api/session)\n")
+    if not _is_loopback_host(host):
+        print("  WARNING: bound to a non-loopback address; anyone who can reach this port "
+              "and has the token can drive the agent.\n", file=sys.stderr)
     uvicorn.run(app, host=host, port=port)
