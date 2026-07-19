@@ -242,15 +242,22 @@ class ToolRegistry:
         tool = self.tools.get(name)
         if tool is None:
             return ToolResult(f"Unknown tool: {name}", is_error=True)
-        try:
-            output = await tool.handler(args or {}, self.ctx)
-            result = ToolResult(output)
-        except Exception as exc:  # noqa: BLE001
-            detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-            result = ToolResult(f"Tool '{name}' raised: {detail}", is_error=True)
-        if self.ctx.tool_logger is not None:
+        # REL-2: scope provider lifetime to this tool call. build_provider() calls made by
+        # the handler (and its child tasks) are tracked and aclose()d here on exit, so pooled
+        # httpx.AsyncClients don't leak across rounds of an autonomous run. A provider reused
+        # within the call (e.g. best_of_n's target) stays pooled until the call ends.
+        from ..providers.factory import provider_scope
+
+        async with provider_scope():
             try:
-                self.ctx.tool_logger(name, args or {}, result.content, result.is_error)
-            except Exception:
-                pass
+                output = await tool.handler(args or {}, self.ctx)
+                result = ToolResult(output)
+            except Exception as exc:  # noqa: BLE001
+                detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+                result = ToolResult(f"Tool '{name}' raised: {detail}", is_error=True)
+            if self.ctx.tool_logger is not None:
+                try:
+                    self.ctx.tool_logger(name, args or {}, result.content, result.is_error)
+                except Exception:
+                    pass
         return result

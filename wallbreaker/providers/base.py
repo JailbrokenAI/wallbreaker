@@ -163,6 +163,23 @@ class Provider(ABC):
             except Exception:
                 pass
 
+    # Async context-manager support so callers can opt into explicit ownership where it's
+    # clean (e.g. the dashboard's top-level brain provider). Tools generally don't need this:
+    # ToolRegistry.execute wraps every tool call in providers.provider_scope(), which tracks
+    # providers built during the call and aclose()s them when the call finishes (audit REL-2).
+    # __aexit__ uses getattr so a subclass fake that drops aclose still exits cleanly.
+    async def __aenter__(self) -> "Provider":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        aclose = getattr(self, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                pass
+        return False
+
     @abstractmethod
     def stream(
         self,

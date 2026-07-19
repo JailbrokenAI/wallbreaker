@@ -40,8 +40,27 @@ class _LiveAttackerProvider:
         return self.endpoint.model
 
     def switch(self, provider, endpoint) -> None:
+        # REL-2: close the previous brain provider before replacing it so its pooled
+        # httpx.AsyncClient isn't leaked on a hot-swap. getattr-safe for fake/test providers.
+        old = self._provider
+        aclose = getattr(old, "aclose", None)
+        if aclose is not None and old is not provider:
+            try:
+                asyncio.get_running_loop().create_task(aclose())
+            except Exception:
+                pass
         self._provider = provider
         self.endpoint = endpoint
+
+    async def aclose(self) -> None:
+        # REL-2: the dashboard's brain provider lives for one agent run; close it when the
+        # run ends (runner() finally) so its pooled client isn't leaked per run.
+        aclose = getattr(self._provider, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                pass
 
     async def stream(self, messages, tools=None, system=None, max_tokens=4096, temperature=None):
         provider = self._provider
@@ -1616,6 +1635,13 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 except Exception as exc:  # noqa: BLE001
                     error_event(f"{type(exc).__name__}: {exc}")
                 finally:
+                    # REL-2: close the brain provider (and its pooled client) when the run ends;
+                    # _LiveAttackerProvider.aclose closes the active provider, and any hot-swapped
+                    # predecessor was already closed by switch().
+                    try:
+                        await provider.aclose()
+                    except Exception:
+                        pass
                     agent_active = False
                     resume_event.set()
                     agent_control = None

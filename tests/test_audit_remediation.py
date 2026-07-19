@@ -279,3 +279,159 @@ def test_serve_refuses_non_loopback_without_optin():
     from wallbreaker.dashboard import server
     with pytest.raises(SystemExit):
         server.serve(host="0.0.0.0", allow_remote=False)
+
+
+# ------------------------------------------------------------------------- REL-2 provider lifecycle (TG4.2)
+# The leak: each tool builds 1-2 providers via build_provider() and drops them; their pooled
+# httpx.AsyncClient never closes. Fix: ToolRegistry.execute wraps each call in
+# providers.provider_scope(), which tracks build_provider() results and aclose()s them at the
+# call boundary (preserving per-call pooling — a provider reused across the call, like
+# best_of_n's target, stays open until the call ends).
+
+def test_provider_scope_closes_providers_built_during_a_tool_call():
+    """TG4.8: a real provider built inside a tool handler is aclose()d when the tool call ends."""
+    import asyncio
+
+    from wallbreaker.config import Config, Endpoint
+    from wallbreaker.tools.registry import ToolContext, ToolRegistry
+
+    cfg = Config(default_profile="t", profiles={"t": Endpoint("t", "openai", "http://x", "m")})
+    cfg.target = Endpoint("t", "openai", "http://x", "m")
+    ctx = ToolContext(config=cfg)
+    reg = ToolRegistry(ctx)
+
+    captured: list = []
+    clients: list = []
+
+    async def handler(_args, _ctx):
+        from wallbreaker.providers.factory import build_provider
+        p = build_provider(_ctx.config.target)
+        captured.append(p)
+        # Force the lazy pooled client to actually exist so aclose has something to close.
+        c = p._http_client()
+        clients.append(c)
+        assert c is not None and not c.is_closed, "client should be open mid-call"
+        return "ok"
+
+    reg.add("probe", "build a provider", {"type": "object"}, handler)
+    asyncio.run(reg.execute("probe", {}))
+
+    assert len(captured) == 1 and len(clients) == 1
+    assert clients[0].is_closed, "pooled client must be closed by provider_scope at call end"
+    assert captured[0]._client is None, "aclose clears the provider's client reference"
+
+
+def test_provider_scope_preserves_pooling_within_a_call():
+    """A provider built once and reused across the call stays open for the whole call (not
+    closed per use), then closed once at the end — the pooling optimization the fix protects."""
+    import asyncio
+
+    from wallbreaker.config import Config, Endpoint
+    from wallbreaker.tools.registry import ToolContext, ToolRegistry
+
+    cfg = Config(default_profile="t", profiles={"t": Endpoint("t", "openai", "http://x", "m")})
+    cfg.target = Endpoint("t", "openai", "http://x", "m")
+    ctx = ToolContext(config=cfg)
+    reg = ToolRegistry(ctx)
+
+    shared: list = []
+
+    async def handler(_args, _ctx):
+        from wallbreaker.providers.factory import build_provider
+        p = build_provider(_ctx.config.target)
+        shared.append(p)
+        # Simulate reuse: build for the same endpoint again would be a NEW provider (build_provider
+        # always returns fresh); the pooling we protect is WITHIN one provider instance across
+        # multiple complete()/stream() calls. Here we just confirm the one provider stays open.
+        assert p._client is None, "no client yet"
+        _ = p._http_client()  # first use creates the client
+        assert not p._client.is_closed, "client open mid-call (pooling preserved)"
+        _ = p._http_client()  # second use reuses the SAME client (not rebuilt)
+        return "ok"
+
+    reg.add("probe", "reuse provider", {"type": "object"}, handler)
+    asyncio.run(reg.execute("probe", {}))
+    assert shared[0]._client is None, "closed exactly once at call end"
+
+
+def test_provider_scope_is_fake_tolerant_for_monkeypatched_build_provider():
+    """If a test monkeypatches build_provider to a fake without aclose (the common test-double
+    shape), provider_scope must not raise trying to close it — the fake replaces build_provider
+    entirely so it isn't tracked, and even if one were tracked, getattr(aclose) guards the close."""
+    import asyncio
+
+    import wallbreaker.providers.factory as factory
+    from wallbreaker.config import Config, Endpoint
+    from wallbreaker.tools.registry import ToolContext, ToolRegistry
+
+    class _NoCloseFake:
+        def __init__(self, endpoint, **kw):
+            self.endpoint = endpoint
+        async def complete(self, messages, system=None, max_tokens=1024):
+            return "fake"
+
+    cfg = Config(default_profile="t", profiles={"t": Endpoint("t", "openai", "http://x", "m")})
+    cfg.target = Endpoint("t", "openai", "http://x", "m")
+    ctx = ToolContext(config=cfg)
+    reg = ToolRegistry(ctx)
+
+    async def handler(_args, _ctx):
+        p = factory.build_provider(_ctx.config.target)
+        assert isinstance(p, _NoCloseFake)
+        return "ok"
+
+    reg.add("probe", "fake", {"type": "object"}, handler)
+    orig = factory.build_provider
+    factory.build_provider = _NoCloseFake  # type: ignore[assignment]
+    try:
+        res = asyncio.run(reg.execute("probe", {}))  # must not raise
+    finally:
+        factory.build_provider = orig  # type: ignore[assignment]
+    assert not res.is_error
+
+
+def test_provider_supports_async_with_and_closes():
+    """__aenter__/__aexit__ on Provider: the explicit-ownership primitive (used by the dashboard
+    brain path; available for any future call site)."""
+    import asyncio
+
+    from wallbreaker.config import Endpoint
+    from wallbreaker.providers.factory import build_provider
+
+    async def run():
+        p = build_provider(Endpoint("t", "openai", "http://x", "m"))
+        _ = p._http_client()
+        assert p._client is not None and not p._client.is_closed
+        async with p:
+            assert p is p  # in-context use
+        assert p._client is None, "__aexit__ must have aclose()d the provider"
+
+    asyncio.run(run())
+
+
+def test_live_attacker_provider_aclose_closes_brain_and_switch_closes_old():
+    """TG4.2 dashboard brain lifecycle: _LiveAttackerProvider.aclose closes the active brain
+    provider; switch() closes the predecessor so a hot-swap doesn't leak its client."""
+    import asyncio
+
+    from wallbreaker.config import Endpoint
+    from wallbreaker.dashboard.server import _LiveAttackerProvider
+    from wallbreaker.providers.factory import build_provider
+
+    async def run():
+        first = build_provider(Endpoint("a", "openai", "http://x", "m"))
+        _ = first._http_client()
+        wrap = _LiveAttackerProvider(first, Endpoint("a", "openai", "http://x", "m"), lambda _ep: "")
+
+        second = build_provider(Endpoint("b", "openai", "http://y", "m"))
+        _ = second._http_client()
+        wrap.switch(second, Endpoint("b", "openai", "http://y", "m"))
+        # the old (first) client is scheduled to close; let the loop drain it
+        await asyncio.sleep(0)
+        assert first._client is None, "switch must close the predecessor"
+        assert wrap._provider is second
+
+        await wrap.aclose()
+        assert second._client is None, "aclose must close the active brain provider"
+
+    asyncio.run(run())
