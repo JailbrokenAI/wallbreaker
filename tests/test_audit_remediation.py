@@ -632,3 +632,179 @@ def test_client_disconnect_lets_run_finish_server_side(monkeypatch, tmp_path):
     statuses = [r.get("status") for r in records if r.get("kind") == "agent_done"]
     assert statuses, "the run must have completed server-side despite the client disconnect"
     assert statuses[0] in ("finished", "stopped", "timeout", "max_rounds", "error")
+
+
+# ------------------------------------------------------------------------- RACE-2 ResultCache deltas + compaction (TG5.3)
+
+def test_cache_v2_deltas_sum_on_load(tmp_path):
+    """TG5.8: a fresh instance replaying a v2-delta file sums the deltas (not last-writer-wins),
+    so multi-process interleaved writes no longer undercount."""
+    import json as _json
+    from wallbreaker.cache import ResultCache, _FORMAT_VERSION
+
+    c = ResultCache(str(tmp_path))
+    c.put("k", "COMPLIED", "r1")
+    c.put("k", "REFUSED", "r2")
+    c.put("k", "PARTIAL", "r3")
+    c.put("k", "COMPLIED", "r4")
+    del c
+    # Simulate a second process: append a v2 delta for the SAME key directly to the file
+    # (the multi-process case the lock-free RMW used to lose).
+    with open(str(tmp_path / "wb_runs" / "result_cache.jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(_json.dumps({
+            "key": "k", "v": _FORMAT_VERSION, "ds": 1, "dbucket": "complied",
+            "last_response": "r5-from-other-process", "last_label": "COMPLIED",
+        }) + "\n")
+    reloaded = ResultCache(str(tmp_path))
+    e = reloaded.get("k")
+    assert e["samples"] == 5, "v2 deltas must SUM (4 in-process + 1 cross-process), not last-writer-wins"
+    assert e["complied"] == 3  # r1, r4, r5
+    assert e["refused"] == 1
+    assert e["partial"] == 1
+    assert e["last_response"] == "r5-from-other-process"
+
+
+def test_cache_backward_compat_with_legacy_v1_cumulative_file(tmp_path):
+    """An existing v1 (cumulative-snapshot) cache file must keep loading correctly after the
+    TG5.3 delta change, and new v2 deltas append on top of it without double-counting (the #1
+    rework risk the PM flagged)."""
+    import json as _json
+    from wallbreaker.cache import ResultCache, _FORMAT_VERSION
+
+    # Hand-write a legacy v1 file: two cumulative snapshots for key 'k' (last one wins).
+    path = tmp_path / "wb_runs" / "result_cache.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        _json.dumps({"key": "k", "samples": 1, "complied": 1, "partial": 0, "refused": 0,
+                     "last_response": "old1", "last_label": "COMPLIED"}) + "\n"
+        + _json.dumps({"key": "k", "samples": 2, "complied": 1, "partial": 0, "refused": 1,
+                       "last_response": "old2", "last_label": "REFUSED"}) + "\n",
+        encoding="utf-8",
+    )
+    c = ResultCache(str(tmp_path))
+    e = c.get("k")
+    assert e["samples"] == 2 and e["complied"] == 1 and e["refused"] == 1, "legacy v1 last-snapshot loads"
+    assert e["last_label"] == "REFUSED"
+    # A new put appends a v2 delta on top of the v1 snapshot — sums, not replaces.
+    c.put("k", "COMPLIED", "new3")
+    del c
+    reloaded = ResultCache(str(tmp_path))
+    e2 = reloaded.get("k")
+    assert e2["samples"] == 3, "v1 snapshot (2) + v2 delta (1) = 3, no double-count"
+    assert e2["complied"] == 2 and e2["refused"] == 1
+    assert e2["last_response"] == "new3"
+
+
+def test_cache_compaction_rewrites_as_one_line_per_key_and_preserves_totals(tmp_path):
+    """TG5.3: once the file exceeds the compaction threshold it is rewritten (atomic) as one
+    cumulative line per key, bounding on-disk growth without losing totals."""
+    import json as _json
+    from wallbreaker.cache import ResultCache
+    import wallbreaker.cache as cache_mod
+
+    c = ResultCache(str(tmp_path))
+    # Force the threshold low so compaction triggers after a few puts.
+    orig = cache_mod._COMPACTION_THRESHOLD
+    cache_mod._COMPACTION_THRESHOLD = 5
+    try:
+        for i in range(8):
+            c.put(f"key{i}", "COMPLIED", f"r{i}")
+    finally:
+        cache_mod._COMPACTION_THRESHOLD = orig
+
+    # After compaction the file holds one line per key (8 keys), and totals survive reload.
+    lines = [ln for ln in (tmp_path / "wb_runs" / "result_cache.jsonl").read_text().splitlines() if ln.strip()]
+    assert len(lines) == 8, f"compacted to one line per key; got {len(lines)}"
+    reloaded = ResultCache(str(tmp_path))
+    assert reloaded.get("key0")["samples"] == 1 and reloaded.get("key7")["samples"] == 1
+    assert reloaded.get("key3")["last_response"] == "r3"
+
+
+# ------------------------------------------------------------------------- RACE-3 request_gate notify on raise (TG5.5)
+
+def test_request_gate_notify_wakes_parked_tasks_on_limit_raise():
+    """TG5.9: a task parked at the OLD limit (configure_request_gate(1,0) then 2 concurrent
+    acquires) must proceed promptly when the limit is RAISED and notify_request_gates() runs,
+    instead of staying blocked until an unrelated release()."""
+    import asyncio
+    from wallbreaker.providers.request_gate import (
+        configure_request_gate, notify_request_gates, provider_request_slot,
+    )
+
+    configure_request_gate(1, 0)  # only one slot
+    woke = asyncio.Event()
+    started = asyncio.Event()
+
+    async def first():
+        async with provider_request_slot(_endpoint()):
+            started.set()
+            await woke.wait()  # hold the single slot until released
+
+    async def parked():
+        # Blocks at the limit until either a release or a notify-on-raise.
+        async with provider_request_slot(_endpoint()):
+            return True
+
+    async def run():
+        t1 = asyncio.create_task(first())
+        await started.wait()
+        t2 = asyncio.create_task(parked())
+        # Give t2 a moment to park in acquire's condition.wait().
+        await asyncio.sleep(0.05)
+        assert not t2.done(), "parked task should be blocked at the limit"
+        # Raise the limit and notify — t2 must proceed WITHOUT releasing t1.
+        configure_request_gate(2, 0)
+        await notify_request_gates()
+        await asyncio.wait_for(t2, timeout=2.0)
+        assert t2.done() and t2.result() is True, "parked task woke after the notify-on-raise"
+        woke.set()
+        await t1
+
+    asyncio.run(run())
+
+
+def test_request_gate_notify_is_noop_outside_loop_or_with_no_gates():
+    """notify_request_gates must be safe to call with no running loop or no gates (no-op)."""
+    import asyncio
+    from wallbreaker.providers.request_gate import notify_request_gates
+    # No running loop.
+    asyncio.run(notify_request_gates())  # must not raise
+
+
+def _endpoint(*, base_url="https://api.example/v1", key="shared"):
+    from wallbreaker.config import Endpoint
+    return Endpoint("one", "openai", base_url, "model", api_key=key)
+
+
+# ------------------------------------------------------------------------- RACE-4 RunLog write serialization (TG5.4)
+
+def test_runlog_write_is_serialized_and_lines_stay_atomic(tmp_path):
+    """TG5.4: concurrent _write calls from coroutines do not interleave half-lines. The
+    _write_lock + the 'no await inside _write' invariant guarantee line atomicity; this test
+    fires many concurrent event() calls (each writes a line) and asserts every line is valid
+    JSON with a unique, gap-free seq."""
+    import asyncio
+    from wallbreaker.session import RunLog
+
+    log = RunLog(directory=str(tmp_path))
+    N = 200
+
+    async def writer(i):
+        log.event("note", text=f"line-{i}")
+
+    async def run():
+        await asyncio.gather(*(writer(i) for i in range(N)))
+
+    asyncio.run(run())
+    import json as _json
+    records = []
+    for line in (tmp_path / log.path.name).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        records.append(_json.loads(line))  # raises on a half-interleaved line
+    notes = [r for r in records if r.get("kind") == "note"]
+    seqs = [r["seq"] for r in notes]
+    assert len(notes) == N, f"all {N} note lines present; got {len(notes)}"
+    assert seqs == sorted(seqs), "seqs are monotonic (serialized, not interleaved)"
+    assert len(set(seqs)) == N, "every seq is unique"

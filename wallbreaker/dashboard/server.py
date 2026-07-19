@@ -801,6 +801,9 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
             gate = _agent_settings(prefs)
             configure_request_gate(gate["concurrency"], gate["request_delay_ms"])
+            # No notify_request_gates() here: this runs in the sync create_app body at startup,
+            # before any event loop / parked tasks exist. The async handlers (settings POST,
+            # agent_run) call notify after reconfiguring mid-flight (RACE-3).
         except Exception:
             pass
     app = FastAPI(title="Wallbreaker", version="0.1.0")
@@ -1092,6 +1095,9 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
         gate = _agent_settings(prefs)
         configure_request_gate(gate["concurrency"], gate["request_delay_ms"])
+        # RACE-3 notify is best-effort here: settings_post is a SYNC handler, so no await is
+        # possible. In practice a parked agent run holds dashboard_inference_lock, so this sync
+        # settings POST can't race with it; the authoritative notify is in async agent_run.
         return _settings_view(config, prefs)
 
     @app.get("/api/overview")
@@ -1454,18 +1460,19 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         request_delay_ms = _int_setting(
             body.get("request_delay_ms"), agent_defaults["request_delay_ms"], 0, 60000
         )
-        from ..providers.request_gate import configure_request_gate
+        from ..providers.request_gate import configure_request_gate, notify_request_gates
 
         configure_request_gate(concurrency, request_delay_ms)
+        await notify_request_gates()  # RACE-3: wake tasks parked at the old limit (no-op before the run starts)
 
         # REL-7: overall wall-clock deadline so a trickling/hung target can't keep a round (and
-        # thus the run) alive forever. Generous and overridable: operator can pass run_timeout_s
-        # in the body; else default to max_rounds * 180s (3 min/round) floored at 300s, capped at
-        # 7200s — long enough to never kill a legitimate long run, short enough to recover a
-        # wedged one. A timed-out run emits a terminal SSE event and clears state in finally.
+        # thus the run) alive forever. Generous and overridable: an operator-provided
+        # run_timeout_s is honored as-is (a deliberate multi-hour battery shouldn't be silently
+        # clamped); the DERIVED default is capped at 7200s so an unconfigured run can still hang
+        # itself. Floored at 30s everywhere so a typo can't make it instant.
         _requested_timeout = body.get("run_timeout_s")
         if _requested_timeout is not None:
-            overall_timeout = float(_int_setting(_requested_timeout, 1800, 30, 72000))
+            overall_timeout = float(_int_setting(_requested_timeout, 1800, 30, 7_200_000))
         else:
             overall_timeout = min(7200.0, max(300.0, max_rounds * 180.0))
 

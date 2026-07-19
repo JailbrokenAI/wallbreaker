@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
@@ -320,6 +321,12 @@ class RunLog:
         self.target_model = ""
         self.target_profile = ""
         self._target_written = False
+        # RACE-4: serialize writes so a future refactor that adds an `await` between
+        # ``self._seq += 1`` and the append can't interleave lines across concurrent coroutines.
+        # _write is synchronous today (no await inside), so this lock is currently uncontended —
+        # it is a guard rail making the "no await inside _write" invariant explicit rather than
+        # an implicit assumption a later change could silently break.
+        self._write_lock = threading.Lock()
 
     def _ensure(self) -> None:
         if not self._started:
@@ -345,16 +352,23 @@ class RunLog:
             })
 
     def _write(self, record: dict) -> None:
-        self._seq += 1
-        record.setdefault("seq", self._seq)
-        new_file = not self.path.exists()
-        with open(self.path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        if new_file:
-            try:
-                os.chmod(self.path, 0o600)
-            except OSError:
-                pass
+        # RACE-4: hold _write_lock across seq++ + append so concurrent coroutines can't
+        # interleave half-lines. The lock is reentrant-safe here because _write performs no
+        # awaits and calls no other RunLog methods. INVARIANT: do not add an `await` inside
+        # this method — an await would release the event loop mid-write and break line
+        # atomicity across coroutines (the lock is threading.Lock, not asyncio.Lock, so it
+        # does not gate the event loop; line atomicity relies on synchronous execution).
+        with self._write_lock:
+            self._seq += 1
+            record.setdefault("seq", self._seq)
+            new_file = not self.path.exists()
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            if new_file:
+                try:
+                    os.chmod(self.path, 0o600)
+                except OSError:
+                    pass
 
     def set_run_meta(self, **data) -> None:
         """Store static run metadata to write as the first JSONL row on first use."""

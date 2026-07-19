@@ -4,9 +4,10 @@ import dataclasses
 import json
 import logging
 import os
-import tempfile
 import threading
 from pathlib import Path
+
+from ._fsutil import atomic_write
 
 STATE_FILENAME = ".wallbreaker_state.json"
 
@@ -39,33 +40,13 @@ def load_state(path: str | Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _atomic_write(path: Path, text: str) -> None:
-    """Write via a temp file + os.replace so a concurrent reader (or a crash) never sees a
-    truncated file. Truncate-then-write (the old Path.write_text) could expose an empty or
-    half-written state file that load_state would silently read as {} (lost prefs)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)  # atomic on POSIX and Windows
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
 def save_state(path: str | Path, prefs: dict) -> bool:
     """Atomically persist prefs. Returns True on success (callers that ignore the return
     value keep their old behaviour); logs instead of silently swallowing on failure."""
     text = json.dumps(prefs, ensure_ascii=False, indent=1)
     with _state_lock:
         try:
-            _atomic_write(Path(path), text)
+            atomic_write(Path(path), text)
             return True
         except OSError as exc:
             _log.warning("could not save state file %s: %s", path, exc)

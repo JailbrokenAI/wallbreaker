@@ -48,11 +48,42 @@ class _RequestGate:
 
 
 def configure_request_gate(concurrency: int = 3, delay_ms: int = 250) -> dict[str, int]:
-    """Set process-wide inference pacing used by every provider protocol."""
+    """Set process-wide inference pacing used by every provider protocol.
+
+    Sync: only sets the globals (so tests and the no-parked-tasks startup path keep their
+    existing call shape). The RACE-3 fix — waking tasks parked at the OLD limit after a RAISE
+    — is ``notify_request_gates()``, which the async handlers call after this (it must hold
+    each gate's Condition lock to notify, which requires an async context).
+    """
     global _MAX_CONCURRENCY, _REQUEST_DELAY_MS
     _MAX_CONCURRENCY = max(1, min(int(concurrency), 32))
     _REQUEST_DELAY_MS = max(0, min(int(delay_ms), 60_000))
     return request_gate_settings()
+
+
+async def notify_request_gates() -> None:
+    """Wake every parked task after the concurrency limit changes (RACE-3).
+
+    ``_RequestGate.acquire`` waits on ``while self.active >= _MAX_CONCURRENCY: await
+    condition.wait()``; raising the global never woke those waiters, so a parked task stayed
+    blocked until an unrelated ``release()``. This iterates every live gate on the running
+    loop and notifies it while holding its Condition lock (``notify_all`` outside the lock
+    is a no-op / raises on asyncio), so a raised limit promptly frees parked request slots.
+    Safe to call with no loop or no gates (no-op).
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # called outside an event loop — nothing to wake
+    gates = _GATES.get(loop)
+    if not gates:
+        return
+    for gate in list(gates.values()):
+        try:
+            async with gate.condition:
+                gate.condition.notify_all()
+        except Exception:
+            pass  # a gate being torn down concurrently — skip it
 
 
 def request_gate_settings() -> dict[str, int]:
