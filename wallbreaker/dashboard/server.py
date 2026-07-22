@@ -814,16 +814,17 @@ async def _discover_profile_models(profile: str, endpoint) -> dict:
 
 
 def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str | Path | None = None,
-               *, require_auth: bool = False, auth_token: str | None = None,
+               *, require_auth: bool = True, auth_token: str | None = None,
                allow_host_tools: bool = False):
     """Build the Wallbreaker dashboard FastAPI app. fastapi is an optional extra
     (`pip install -e '.[dashboard]'`), imported lazily so the package imports without it.
 
-    Security: when `require_auth` is True every /api/* route (except /api/health and
-    /api/session) requires the dashboard token AND a same-origin request (audit SEC-1/2/3/6).
-    `serve()` — the only shipped entrypoint — always enables it and prints the token. The default
-    is False so the in-process test factory and embedders opt in explicitly; do not expose an app
-    built with require_auth=False on a network. `allow_host_tools` opts the browser agent back into
+    Security: ``require_auth`` defaults to ``True`` (P3 hardening, AD-6). Every /api/* route
+    (except /api/health and /api/session) requires the dashboard token AND a same-origin
+    request (audit SEC-1/2/3/6). ``serve()`` — the only shipped entrypoint — has always
+    enabled it; now the factory does too so an app built without explicit
+    ``require_auth=False`` is secure by default. Tests that need no auth must pass
+    ``require_auth=False`` explicitly. ``allow_host_tools`` opts the browser agent back into
     run_shell/write_file/http_request (off by default = least privilege, audit SEC-1/4/5)."""
     from fastapi import FastAPI, Header, HTTPException
     from fastapi.middleware.cors import CORSMiddleware

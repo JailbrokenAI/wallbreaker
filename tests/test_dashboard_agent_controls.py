@@ -73,7 +73,7 @@ def test_pause_gate_applies_steering_to_first_resumed_turn():
 
 
 def test_agent_control_routes_report_inactive(tmp_path):
-    client = TestClient(create_app(config=None, sessions_dir=tmp_path))
+    client = TestClient(create_app(config=None, sessions_dir=tmp_path, require_auth=False))
     assert client.get("/api/agent/status").json() == {
         "active": False, "paused": False, "attacker": "", "provider": "",
     }
@@ -119,7 +119,7 @@ def test_agent_run_filters_optional_techniques_but_keeps_controls(monkeypatch, t
     monkeypatch.setattr(factory_mod, "build_provider", lambda _endpoint: FakeProvider())
     monkeypatch.setattr(tools_mod, "build_registry", lambda _config: registry)
 
-    client = TestClient(create_app(config=config, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=config, sessions_dir=tmp_path / "sessions", require_auth=False))
     with client.stream("POST", "/api/agent/run", json={
         "objective": "test", "max_rounds": 1, "enabled_techniques": [],
     }) as response:

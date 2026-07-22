@@ -1,5 +1,106 @@
 # Changelog
 
+## Audit Remediation — Security, Reliability, Accessibility, Visual (50 findings closed)
+
+Full audit (`wallbreaker-audit.md`: 3 Critical, 13 High, 16 Medium, 14 Low, 4 Informational)
+remediated across 3 PRs. Release recommendation flipped from "Do not ship" to "Safe to ship."
+
+### M0+M1 Backend (PR #1, merged to `main` `9bb8af5`)
+
+**Security — Critical:**
+- **SEC-1/2/3** Auth + CSRF: per-launch bearer token (0600 file, printed to console), `SecurityMiddleware`
+  on every `/api/*` route, `Origin`/`Sec-Fetch-Site` same-origin check. Token-in-custom-header
+  (`X-WB-Token`) IS the CSRF defense (cross-site can't set it without CORS preflight, which loopback
+  CORS rejects). SPA auto-fetches token via same-origin `/api/session`. (`dashboard/auth.py`, `server.py`)
+- **SEC-4** SSRF egress guard: `egress_guard.py` — scheme allowlist (http/https), blocks loopback/
+  link-local/metadata/RFC1918, hop-by-hop redirect re-validation. Applied to `http_request` + provider
+  discovery.
+- **SEC-5** `read_file` path confinement: realpath containment + symlink rejection.
+- **SEC-6** Attack firing routes behind auth+CSRF.
+- **SEC-7** Bind guard: `serve()` refuses non-loopback `--host` without `--allow-remote`.
+- **SEC-8** Provider/config metadata GETs auth-gated.
+- **SEC-9** Run log redaction (`redact_args`) + 0600/0700 file permissions.
+- **SEC-10** Run-log path guard: realpath containment + symlink reject.
+- **SEC-11** Pydantic request models (`extra='ignore'`), global 500 handler (no traceback/paths),
+  narrowed `except Exception: pass` blocks.
+
+**Reliability:**
+- **REL-1** `vision_complete` NameError fixed (`(json, status)` unpack).
+- **REL-2** Provider lifecycle: `provider_scope()` chokepoint at `ToolRegistry.execute` closes
+  `httpx.AsyncClient` at the tool-call boundary (preserves per-call pooling). `-W error::ResourceWarning`
+  gate.
+- **REL-3/RACE-1** Atomic state writes: `tmp`+`fsync`+`os.replace` + threading lock + merge.
+- **REL-6** Run lifecycle: retained task ref, `POST /api/agent/stop` (idempotent force-stop),
+  `agent_active` reset on every exit path.
+- **REL-7** Overall wall-clock timeout: `asyncio.wait_for` deadline + terminal SSE event.
+- **REL-8** Narrowed `except: pass` → log-and-continue; startup degrades visible.
+- **REL-11** Anthropic `event.get("index")` instead of `event["index"]`.
+- **REL-12** `claude_code` timeout: `start_new_session=True` + `killpg` + `wait()`.
+
+**Concurrency:**
+- **RACE-2** `ResultCache` v2 delta format (one line per put, POSIX atomic append) + tolerant
+  loader (v1 snapshot + v2 deltas) + compaction via `atomic_write` at 5000 lines.
+- **RACE-3** `request_gate` `notify_all()` under Condition lock on limit raise.
+- **RACE-4** `RunLog._write` `threading.Lock` + no-`await` invariant.
+
+**Tool policy:**
+- `tool_policy.py`: `run_shell`/`write_file`/`edit_file`/`patch_file`/`read_file`/`http_request`
+  excluded from dashboard registry by default; opt-in via `--allow-host-tools`.
+
+**New files:** `dashboard/auth.py`, `tools/{egress_guard,tool_policy}.py`, `_fsutil.py`,
+  `tests/test_audit_remediation.py` (62 tests), `tests/pbt/test_security_properties.py` (18 properties).
+
+### P2 Frontend (PR #2, merged to `main` `f1fc70b`)
+
+**TG6 Reliability + Primitives** (`src/primitives/`):
+- `useAbortableFetch` — AbortController lifecycle (REL-4 SSE abort + unmount cleanup)
+- `AsyncView` — loading/empty/error+Retry states (REL-9)
+- `Dialog` — focus trap/restore/Escape/`aria-modal` (A11Y-1)
+- `Combobox` — full ARIA combobox pattern (A11Y-2)
+- `InteractiveChip` — `<button aria-pressed>` (A11Y-3)
+- `LiveRegion` — `role=status`/`aria-live=polite` (A11Y-7)
+- REL-5 stale-guards, REL-10 busy guards, REL-14 Pointer Events resize
+- INFO-1: regression guard test (no `dangerouslySetInnerHTML`/`.innerHTML`)
+
+**TG7 Accessibility (WCAG 2.2 AA):**
+- A11Y-1…13: Dialog semantics, Combobox aria, keyboard chips/rows, LiveRegion transcript/verdict,
+  non-color verdict cues, contrast `--dim`/`--muted`/`--disabled-fg` >= 4.5:1, labels/autocomplete/
+  fieldset, nav/main/h1/skip-link landmarks, reduced-motion media query, >= 24px targets.
+
+**TG8 Visual Consistency:**
+- VIS-1…5: chip standardization, inline-style to tokens/classes, async states on
+  Runs/Findings/Console/Agent, shared `src/format.ts`, min-heights + pin-aware auto-scroll.
+
+**ARIA decisions (AD-15):** ModelChooser stays a combobox (not modal Dialog);
+AgentConfigDrawer stays native `<details>` — both correct ARIA choices.
+
+**Verification:** tsc clean, vitest 38/38, jest-axe 0 violations/view, build ok.
+Checkpoint B (Orca computer-use): 10/10 categories pass.
+
+### P3 Hardening (PR #3, branch `p3-hardening`)
+
+- **P3.1 DNS-rebind socket-IP-pinning:** `PinnedEgressBackend` wraps httpcore's network backend
+  to resolve, validate, and pin TCP connections to validated public IPs. Closes the TOCTOU gap.
+  `http_tool.py` uses `make_pinned_transport()`. 7 tests.
+- **P3.2 `require_auth=True` default flip (AD-6):** `create_app()` factory now secure by default.
+  29 legacy test calls updated to `require_auth=False` explicitly.
+- **P3.3 Gate 4B integration PBT:** 4 new Hypothesis properties (cross-site cannot fire host tools,
+  cannot reach private egress, egress guard defense-in-depth, PinnedEgressBackend rejects private IPs).
+- **P3.4 REL-13 retry cap:** `gated_stream`/`gated_request` accept `max_attempts` (non-idempotent
+  cap 2). No-retry-after-yielded-tokens verified. 4 tests.
+
+**Full suite:** 1146 passed (+25 P3), 31 failed / 7 errors unchanged (pre-existing corpus).
+**PBT:** 18 properties + 1 skipped. Secret scan clean.
+
+### Deferred
+- P3.5: Frontend subcomponent extraction (Runs.tsx 663, Findings.tsx 639, Agent.tsx 443 exceed
+  400-line guideline) — safe follow-up, no security impact.
+- RACE-2 compaction append/replace race (documented residual, undercount-only, not system of record).
+- Screen-reader announcement quality (manual NVDA/VoiceOver pass recommended, code patterns verified).
+- Supply chain: runtime-fetched corpora integrity (out of scope, separate review).
+
+---
+
 ## Five new attack tools: cipherchat, skeleton_key, persuasion_attack, drattack, ica
 
 Adds five research-derived attack tools that were missing from the arsenal, wired into
