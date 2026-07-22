@@ -319,3 +319,115 @@ def test_gate_never_exceeds_limit(limit, n):
 @pytest.mark.skip(reason="requires the optional 'stegg' dependency")
 def test_stego_encrypt_decrypt_reversible():
     pass
+
+
+# ===========================================================================
+# Gate 4B — Integration PBT: end-to-end cross-site → no host tool / no private egress
+#
+# These properties compose the access-control boundary with the tool-policy and
+# egress-guard subsystems to prove that a cross-site request cannot reach a host
+# tool (run_shell/write_file/http_request) or a private egress target, even when
+# the dashboard is running with --allow-host-tools (the tools exist in the
+# registry but the auth boundary stops the cross-site request before it can fire
+# them).
+# ===========================================================================
+
+@given(
+    origin=st.one_of(
+        st.just("https://evil.example"),
+        st.just("http://evil.example:1234"),
+        st.just("http://localhost:9999"),
+    ),
+    tool_name=st.sampled_from(["run_shell", "write_file", "edit_file", "patch_file", "read_file", "http_request"]),
+)
+@settings(max_examples=50, deadline=None, suppress_health_check=_SC)
+def test_cross_site_cannot_fire_host_tool(tmp_path, origin, tool_name):
+    """A cross-site request must be 401/403 before reaching any host tool."""
+    from wallbreaker.dashboard.server import create_app
+    from starlette.testclient import TestClient
+
+    c = TestClient(create_app(config=_dummy_config(tmp_path), sessions_dir=tmp_path / "s",
+                              require_auth=True, auth_token="tok",
+                              allow_host_tools=True),
+                   raise_server_exceptions=False)
+    resp = c.post("/api/agent/run",
+                  json={"objective": "go", "max_rounds": 1, "techniques": [tool_name]},
+                  headers={"Origin": origin})
+    assert resp.status_code in (401, 403), (
+        f"cross-site request reached agent_run (got {resp.status_code}); "
+        f"host tool {tool_name} may be fireable from a cross-site origin"
+    )
+
+
+@given(
+    origin=st.one_of(
+        st.just("https://evil.example"),
+        st.just("http://evil.example:1234"),
+    ),
+    private_url=st.one_of(
+        st.just("http://169.254.169.254/latest/meta-data/"),
+        st.just("http://127.0.0.1:8787/api/config"),
+        st.just("http://10.0.0.1/"),
+        st.just("http://192.168.1.1/"),
+    ),
+)
+@settings(max_examples=50, deadline=None, suppress_health_check=_SC)
+def test_cross_site_cannot_reach_private_egress(tmp_path, origin, private_url):
+    """A cross-site request must be 401/403 before reaching the http_request tool's
+    egress guard. Even if auth were bypassed, the egress guard blocks private targets."""
+    from wallbreaker.dashboard.server import create_app
+    from starlette.testclient import TestClient
+
+    c = TestClient(create_app(config=_dummy_config(tmp_path), sessions_dir=tmp_path / "s",
+                              require_auth=True, auth_token="tok",
+                              allow_host_tools=True),
+                   raise_server_exceptions=False)
+    # Try to fire the http_request tool via the compose endpoint
+    resp = c.post("/api/compose",
+                  json={"request": private_url, "max_tokens": 8},
+                  headers={"Origin": origin})
+    assert resp.status_code in (401, 403), (
+        f"cross-site request reached compose (got {resp.status_code}); "
+        f"private egress target {private_url} may be reachable"
+    )
+
+
+@given(
+    private_url=st.one_of(
+        st.just("http://169.254.169.254/latest/meta-data/"),
+        st.just("http://127.0.0.1:8787/api/config"),
+        st.just("http://10.0.0.1/"),
+        st.just("http://192.168.1.1/"),
+        st.just("http://[::1]/"),
+    ),
+)
+@settings(max_examples=100, deadline=None, suppress_health_check=_SC)
+def test_egress_guard_blocks_private_url_even_when_auth_disabled(tmp_path, private_url):
+    """Defense-in-depth: even if auth were bypassed (require_auth=False),
+    the egress guard itself blocks private egress targets."""
+    from wallbreaker.tools.egress_guard import check_url, EgressBlocked
+
+    with pytest.raises(EgressBlocked):
+        check_url(private_url)
+
+
+@given(
+    private_ip=st.sampled_from([
+        "127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1",
+        "169.254.169.254", "::1", "fd00::1", "0.0.0.0",
+    ]),
+)
+@settings(max_examples=50, deadline=None, suppress_health_check=_SC)
+def test_pinned_backend_rejects_private_ip_connect(tmp_path, private_ip):
+    """Gate 4B: PinnedEgressBackend rejects direct TCP connects to private IPs,
+    closing the DNS-rebind TOCTOU gap."""
+    from wallbreaker.tools.egress_guard import PinnedEgressBackend, EgressBlocked
+    from unittest.mock import MagicMock
+
+    inner = MagicMock()
+    backend = PinnedEgressBackend(inner)
+
+    with pytest.raises(EgressBlocked, match="non-public"):
+        import asyncio
+        asyncio.run(backend.connect_tcp(private_ip, 443))
+    inner.connect_tcp.assert_not_called()

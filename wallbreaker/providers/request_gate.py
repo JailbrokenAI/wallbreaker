@@ -17,6 +17,7 @@ _GATES: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, "_Request
     weakref.WeakKeyDictionary()
 )
 _MAX_ATTEMPTS = 6
+_MAX_ATTEMPTS_NON_IDEMPOTENT = 2  # REL-13: lower retry cap for non-idempotent generation
 _MAX_DELAY_SECONDS = 15.0
 _MAX_CONCURRENCY = 3
 _REQUEST_DELAY_MS = 250
@@ -136,10 +137,18 @@ def _retry_delay(attempt: int) -> float:
 async def gated_stream(
     endpoint: Endpoint,
     stream_factory: Callable[[], AsyncIterator[StreamEvent]],
+    *,
+    max_attempts: int = _MAX_ATTEMPTS,
 ) -> AsyncIterator[StreamEvent]:
-    """Run a stream under the provider gate and absorb transient concurrency 429s."""
+    """Run a stream under the provider gate and absorb transient concurrency 429s.
+
+    ``max_attempts`` caps the number of retries for concurrency-429s. Non-idempotent
+    generation (target queries, agent fires) should pass ``max_attempts=_MAX_ATTEMPTS_NON_IDEMPOTENT``
+    so a 429 that may have already started billing doesn't waste money on 6 retries.
+    """
+    cap = max(1, min(max_attempts, _MAX_ATTEMPTS))
     async with provider_request_slot(endpoint):
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(cap):
             yielded = False
             try:
                 async for event in stream_factory():
@@ -147,19 +156,24 @@ async def gated_stream(
                     yield event
                 return
             except ProviderError as exc:
-                if yielded or not is_concurrency_limit(exc) or attempt == _MAX_ATTEMPTS - 1:
+                if yielded or not is_concurrency_limit(exc) or attempt == cap - 1:
                     raise
                 await asyncio.sleep(_retry_delay(attempt))
 
 
-async def gated_request(endpoint: Endpoint, request_factory: Callable[[], Awaitable[object]]):
-    """Run a non-streaming inference under the same provider request gate."""
+async def gated_request(endpoint: Endpoint, request_factory: Callable[[], Awaitable[object]],
+                         *, max_attempts: int = _MAX_ATTEMPTS):
+    """Run a non-streaming inference under the same provider request gate.
+
+    ``max_attempts`` caps retries for concurrency-429s (REL-13).
+    """
+    cap = max(1, min(max_attempts, _MAX_ATTEMPTS))
     async with provider_request_slot(endpoint):
-        for attempt in range(_MAX_ATTEMPTS):
+        for attempt in range(cap):
             try:
                 return await request_factory()
             except ProviderError as exc:
-                if not is_concurrency_limit(exc) or attempt == _MAX_ATTEMPTS - 1:
+                if not is_concurrency_limit(exc) or attempt == cap - 1:
                     raise
                 await asyncio.sleep(_retry_delay(attempt))
     raise AssertionError("provider request retry loop exited unexpectedly")

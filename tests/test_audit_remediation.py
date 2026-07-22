@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -260,14 +261,14 @@ def test_session_bootstrap_shape_for_spa():
 def test_no_auth_mode_session_returns_empty_token():
     """When auth is off (test factory / embedders), /api/session reports unauthenticated and no
     token, so the SPA's withAuth() sends no header and the app still works."""
-    c = _client()  # require_auth defaults False
+    c = _client(require_auth=False)  # explicit: test factory / embedders
     body = c.get("/api/session").json()
     assert body["authenticated"] is False
     assert body["token"] == ""
 
 
 def test_no_auth_mode_is_open_for_back_compat():
-    c = _client()  # require_auth defaults False (test factory / embedders)
+    c = _client(require_auth=False)  # explicit: test factory / embedders
     assert c.get("/api/config").status_code == 200
 
 
@@ -470,7 +471,7 @@ def _agent_run_app(monkeypatch, tmp_path, provider_obj, *, run_timeout_s=None):
     registry = ToolRegistry(ToolContext(config=cfg))
     monkeypatch.setattr(factory_mod, "build_provider", lambda _endpoint: provider_obj)
     monkeypatch.setattr(tools_mod, "build_registry", lambda _config: registry)
-    app = create_app(config=cfg, sessions_dir=sessions)
+    app = create_app(config=cfg, sessions_dir=sessions, require_auth=False)
     client = TestClient(app)
     return client, sessions, app
 
@@ -909,9 +910,187 @@ def test_startup_degrades_log_and_continue_on_bad_config(tmp_path, monkeypatch):
         raise OSError("simulated registry init failure")
     monkeypatch.setattr(pr_mod.ProviderRegistry, "__init__", boom)
     # The app must still create (log-and-continue, not hard-raise).
-    app = create_app(config=cfg, sessions_dir=tmp_path / "s")
+    app = create_app(config=cfg, sessions_dir=tmp_path / "s", require_auth=False)
     c = TestClient(app)
     # provider routes degrade to 400 (provider_registry is None).
     r = c.get("/api/providers")
     assert r.status_code in (200, 400), "degraded but not crashed"
     monkeypatch.setattr(pr_mod.ProviderRegistry, "__init__", orig_init)
+
+
+# --------------------------------------------------------------- P3.1 DNS-rebind socket-IP-pinning
+import ipaddress as _ipaddr
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def test_pinned_backend_blocks_literal_private_ip():
+    """PinnedEgressBackend rejects a direct connect to a private IP."""
+    from wallbreaker.tools.egress_guard import PinnedEgressBackend, EgressBlocked
+
+    inner = MagicMock()
+    backend = PinnedEgressBackend(inner)
+
+    for bad_ip in ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1"]:
+        with pytest.raises(EgressBlocked, match="non-public"):
+            asyncio.run(backend.connect_tcp(bad_ip, 443))
+    inner.connect_tcp.assert_not_called()
+
+
+def test_pinned_backend_passes_literal_public_ip():
+    """PinnedEgressBackend allows a direct connect to a public IP."""
+    from wallbreaker.tools.egress_guard import PinnedEgressBackend
+
+    inner = MagicMock()
+    inner.connect_tcp = AsyncMock(return_value=MagicMock())
+    backend = PinnedEgressBackend(inner)
+
+    asyncio.run(backend.connect_tcp("8.8.8.8", 443))
+    inner.connect_tcp.assert_called_once_with("8.8.8.8", 443, timeout=None, local_address=None, socket_options=None)
+
+
+def test_pinned_backend_resolves_and_pins_hostname():
+    """PinnedEgressBackend resolves a hostname, validates all IPs, connects to the first."""
+    from wallbreaker.tools.egress_guard import PinnedEgressBackend
+
+    inner = MagicMock()
+    inner.connect_tcp = AsyncMock(return_value=MagicMock())
+    backend = PinnedEgressBackend(inner)
+
+    # Mock getaddrinfo to return two public IPs
+    fake_infos = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.35", 443)),
+    ]
+    with patch("wallbreaker.tools.egress_guard.socket.getaddrinfo", return_value=fake_infos):
+        asyncio.run(backend.connect_tcp("example.com", 443))
+
+    # Should connect to the first validated IP, not the hostname
+    inner.connect_tcp.assert_called_once()
+    call_args = inner.connect_tcp.call_args
+    assert call_args.args[0] == "93.184.216.34", "should pin to first resolved IP"
+    assert call_args.args[1] == 443
+
+
+def test_pinned_backend_blocks_dns_rebind():
+    """If DNS returns a private IP alongside public ones, PinnedEgressBackend blocks."""
+    from wallbreaker.tools.egress_guard import PinnedEgressBackend, EgressBlocked
+
+    inner = MagicMock()
+    backend = PinnedEgressBackend(inner)
+
+    # Simulate DNS rebind: public + private addresses mixed
+    fake_infos = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("169.254.169.254", 443)),
+    ]
+    with patch("wallbreaker.tools.egress_guard.socket.getaddrinfo", return_value=fake_infos):
+        with pytest.raises(EgressBlocked, match="DNS rebind"):
+            asyncio.run(backend.connect_tcp("evil.com", 443))
+
+    inner.connect_tcp.assert_not_called()
+
+
+def test_pinned_backend_blocks_all_private_resolution():
+    """If DNS resolves to only private IPs, PinnedEgressBackend blocks."""
+    from wallbreaker.tools.egress_guard import PinnedEgressBackend, EgressBlocked
+
+    inner = MagicMock()
+    backend = PinnedEgressBackend(inner)
+
+    fake_infos = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.1", 443)),
+    ]
+    with patch("wallbreaker.tools.egress_guard.socket.getaddrinfo", return_value=fake_infos):
+        with pytest.raises(EgressBlocked, match="DNS rebind"):
+            asyncio.run(backend.connect_tcp("internal.local", 443))
+
+
+def test_make_pinned_transport_wraps_backend():
+    """make_pinned_transport creates a transport with PinnedEgressBackend."""
+    from wallbreaker.tools.egress_guard import make_pinned_transport, PinnedEgressBackend
+
+    transport = make_pinned_transport()
+    assert isinstance(transport._pool._network_backend, PinnedEgressBackend)
+    # Inner backend should be the default AutoBackend
+    assert hasattr(transport._pool._network_backend._inner, "connect_tcp")
+
+
+def test_http_tool_uses_pinned_transport():
+    """The http_request tool should use a pinned transport (regression guard)."""
+    import inspect
+    from wallbreaker.tools import http_tool
+
+    src = inspect.getsource(http_tool._http_request)
+    assert "make_pinned_transport" in src, "http_request must use pinned transport"
+
+
+# --------------------------------------------------------------- P3.4 REL-13 retry cap for non-idempotent generation
+from wallbreaker.providers.request_gate import (
+    gated_stream, gated_request, _MAX_ATTEMPTS, _MAX_ATTEMPTS_NON_IDEMPOTENT,
+    is_concurrency_limit, ProviderError,
+)
+
+
+def test_rel13_non_idempotent_retry_cap_is_lower():
+    """REL-13: the non-idempotent retry cap is lower than the default."""
+    assert _MAX_ATTEMPTS_NON_IDEMPOTENT < _MAX_ATTEMPTS
+    assert _MAX_ATTEMPTS_NON_IDEMPOTENT <= 2, "non-idempotent retries must be at most 2"
+
+
+def test_rel13_gated_stream_respects_max_attempts():
+    """gated_stream with max_attempts=1 should NOT retry on a 429."""
+    from wallbreaker.config import Endpoint
+
+    call_count = 0
+
+    async def failing_factory():
+        nonlocal call_count
+        call_count += 1
+        raise ProviderError("429: concurrent requests rate limit exceeded")
+        yield  # noqa: unreachable — makes this an async generator
+
+    ep = Endpoint("test", "openai", "http://test", "model")
+    with pytest.raises(ProviderError):
+        asyncio.run(_consume_stream(gated_stream(ep, failing_factory, max_attempts=1)))
+    assert call_count == 1, "max_attempts=1 should not retry"
+
+
+def test_rel13_gated_stream_no_retry_after_yielded_tokens():
+    """REL-13: if any tokens were already yielded, a 429 must NOT retry
+    (the generation already started billing). The error propagates to the caller
+    but the stream factory is called only once."""
+    from wallbreaker.config import Endpoint
+    from wallbreaker.agent.messages import TextDelta
+
+    call_count = 0
+
+    async def partial_factory():
+        nonlocal call_count
+        call_count += 1
+        yield TextDelta("partial")
+        raise ProviderError("429: rate limit exceeded")
+
+    ep = Endpoint("test", "openai", "http://test", "model")
+    # The ProviderError propagates (the 429 after partial output is not swallowed),
+    # but the factory is called only once — no retry.
+    with pytest.raises(ProviderError):
+        asyncio.run(_consume_stream(gated_stream(ep, partial_factory)))
+    assert call_count == 1, "must not retry after tokens were yielded"
+
+
+def test_rel13_is_concurrency_limit_is_narrow():
+    """is_concurrency_limit only matches 429s with 'concurrent' or 'rate limit exceeded',
+    NOT 'insufficient_quota' (which is a billing error, not a transient concurrency limit)."""
+    assert is_concurrency_limit(Exception("429: Too many concurrent requests")) is True
+    assert is_concurrency_limit(Exception("429: Rate limit exceeded")) is True
+    assert is_concurrency_limit(Exception("429: insufficient_quota")) is False
+    assert is_concurrency_limit(Exception("500: internal")) is False
+    assert is_concurrency_limit(Exception("429:")) is False
+
+
+async def _consume_stream(aiter):
+    """Collect all items from an async iterator into a list."""
+    out = []
+    async for item in aiter:
+        out.append(item)
+    return out

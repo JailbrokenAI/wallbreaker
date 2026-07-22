@@ -4,7 +4,7 @@ import json
 
 import httpx
 
-from .egress_guard import EgressBlocked, check_url
+from .egress_guard import EgressBlocked, check_url, make_pinned_transport
 from .registry import ToolContext, ToolRegistry
 
 MAX_BODY = 30000
@@ -37,7 +37,10 @@ async def _http_request(args: dict, ctx: ToolContext) -> str:
         return f"Request blocked: {exc}"
 
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=False,
+            transport=make_pinned_transport(),
+        ) as client:
             resp = await client.request(method, url, **kwargs)
             hops = 0
             while resp.is_redirect and hops < MAX_REDIRECTS:

@@ -26,7 +26,7 @@ def _sessions(tmp_path):
 
 
 def test_health_and_overview(tmp_path):
-    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path), require_auth=False))
     assert client.get("/api/health").json()["ok"] is True
     ov = client.get("/api/overview").json()
     assert ov["runs_count"] == 1
@@ -36,7 +36,7 @@ def test_health_and_overview(tmp_path):
 
 
 def test_findings_runs_arsenal(tmp_path):
-    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path), require_auth=False))
     findings = client.get("/api/findings").json()
     assert len(findings) == 1 and findings[0]["label"] == "COMPLIED"
     assert findings[0]["run"] == "run-20260101-000000.jsonl"
@@ -85,7 +85,7 @@ def test_findings_can_select_multiple_past_runs(tmp_path):
         encoding="utf-8",
     )
 
-    client = TestClient(create_app(config=None, sessions_dir=sessions))
+    client = TestClient(create_app(config=None, sessions_dir=sessions, require_auth=False))
     runs = client.get("/api/findings/runs").json()
     assert [r["name"] for r in runs][:2] == [
         "run-20260101-000000.jsonl",
@@ -109,7 +109,7 @@ def test_findings_can_select_multiple_past_runs(tmp_path):
 
 
 def test_run_detail_path_guard(tmp_path):
-    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path), require_auth=False))
     ok = client.get("/api/runs/run-20260101-000000.jsonl")
     assert ok.status_code == 200 and ok.json()["total"] == 3
     bad = client.get("/api/runs/..%2f..%2fetc%2fpasswd")
@@ -117,13 +117,13 @@ def test_run_detail_path_guard(tmp_path):
 
 
 def test_fire_requires_target(tmp_path):
-    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path), require_auth=False))
     r = client.post("/api/fire", json={"request": "hello"})
     assert r.status_code == 400
 
 
 def test_compose_builds_payload_without_target(tmp_path):
-    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path), require_auth=False))
     r = client.post("/api/compose", json={"request": "hello", "transforms": ["base64"]})
     assert r.status_code == 200
     body = r.json()
@@ -168,7 +168,7 @@ def test_fire_records_full_console_attempt(monkeypatch, tmp_path):
             return ToolResult(content)
 
     monkeypatch.setattr(tools_mod, "build_registry", lambda _config: FakeRegistry())
-    client = TestClient(create_app(config=cfg, sessions_dir=sessions))
+    client = TestClient(create_app(config=cfg, sessions_dir=sessions, require_auth=False))
     r = client.post("/api/fire", json={"request": "hello", "transforms": ["base64"]})
 
     assert r.status_code == 200
@@ -247,7 +247,7 @@ def test_agent_run_logs_full_scaffold_inference_and_tools(monkeypatch, tmp_path)
     monkeypatch.setattr(factory_mod, "build_provider", lambda _endpoint: FakeProvider(attacker))
     monkeypatch.setattr(tools_mod, "build_registry", lambda _config: registry)
 
-    client = TestClient(create_app(config=cfg, sessions_dir=sessions))
+    client = TestClient(create_app(config=cfg, sessions_dir=sessions, require_auth=False))
     with client.stream("POST", "/api/agent/run", json={
         "objective": "full objective text", "max_rounds": 1, "max_tokens": 2048,
     }) as response:
@@ -282,7 +282,7 @@ def test_agent_run_logs_full_scaffold_inference_and_tools(monkeypatch, tmp_path)
 
 
 def test_agent_run_requires_target(tmp_path):
-    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=None, sessions_dir=_sessions(tmp_path), require_auth=False))
     r = client.post("/api/agent/run", json={"objective": "jailbreak the model"})
     assert r.status_code == 400
     assert "target" in r.json()["detail"].lower()
@@ -292,7 +292,7 @@ def test_agent_run_requires_objective(tmp_path):
     from wallbreaker.config import Config, Endpoint
     ep = Endpoint("t", "openai", "http://x", "m")
     cfg = Config(default_profile="t", profiles={"t": ep}, target=ep)
-    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path), require_auth=False))
     r = client.post("/api/agent/run", json={"objective": "   "})
     assert r.status_code == 400
     assert "objective" in r.json()["detail"].lower()
@@ -306,7 +306,7 @@ def test_settings_get_and_set(tmp_path):
         target=Endpoint("target", "openai", "http://x", "some/text-model"),
         path=tmp_path / "config.toml",
     )
-    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path), require_auth=False))
     g = client.get("/api/settings").json()
     assert "glm" in g["profiles"]
     assert g["profile_details"]["glm"]["model"] == "glm-5.2"
@@ -409,7 +409,7 @@ def test_models_fetches_catalog_for_profile(monkeypatch, tmp_path):
             return FakeResponse()
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
-    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path), require_auth=False))
     response = client.get("/api/models", params={"profile": "router"})
 
     assert response.status_code == 200
@@ -443,7 +443,7 @@ def test_models_catalog_failure_keeps_current_model(monkeypatch, tmp_path):
             raise httpx.ConnectError("offline")
 
     monkeypatch.setattr(httpx, "AsyncClient", FailingClient)
-    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path), require_auth=False))
     response = client.get("/api/models", params={"profile": "router"})
 
     assert response.status_code == 200
@@ -465,7 +465,7 @@ def test_target_profile_and_custom_model_persist_together(tmp_path):
         target=Endpoint("target", "openai", "https://one.example/v1", "old-model"),
         path=tmp_path / "config.toml",
     )
-    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path), require_auth=False))
     response = client.post(
         "/api/settings",
         json={"target_profile": "two", "target_model": "custom-model"},

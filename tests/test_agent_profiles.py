@@ -79,7 +79,7 @@ def test_dashboard_profile_crud_and_activation(tmp_path):
     from wallbreaker.dashboard.server import create_app
 
     config = _config(tmp_path)
-    client = TestClient(create_app(config=config, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=config, sessions_dir=tmp_path / "sessions", require_auth=False))
     saved = client.put("/api/agent-profiles/target/lab", json={
         "provider": "openrouter", "model": "target-x", "prompt_source": "inline",
         "system_prompt": "Target baseline", "system_prompt_file": "",
@@ -104,7 +104,7 @@ def test_stale_endpoint_state_is_removed_and_never_applied(tmp_path):
         "attacker_base_url": "https://api.featherless.ai/v1",
         "attacker_model": "stale", "rounds": 7,
     }), encoding="utf-8")
-    client = TestClient(create_app(config=config, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=config, sessions_dir=tmp_path / "sessions", require_auth=False))
     assert client.put("/api/roles/attacker", json={"provider": "openrouter", "model": "selected"}).status_code == 200
     endpoint, _ = resolve_role(config, "attacker")
     assert endpoint.base_url == "https://openrouter.ai/api/v1"
