@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { AgentConfig } from "../api";
 
 export const DEFAULT_AGENT_CONFIG: AgentConfig = {
@@ -65,6 +65,39 @@ export function AgentConfigDrawer({
     if (!draft[key]) setDraft((current) => ({ ...current, [key]: String(value[key]) }));
   };
 
+  const ids = useId();
+  // A11Y-10/A11Y-11: one focusable number input per field, its <label> associated
+  // by htmlFor/id and its min/max range exposed to assistive tech via a
+  // aria-describedby helper line (announced with the input, not just visual).
+  const numberField = (
+    key: keyof AgentConfig,
+    label: string,
+    min: number,
+    max: number,
+    step: number,
+  ) => {
+    const fieldId = `${ids}-${key}`;
+    const helpId = `${ids}-${key}-help`;
+    return (
+      <>
+        <label className="fld" htmlFor={fieldId}>{label}</label>
+        <input
+          id={fieldId}
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          aria-describedby={helpId}
+          value={draft[key]}
+          onChange={(event) => setField(key, event.target.value)}
+          onBlur={() => restoreEmpty(key)}
+          disabled={disabled}
+        />
+        <div id={helpId} className="mono muted">Allowed range: {min}–{max}.</div>
+      </>
+    );
+  };
+
   return (
     <details className="config-drawer">
       <summary>
@@ -74,50 +107,10 @@ export function AgentConfigDrawer({
         </span>
       </summary>
       <div className="config-drawer-body">
-        <label className="fld">Max rounds</label>
-        <input
-          type="number"
-          min={1}
-          max={50}
-          step={1}
-          value={draft.max_rounds}
-          onChange={(event) => setField("max_rounds", event.target.value)}
-          onBlur={() => restoreEmpty("max_rounds")}
-          disabled={disabled}
-        />
-        <label className="fld">Max tokens per response</label>
-        <input
-          type="number"
-          min={1}
-          max={32000}
-          step={1}
-          value={draft.max_tokens}
-          onChange={(event) => setField("max_tokens", event.target.value)}
-          onBlur={() => restoreEmpty("max_tokens")}
-          disabled={disabled}
-        />
-        <label className="fld">Concurrent inference requests</label>
-        <input
-          type="number"
-          min={1}
-          max={32}
-          step={1}
-          value={draft.concurrency}
-          onChange={(event) => setField("concurrency", event.target.value)}
-          onBlur={() => restoreEmpty("concurrency")}
-          disabled={disabled}
-        />
-        <label className="fld">Delay between request starts (ms)</label>
-        <input
-          type="number"
-          min={0}
-          max={60000}
-          step={50}
-          value={draft.request_delay_ms}
-          onChange={(event) => setField("request_delay_ms", event.target.value)}
-          onBlur={() => restoreEmpty("request_delay_ms")}
-          disabled={disabled}
-        />
+        {numberField("max_rounds", "Max rounds", 1, 50, 1)}
+        {numberField("max_tokens", "Max tokens per response", 1, 32000, 1)}
+        {numberField("concurrency", "Concurrent inference requests", 1, 32, 1)}
+        {numberField("request_delay_ms", "Delay between request starts (ms)", 0, 60000, 50)}
         <div className="mono muted">
           Applied across attacker, target, judge, and their tool-driven inference calls. Higher concurrency is faster; the delay spaces request starts to reduce rate-limit bursts.
         </div>

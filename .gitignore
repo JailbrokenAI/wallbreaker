@@ -77,3 +77,4 @@ wallbreaker/dashboard/web/vite.config.d.ts
 .serena/
 *.log
 .DS_Store
+wallbreaker/dashboard/web/node_modules/

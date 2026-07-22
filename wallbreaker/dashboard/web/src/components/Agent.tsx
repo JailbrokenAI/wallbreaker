@@ -11,6 +11,27 @@ import {
 import { AgentConfigDrawer, DEFAULT_AGENT_CONFIG, normalizeAgentConfig } from "./AgentConfigDrawer";
 import { ModelChooser } from "./ModelChooser";
 import { ProviderChooser } from "./ProviderChooser";
+import { isAbortError, useAbortableFetch } from "../primitives/useAbortableFetch";
+import { LiveRegion } from "../primitives/LiveRegion";
+
+// A11Y-6: honour prefers-reduced-motion for the transcript's programmatic
+// auto-scroll — jump instantly (no smooth animation) when the user asked to
+// reduce motion. Guarded for jsdom where matchMedia may be undefined.
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+// VIS-5: treat the transcript as "pinned to bottom" when the scroll position is
+// within a small threshold of the end. A user who has scrolled up sits far above
+// the bottom, so streaming events won't yank the viewport back down.
+const PIN_THRESHOLD_PX = 40;
+function isPinnedToBottom(el: HTMLElement | null): boolean {
+  if (!el) return true; // no pane yet (initial render) — follow by default
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distance <= PIN_THRESHOLD_PX;
+}
 
 type Item =
   | { kind: "text"; text: string }
@@ -54,9 +75,11 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
   const [runLog, setRunLog] = useState("");
   const [savingConfig, setSavingConfig] = useState(false);
   const [configStatus, setConfigStatus] = useState("");
+  const [techniqueError, setTechniqueError] = useState("");
   const [err, setErr] = useState("");
   const runningRef = useRef(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { start: startRun, abort: abortRun } = useAbortableFetch();
 
   useEffect(() => {
     api.settings()
@@ -69,7 +92,8 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       const initial = saved === null ? known : new Set(saved.filter((name) => known.has(name)));
       setTechniques(selectable);
       setEnabled(initial);
-    }).catch(() => {});
+      setTechniqueError("");
+    }).catch((e) => setTechniqueError(e instanceof Error ? e.message : "Could not load arsenal techniques."));
   }, []);
 
   const filteredTechniques = useMemo(() => {
@@ -91,6 +115,10 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
   }
 
   function push(it: Item) {
+    // VIS-5: decide whether to auto-scroll BEFORE the new content grows the pane.
+    // We only follow the stream when the user is already pinned to the bottom, so
+    // scrolling up to read earlier output isn't yanked back down each frame.
+    const pinned = isPinnedToBottom(bodyRef.current);
     setItems((prev) => {
       if (it.kind === "text" && prev.length && prev[prev.length - 1].kind === "text") {
         const copy = prev.slice();
@@ -100,6 +128,10 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       }
       return [...prev, it];
     });
+    // A11Y-6: skip the programmatic auto-scroll when the user prefers reduced
+    // motion — they keep control of the scroll position (the LiveRegion still
+    // announces new content), rather than being yanked to the bottom each frame.
+    if (prefersReducedMotion() || !pinned) return;
     requestAnimationFrame(() => {
       if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     });
@@ -140,14 +172,21 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
     }
   }
 
+  // REL-4: abort the in-flight SSE stream when this component unmounts so we never
+  // setState after unmount (the fetch is cancelled, the reader loop stops).
+  useEffect(() => abortRun, [abortRun]);
+
   async function run() {
     if (!objective.trim() || runningRef.current) return;
     runningRef.current = true;
     setItems([]); setErr(""); setRunLog(""); setPaused(false); setPauseReady(false); setRunning(true);
+    // REL-4: fresh controller; also aborts any prior in-flight run.
+    const controller = startRun();
     try {
-      await runAgent({ objective, ...agentConfig, enabled_techniques: [...enabled] }, onEvent);
+      await runAgent({ objective, ...agentConfig, enabled_techniques: [...enabled] }, onEvent, controller.signal);
     } catch (e) {
-      setErr((e as Error).message);
+      // An AbortError is an intentional cancel (unmount / new run) — do not surface it.
+      if (!isAbortError(e)) setErr((e as Error).message);
     } finally {
       runningRef.current = false;
       setRunning(false);
@@ -229,13 +268,14 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
               <button type="button" className="mini-btn" disabled={running || enabled.size === 0} onClick={() => saveEnabled(new Set())}>Disable all</button>
             </div>
             <div className="technique-checklist" aria-label="Agent arsenal techniques">
+              {techniqueError && <div className="err" role="alert">Could not load techniques: {techniqueError}</div>}
               {filteredTechniques.map((tool) => (
                 <label key={tool.name} className={`technique-option ${enabled.has(tool.name) ? "enabled" : ""}`} title={tool.description}>
                   <input type="checkbox" checked={enabled.has(tool.name)} disabled={running} onChange={() => toggleTechnique(tool.name)} />
                   <span><b>{tool.name}</b><small>{tool.description}</small></span>
                 </label>
               ))}
-              {!filteredTechniques.length && <div className="empty compact">No matching techniques.</div>}
+              {!techniqueError && !filteredTechniques.length && <div className="empty compact">No matching techniques.</div>}
             </div>
             <div className="mono muted technique-note">Run controls remain available even when every attack technique is disabled. Selection is saved in this browser.</div>
           </div>
@@ -290,11 +330,17 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
             }}
           />
         )}
-        {err && <div className="err" style={{ marginTop: 10 }}>{err}</div>}
+        {err && <div className="err agent-error">{err}</div>}
       </div>
 
       <div className="card agent-transcript-card">
         <h3>Transcript</h3>
+        {/* A11Y-7: a polite role=status live region announces the streaming
+            transcript's structural progress (round changes, tool verdicts) and
+            the final run verdict, so screen-reader users follow the loop without
+            reading the whole scroll pane. Visually hidden — the pane is the
+            visual channel. */}
+        <LiveRegion>{transcriptStatus(items)}</LiveRegion>
         <div className="transcript" ref={bodyRef}>
           {!items.length && <div className="empty">Set the objective and arsenal, then run. You can steer, pause, and switch the attacker without losing the conversation.</div>}
           {items.map((item, index) => <Row key={index} it={item} />)}
@@ -358,6 +404,24 @@ function AttackerSwitch({
       {error && <div className="err">{error}</div>}
     </section>
   );
+}
+
+// A11Y-7: derive a short spoken status from the transcript. We announce the most
+// recent structural milestone (round boundary, tool verdict) and always surface
+// the terminal verdict when the run is done, so the live region stays concise.
+function transcriptStatus(items: Item[]): string {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === "done") return `Run ${it.status}${it.summary ? `: ${it.summary}` : ""}.`;
+    if (it.kind === "error") return `Error: ${it.error}`;
+    if (it.kind === "tool_result") {
+      const verdict = it.error ? "error" : it.verdict || "no verdict";
+      return `Tool ${it.name} result: ${verdict}.`;
+    }
+    if (it.kind === "round") return `Round ${it.round} of ${it.max}.`;
+    if (it.kind === "control") return it.text;
+  }
+  return "";
 }
 
 function Row({ it }: { it: Item }) {

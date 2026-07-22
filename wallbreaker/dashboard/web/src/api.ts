@@ -360,19 +360,29 @@ export async function runAgent(
   const reader = r.body.getReader();
   const dec = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const frame = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const line = frame.startsWith("data:") ? frame.replace(/^data:\s?/, "") : frame;
-      if (line) {
-        try { onEvent(JSON.parse(line) as AgentEvent); } catch { /* ignore */ }
+  // Abort mid-stream: cancel the reader so the loop stops promptly (the pending
+  // reader.read() rejects with an AbortError, which the caller treats as an
+  // intentional cancel — see Agent.tsx).
+  const onAbort = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener("abort", onAbort);
+  try {
+    for (;;) {
+      if (signal?.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = frame.startsWith("data:") ? frame.replace(/^data:\s?/, "") : frame;
+        if (line) {
+          try { onEvent(JSON.parse(line) as AgentEvent); } catch { /* ignore */ }
+        }
       }
     }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 
