@@ -3,9 +3,11 @@ import {
   useEffect,
   useState,
   type DragEvent as ReactDragEvent,
-  type MouseEvent as ReactMouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { api, verdictKind, type Finding, type RunModels, type RunSummary } from "../api";
+import { emptyPlaceholder, formatTimestamp, snippet } from "../format";
 
 type FindingColumnId = "time" | "run" | "target" | "verdict" | "technique" | "category" | "payload" | "reason";
 
@@ -46,12 +48,6 @@ function jsonValue(value: unknown, pretty = true): string {
   }
 }
 
-function snippet(value: unknown, len = 180): string {
-  const compact = textValue(value).replace(/\s+/g, " ").trim();
-  if (!compact) return "Not recorded";
-  return compact.length > len ? `${compact.slice(0, len)}...` : compact;
-}
-
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -67,12 +63,12 @@ function chainText(chain: string[] | undefined): string {
 }
 
 function modelsText(models: RunModels | undefined): string {
-  if (!models?.recorded) return "not recorded";
+  if (!models?.recorded) return emptyPlaceholder;
   return [
     models.attacker ? `attacker: ${models.attacker}` : "",
     models.target ? `target: ${models.target}` : "",
     models.judge ? `judge: ${models.judge}` : "",
-  ].filter(Boolean).join("\n") || "not recorded";
+  ].filter(Boolean).join("\n") || emptyPlaceholder;
 }
 
 function reorderColumns(columns: ColumnState[], source: FindingColumnId, target: FindingColumnId): ColumnState[] {
@@ -99,6 +95,7 @@ function fallbackCopy(text: string): boolean {
 
 export function Findings() {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [selectedRuns, setSelectedRuns] = useState<string[]>([]);
   const [rows, setRows] = useState<Finding[] | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -112,22 +109,29 @@ export function Findings() {
     startWidth: number;
   } | null>(null);
 
-  useEffect(() => {
+  const loadRuns = () => {
+    setLoadError("");
     api.findingRuns()
       .then((list) => {
         setRuns(list);
+        setLoadError("");
         const firstWithFindings = list.find((run) => (run.findings ?? run.hits) > 0);
         const first = firstWithFindings || list[0];
         setSelectedRuns(first ? [first.name] : []);
       })
-      .catch(() => {
+      .catch((error) => {
         setRuns([]);
         setSelectedRuns([]);
+        setLoadError(error instanceof Error ? error.message : "Could not load findings.");
       });
-  }, []);
+  };
+  useEffect(() => { loadRuns(); }, []);
 
   useEffect(() => {
     if (runs === null) return;
+    // REL-5: stale-guard so a superseded selectedRuns fetch never overwrites the
+    // rows for the current selection.
+    let active = true;
     setRows(null);
     setExpanded(new Set());
     setOpenJudging(new Set());
@@ -135,12 +139,18 @@ export function Findings() {
       setRows([]);
       return;
     }
-    api.findings(selectedRuns).then(setRows).catch(() => setRows([]));
+    api.findings(selectedRuns)
+      .then((v) => { if (active) setRows(v); })
+      .catch(() => { if (active) setRows([]); });
+    return () => { active = false; };
   }, [runs, selectedRuns]);
 
+  // REL-14: use Pointer Events with a pointercancel/blur fallback so a drag that
+  // ends off-window (or is interrupted) still tears down its listeners and the
+  // body cursor class — the old mouseup-only cleanup could leak.
   useEffect(() => {
     if (!resizing) return;
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (ev: PointerEvent) => {
       const delta = ev.clientX - resizing.startX;
       setColumns((prev) => prev.map((column) => (
         column.id === resizing.id
@@ -148,14 +158,18 @@ export function Findings() {
           : column
       )));
     };
-    const onUp = () => setResizing(null);
+    const stop = () => setResizing(null);
     document.body.classList.add("is-resizing-column");
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", stop);
     return () => {
       document.body.classList.remove("is-resizing-column");
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      window.removeEventListener("blur", stop);
     };
   }, [resizing]);
 
@@ -204,10 +218,32 @@ export function Findings() {
     setDragColumn(null);
   };
 
-  const startColumnResize = (column: ColumnState, ev: ReactMouseEvent<HTMLSpanElement>) => {
+  const startColumnResize = (column: ColumnState, ev: ReactPointerEvent<HTMLButtonElement>) => {
     ev.preventDefault();
     ev.stopPropagation();
+    // setPointerCapture keeps move/up events flowing to the handle even if the
+    // pointer leaves the window during the drag (REL-14).
+    try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch { /* jsdom / unsupported */ }
     setResizing({ id: column.id, startX: ev.clientX, startWidth: column.width });
+  };
+
+  // A11Y-5: keyboard resize — Arrow Left/Right nudge width by 12px (clamped to
+  // minWidth), Home resets to the column default, so the drag-only handle also
+  // works without a pointer.
+  const nudgeColumnWidth = (column: ColumnState, ev: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const STEP = 12;
+    let delta = 0;
+    if (ev.key === "ArrowLeft") delta = -STEP;
+    else if (ev.key === "ArrowRight") delta = STEP;
+    else if (ev.key === "Home") {
+      const def = DEFAULT_COLUMNS.find((c) => c.id === column.id);
+      if (def) { ev.preventDefault(); setColumns((prev) => prev.map((c) => c.id === column.id ? { ...c, width: def.width } : c)); }
+      return;
+    } else return;
+    ev.preventDefault();
+    setColumns((prev) => prev.map((c) => c.id === column.id
+      ? { ...c, width: Math.max(c.minWidth, c.width + delta) }
+      : c));
   };
 
   const copyText = async (key: string, text: string) => {
@@ -237,13 +273,14 @@ export function Findings() {
   const renderCell = (column: ColumnState, finding: Finding, key: string) => {
     switch (column.id) {
       case "time": {
-        const time = finding.ts || finding.run_time || "";
-        return <td key={column.id} className="mono muted clip" title={time}>{time || "unknown"}</td>;
+        const raw = finding.ts || finding.run_time || "";
+        const time = raw ? formatTimestamp(raw) : emptyPlaceholder;
+        return <td key={column.id} className="mono muted clip" title={raw || time}>{time}</td>;
       }
       case "run":
         return <td key={column.id} className="mono clip" title={finding.run}>{finding.run || "latest"}</td>;
       case "target": {
-        const target = finding.models?.target || textValue(finding.target_model) || "not recorded";
+        const target = finding.models?.target || textValue(finding.target_model) || emptyPlaceholder;
         return <td key={column.id} className="mono clip" title={target}>{target}</td>;
       }
       case "verdict":
@@ -255,7 +292,7 @@ export function Findings() {
       case "technique":
         return <td key={column.id} className="mono clip" title={finding.technique}>{finding.technique ?? "manual"}</td>;
       case "category":
-        return <td key={column.id} className="mono muted clip" title={finding.category}>{finding.category ?? "-"}</td>;
+        return <td key={column.id} className="mono muted clip" title={finding.category}>{finding.category ?? emptyPlaceholder}</td>;
       case "payload":
         return (
           <td key={column.id}>
@@ -277,7 +314,15 @@ export function Findings() {
     }
   };
 
-  if (!runs || !rows) return <div className="empty">Loading...</div>;
+  // VIS-3: explicit loading / error / empty states — an error surfaces a Retry
+  // affordance instead of silently rendering "no run logs".
+  if (loadError) return (
+    <div className="async-error err" role="alert">
+      <div className="async-error-msg">Could not load findings: {loadError}</div>
+      <button type="button" className="mini-btn" onClick={loadRuns}>Retry</button>
+    </div>
+  );
+  if (!runs || !rows) return <div className="empty">Loading…</div>;
   if (!runs.length) return <div className="empty">No run logs in sessions/ yet.</div>;
 
   const selectedSet = new Set(selectedRuns);
@@ -316,7 +361,7 @@ export function Findings() {
               >
                 <span className="mono">{run.name}</span>
                 <span className="muted mono">{run.time || "unknown time"}</span>
-                <span className="muted mono">target: {run.models?.target || "not recorded"}</span>
+                <span className="muted mono">target: {run.models?.target || emptyPlaceholder}</span>
                 <span className={`badge ${count ? "bypass" : "neutral"}`}>{count} finding{count === 1 ? "" : "s"}</span>
                 <span className="muted mono">{run.records} records | {fmtBytes(run.size)}</span>
               </button>
@@ -361,10 +406,15 @@ export function Findings() {
                     >
                       <div className="run-th-content">
                         <span>{column.label}</span>
-                        <span
+                        <button
+                          type="button"
                           className="run-column-resize"
-                          title="Drag to resize"
-                          onMouseDown={(ev) => startColumnResize(column, ev)}
+                          title="Drag to resize; arrow keys nudge width, Home resets"
+                          aria-label={`Resize ${column.label} column`}
+                          onPointerDown={(ev) => startColumnResize(column, ev)}
+                          onKeyDown={(ev) => nudgeColumnWidth(column, ev)}
+                          onClick={(ev) => ev.stopPropagation()}
+                          draggable={false}
                         />
                       </div>
                     </th>
@@ -462,13 +512,13 @@ function FindingExpanded({
             </div>
             <div className="finding-kv-list">
               <div><b>Technique</b><span className="mono">{technique.technique || finding.technique || "manual"}</span></div>
-              <div><b>Source tool</b><span className="mono">{technique.source_tool || "not recorded"}</span></div>
+              <div><b>Source tool</b><span className="mono">{technique.source_tool || emptyPlaceholder}</span></div>
               <div><b>Preset</b><span className="mono">{technique.preset || "none recorded"}</span></div>
               <div><b>Prompt chain</b><span className="mono">{chainText(technique.transforms?.prompt)}</span></div>
               <div><b>System chain</b><span className="mono">{chainText(technique.transforms?.system)}</span></div>
               <div><b>Response chain</b><span className="mono">{chainText(technique.transforms?.response)}</span></div>
               <div><b>Think seed</b><span className="mono">{technique.think_seed || "none recorded"}</span></div>
-              <div><b>Max tokens</b><span className="mono">{textValue(technique.max_tokens) || "not recorded"}</span></div>
+              <div><b>Max tokens</b><span className="mono">{textValue(technique.max_tokens) || emptyPlaceholder}</span></div>
             </div>
             <div className="finding-subpanel">
               <b>Template / instructions</b>

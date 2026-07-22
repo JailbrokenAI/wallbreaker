@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api, verdictKind, type ComposeResult, type Preset, type Transform, type FireResult } from "../api";
+import { InteractiveChip } from "../primitives/InteractiveChip";
+import { LiveRegion } from "../primitives/LiveRegion";
 
 type BusyAction = "compose" | "fire" | "firePayload" | null;
 
@@ -28,8 +30,17 @@ export function Console({ hasTarget }: { hasTarget: boolean }) {
   const [payload, setPayload] = useState("");
   const [res, setRes] = useState<FireResult | null>(null);
   const [err, setErr] = useState("");
+  const [loadErr, setLoadErr] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
   const busyRef = useRef(false);
+  // A11Y-10/A11Y-11: stable ids associate each label with its control (htmlFor/id)
+  // and link the max-tokens helper text to the number input via aria-describedby.
+  const ids = useId();
+  const requestId = `${ids}-request`;
+  const presetId = `${ids}-preset`;
+  const systemId = `${ids}-system`;
+  const maxTokensId = `${ids}-maxtokens`;
+  const maxTokensHelpId = `${ids}-maxtokens-help`;
 
   function begin(action: Exclude<BusyAction, null>): boolean {
     if (busyRef.current) return false;
@@ -44,8 +55,14 @@ export function Console({ hasTarget }: { hasTarget: boolean }) {
   }
 
   useEffect(() => {
-    api.presets().then(setPresets).catch(() => {});
-    api.transforms().then(setTransforms).catch(() => {});
+    // VIS-3: surface a load error for the arsenal lists instead of silently
+    // rendering an empty preset picker / transform chip group.
+    Promise.all([
+      api.presets().then(setPresets),
+      api.transforms().then(setTransforms),
+    ])
+      .then(() => setLoadErr(""))
+      .catch((e) => setLoadErr(e instanceof Error ? e.message : "Could not load presets/transforms."));
   }, []);
 
   function toggle(name: string) {
@@ -152,31 +169,43 @@ export function Console({ hasTarget }: { hasTarget: boolean }) {
       <div className="card">
         <h3>Compose attack</h3>
         {!hasTarget && <div className="err">No [target] configured in config.toml - firing is disabled.</div>}
-        <label className="fld">Request</label>
-        <textarea rows={5} value={request} placeholder="the harmful ask to test..." onChange={(e) => setRequest(e.target.value)} />
-        <label className="fld">Preset (wraps the request)</label>
-        <select value={preset} onChange={(e) => setPreset(e.target.value)}>
+        {loadErr && <div className="err" role="alert">Could not load presets/transforms: {loadErr}</div>}
+        <label className="fld" htmlFor={requestId}>Request</label>
+        <textarea id={requestId} rows={5} value={request} placeholder="the harmful ask to test..." onChange={(e) => setRequest(e.target.value)} />
+        <label className="fld" htmlFor={presetId}>Preset (wraps the request)</label>
+        <select id={presetId} value={preset} onChange={(e) => setPreset(e.target.value)}>
           <option value="">none (send raw)</option>
           {presets.map((p) => <option key={p.name} value={p.name}>{p.name} - {p.description.slice(0, 60)}</option>)}
         </select>
-        <label className="fld">Encoding transforms ({picked.length} on)</label>
-        <div className="chips">
+        {/* A11Y-3: transform chips are real <button aria-pressed> toggles via the
+            InteractiveChip primitive, so they are keyboard-operable and announced
+            as pressed/unpressed. The group is labelled for assistive tech. */}
+        <span className="fld" id={`${ids}-transforms-label`}>Encoding transforms ({picked.length} on)</span>
+        <div className="chips" role="group" aria-labelledby={`${ids}-transforms-label`}>
           {transforms.map((t) => (
-            <span key={t.name} className={`chip ${picked.includes(t.name) ? "on" : ""}`} title={t.description} onClick={() => toggle(t.name)}>
+            <InteractiveChip
+              key={t.name}
+              selected={picked.includes(t.name)}
+              onToggle={() => toggle(t.name)}
+              title={t.description}
+            >
               {t.name}
-            </span>
+            </InteractiveChip>
           ))}
         </div>
-        <label className="fld">System prompt (optional)</label>
-        <textarea rows={2} value={system} placeholder="optional target system prompt..." onChange={(e) => setSystem(e.target.value)} />
-        <label className="fld">Max tokens</label>
+        <label className="fld" htmlFor={systemId}>System prompt (optional)</label>
+        <textarea id={systemId} rows={2} value={system} placeholder="optional target system prompt..." onChange={(e) => setSystem(e.target.value)} />
+        <label className="fld" htmlFor={maxTokensId}>Max tokens</label>
         <input
+          id={maxTokensId}
           type="number"
           min={1}
           step={1}
+          aria-describedby={maxTokensHelpId}
           value={maxTokens}
           onChange={(e) => setMaxTokens(Math.max(1, Number.parseInt(e.target.value || "0", 10) || 1))}
         />
+        <div id={maxTokensHelpId} className="mono muted">Minimum 1. Caps the target response length for this fire.</div>
         <div className="console-actions">
           <button type="button" className="mini-btn console-build" disabled={!canBuild} onClick={compose}>
             {busy === "compose" ? "Building..." : "Build payload"}
@@ -185,7 +214,6 @@ export function Console({ hasTarget }: { hasTarget: boolean }) {
             {busy === "fire" ? "Firing..." : "Fire at target"}
           </button>
         </div>
-        {err && <div className="err console-err">{err}</div>}
       </div>
 
       <div className="console-side">
@@ -228,7 +256,7 @@ export function Console({ hasTarget }: { hasTarget: boolean }) {
         <div className="card">
           <div className="console-card-head">
             <h3>
-              Response{res?.verdict ? <span className={`badge ${verdictKind(res.verdict)}`} style={{ marginLeft: 10 }}>{res.verdict}</span> : null}
+              Response{res?.verdict ? <span className={`badge inline-badge ${verdictKind(res.verdict)}`}>{res.verdict}</span> : null}
             </h3>
             <div className="run-actions">
               {res?.run_log && <span className="mono muted">saved: {res.run_log}</span>}
@@ -237,8 +265,27 @@ export function Console({ hasTarget }: { hasTarget: boolean }) {
               </button>
             </div>
           </div>
-          {!res && !err && <div className="empty">No response yet.</div>}
-          {res && <pre className={`resp ${res.is_error ? "is-error" : ""}`}>{responseText}</pre>}
+          {/* VIS-5: reserve a min-height on the response body so a result popping
+              in (or an error/loading swap) doesn't reflow the panel below it. */}
+          <div className="console-response-body">
+            {busy === "fire" || busy === "firePayload"
+              ? <div className="empty">Firing at target…</div>
+              : err
+                ? <div className="err console-err" role="alert">{err}</div>
+                : !res
+                  ? <div className="empty">No response yet.</div>
+                  : <pre className={`resp ${res.is_error ? "is-error" : ""}`}>{responseText}</pre>}
+          </div>
+          {/* A11Y-7: announce the fire outcome (verdict + arrival) via a polite
+              role=status live region so screen-reader users learn the result
+              without polling the response pane. */}
+          <LiveRegion>
+            {busy === "fire" || busy === "firePayload"
+              ? "Firing payload at target…"
+              : res
+                ? `Response received${res.verdict ? `, verdict ${res.verdict}` : ""}.`
+                : ""}
+          </LiveRegion>
         </div>
       </div>
     </div>

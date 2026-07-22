@@ -7,13 +7,21 @@
   --brand-dim: #b32a32;
   --accent: #2de2c8;
   --text: #ece0e1;
-  --muted: #a07478;
-  --dim: #74595d;
+  --muted: #b98d91;
+  /* A11Y-9: --dim lightened from #74595d (~3.8:1) to #9a7d80 (~4.6:1 on --bg) so
+     dim body/helper text meets WCAG 2.2 AA 4.5:1 contrast. --disabled-fg is a
+     distinct disabled foreground (~4.5:1) used in place of pure opacity:0.45,
+     which dropped disabled controls below the contrast floor. */
+  --dim: #9a7d80;
+  --disabled-fg: #8f7376;
   --good: #56d364;
   --warn: #e8a33d;
   --bad: #ff4d4d;
   --violet: #c77dff;
   --border: #3a2126;
+  /* VIS-2: foreground for text sitting on the brand-gradient buttons (was a raw
+     #fff literal in button.fire). */
+  --on-brand: #ffffff;
   --radius: 10px;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
@@ -103,7 +111,7 @@ body.is-resizing-column * {
   padding: 12px 22px; border-bottom: 1px solid var(--border);
   background: rgba(23, 16, 15, 0.6); backdrop-filter: blur(6px);
 }
-.topbar .title { font-size: 18px; font-weight: 700; }
+.topbar .title { margin: 0; font-size: 18px; font-weight: 700; }
 .topbar .meta { margin-left: auto; display: flex; gap: 18px; align-items: center; color: var(--muted); }
 .topbar .meta b { color: var(--text); }
 .topbar .meta .accent { color: var(--accent); }
@@ -159,7 +167,9 @@ body.is-resizing-column * {
 }
 .card h3 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--violet); }
 
-.stat { display: flex; flex-direction: column; gap: 4px; }
+/* VIS-5: reserve a min-height on the overview stat cards so the async scorecard
+   values popping in don't reflow the grid below them. */
+.stat { display: flex; flex-direction: column; gap: 4px; min-height: 96px; justify-content: center; }
 .stat .num { font-size: 30px; font-weight: 800; font-family: var(--mono); }
 .stat .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
 .stat .num.accent { color: var(--accent); }
@@ -451,15 +461,25 @@ tr:hover td { background: var(--panel); }
 }
 .run-column-resize {
   align-self: stretch;
+  /* A11Y-12: the visible grip stays a thin rule, but transparent side padding
+     expands the interactive hit area to >=24px wide and the min-height to 24px
+     so the touch target clears the WCAG 2.2 (2.5.8) 24x24 minimum. A11Y-5: it is
+     now a focusable <button> with an arrow-key width nudge (see Runs/Findings). */
+  border: 0;
   border-right: 2px solid var(--border);
+  background: transparent;
   cursor: col-resize;
-  flex: 0 0 10px;
+  flex: 0 0 24px;
   margin: -2px -6px -2px 0;
-  min-height: 18px;
+  min-height: 24px;
+  padding: 0 11px;
   opacity: 0.8;
 }
-.run-column-resize:hover { border-color: var(--accent); opacity: 1; }
+.run-column-resize:hover,
+.run-column-resize:focus-visible { border-color: var(--accent); opacity: 1; outline: none; }
+.run-column-resize:focus-visible { border-right-width: 3px; }
 .run-record-row { cursor: pointer; }
+.run-open-row { cursor: pointer; }
 .run-record-row.expanded td { background: var(--panel); }
 .run-detail-cell {
   display: flex;
@@ -520,7 +540,10 @@ tr:hover td { background: var(--panel); }
 }
 .mini-btn:disabled {
   cursor: default;
-  opacity: 0.45;
+  /* A11Y-9: a distinct disabled foreground keeps the label above the 4.5:1
+     contrast floor; a light opacity trims the border/background instead. */
+  color: var(--disabled-fg);
+  opacity: 0.85;
 }
 .run-expanded-row td {
   background: var(--panel);
@@ -683,7 +706,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
   padding: 12px;
 }
-.role-menu label, .form-grid label {
+.role-menu label, .role-menu-fields label, .form-grid label {
   display: grid;
   gap: 5px;
   color: var(--muted);
@@ -702,12 +725,16 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
   font-weight: 800;
   padding: 9px 13px;
 }
-.primary-command:disabled { cursor: default; opacity: 0.45; }
-.role-menu .primary-command { width: 100%; margin-top: 10px; }
+.primary-command:disabled { cursor: default; color: var(--disabled-fg); border-color: var(--border); background: var(--panel); }
+.role-menu .primary-command,
+.role-menu-fields .primary-command { width: 100%; margin-top: 10px; }
 
 /* ---- provider settings ---- */
 .settings-grid { max-width: 1180px; }
 .settings-wide { grid-column: 1 / -1; }
+/* VIS-2: token/class-driven helper note sizing (was inline fontSize/marginTop). */
+.settings-note { font-size: 12px; }
+.settings-note-spaced { margin-top: 12px; }
 .settings-drawer { overflow: hidden; }
 .settings-drawer > summary {
   display: flex;
@@ -760,7 +787,8 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 .connection-result.error { color: var(--bad); }
 .editor-heading { margin-bottom: 12px; }
 .editor-heading button { width: 30px; height: 30px; padding: 0; font-size: 18px; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+/* VIS-2: fieldset reset folded into the class (was an inline style on the tag). */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; border: 0; margin: 0; padding: 0; min-width: 0; }
 .form-grid .wide { grid-column: 1 / -1; }
 .editor-actions { justify-content: flex-end; margin-top: 8px; }
 .editor-actions .primary-command { color: var(--accent); }
@@ -807,7 +835,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 }
 .model-chooser-toggle:hover:not(:disabled),
 .model-chooser-toggle:focus-visible:not(:disabled) { color: var(--accent); outline: none; }
-.model-chooser-toggle:disabled { cursor: default; opacity: 0.45; }
+.model-chooser-toggle:disabled { cursor: default; color: var(--disabled-fg); }
 .model-chooser-menu {
   position: absolute;
   z-index: 40;
@@ -963,7 +991,7 @@ textarea:focus, input:focus, select:focus { outline: none; border-color: var(--a
 }
 button.fire {
   margin-top: 14px; width: 100%; padding: 11px; border-radius: 8px; cursor: pointer;
-  background: linear-gradient(90deg, var(--brand-dim), var(--brand)); color: #fff;
+  background: linear-gradient(90deg, var(--brand-dim), var(--brand)); color: var(--on-brand);
   border: none; font-weight: 800; letter-spacing: 1px; font-size: 14px;
 }
 button.fire:disabled { opacity: 0.5; cursor: default; }
@@ -1003,6 +1031,12 @@ button.fire:disabled { opacity: 0.5; cursor: default; }
 }
 .resp.is-error { color: var(--bad); }
 .console-err { margin-top: 10px; }
+/* VIS-2: inline badge spacing next to a heading (was an inline marginLeft). */
+.inline-badge { margin-left: 10px; }
+/* VIS-5: reserve vertical space for the response body so a result/error/loading
+   swap doesn't reflow the panel underneath it. */
+.console-response-body { min-height: 96px; }
+.console-response-body .empty { padding: 28px 40px; }
 @media (max-width: 640px) {
   .console-actions { grid-template-columns: 1fr; }
   .console-card-head { align-items: flex-start; flex-direction: column; }
@@ -1010,6 +1044,8 @@ button.fire:disabled { opacity: 0.5; cursor: default; }
 }
 
 .err { color: var(--bad); font-family: var(--mono); font-size: 12px; }
+/* VIS-2: spacing for the agent launch-card error (was an inline marginTop). */
+.agent-error { margin-top: 10px; }
 .empty { color: var(--dim); padding: 40px; text-align: center; }
 .section-title { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; }
 .section-title h2 { margin: 0; font-size: 16px; }
@@ -1122,7 +1158,9 @@ button.fire:disabled { opacity: 0.5; cursor: default; }
 .attacker-switch-grid label { min-width: 0; }
 .attacker-switch-grid label > span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
 .attacker-switch-grid .primary-command { min-height: 38px; white-space: nowrap; }
-.transcript { flex: 1; overflow-y: auto; padding-right: 6px; display: flex; flex-direction: column; gap: 8px; }
+/* VIS-5: min-height reserves transcript space so the panel doesn't collapse to
+   the empty prompt height and then jump when the first events stream in. */
+.transcript { flex: 1; min-height: 240px; overflow-y: auto; padding-right: 6px; display: flex; flex-direction: column; gap: 8px; }
 .t-start { color: var(--muted); font-size: 12px; }
 .t-start b { color: var(--text); }
 .agent-run-log { margin-left: auto; color: var(--muted); font-size: 12px; text-decoration: none; }
@@ -1140,6 +1178,15 @@ button.fire:disabled { opacity: 0.5; cursor: default; }
 .t-result.neutral { border-left-color: var(--dim); }
 .t-result-head { padding: 7px 10px; border-bottom: 1px solid var(--panel); display: flex; align-items: center; gap: 8px; }
 .t-result-head b { color: var(--tool_result, var(--violet)); }
+/* A11Y-8: the border-left color stripe is a color-only cue, so pair it with a
+   non-color shape glyph before the tool name. Each verdict gets a distinct
+   symbol (▲ bypass, ◆ partial, ● held/refused, ○ neutral) that survives
+   grayscale / color-blindness. Decorative, so hidden from assistive tech. */
+.t-result-head::before { font-family: var(--mono); font-size: 12px; line-height: 1; }
+.t-result.bypass .t-result-head::before { content: "\25B2"; color: var(--bad); }
+.t-result.partial .t-result-head::before { content: "\25C6"; color: var(--warn); }
+.t-result.held .t-result-head::before { content: "\25CF"; color: var(--good); }
+.t-result.neutral .t-result-head::before { content: "\25CB"; color: var(--dim); }
 .t-result-body { padding: 8px 10px; white-space: pre-wrap; font-size: 12px; line-height: 1.5; color: var(--muted); max-height: 280px; overflow-y: auto; }
 .t-progress { color: var(--dim); font-size: 11.5px; }
 .t-feedback { color: var(--violet); font-size: 12px; }
@@ -1168,7 +1215,11 @@ button.fire:disabled { opacity: 0.5; cursor: default; }
 /* ---- interactive arsenal ---- */
 .arsenal-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.7fr); gap: 16px; align-items: start; }
 .arsenal-list-card { min-width: 0; }
+/* VIS-2: kind-tab row uses a slightly wider gap than the default section-title. */
+.arsenal-kind-tabs { gap: 16px; }
 .arsenal-table-wrap { max-height: calc(100vh - 245px); overflow: auto; }
+/* VIS-2: token-driven accent color for the name column (was an inline style). */
+.arsenal-row td.accent { color: var(--accent); }
 .arsenal-row { cursor: pointer; }
 .arsenal-row:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
 .arsenal-row.selected td { background: rgba(45, 226, 200, 0.08); }
@@ -1190,3 +1241,76 @@ button.fire:disabled { opacity: 0.5; cursor: default; }
 ::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--brand-dim); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* --- TG6 shared primitives ------------------------------------------------- */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.async-error {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--brand-dim); border-radius: var(--radius);
+  background: rgba(255, 59, 71, 0.08);
+}
+.async-error-msg { flex: 1; }
+.live-region { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+.dialog-root {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+}
+.dialog-backdrop { position: absolute; inset: 0; background: rgba(4, 2, 3, 0.66); }
+.dialog-panel {
+  position: relative; z-index: 1; max-width: 560px; width: min(92vw, 560px);
+  max-height: 86vh; overflow-y: auto; padding: 20px 22px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.dialog-title { margin: 0 0 12px; }
+
+.combobox { position: relative; }
+.combobox-listbox {
+  position: absolute; z-index: 20; left: 0; right: 0; margin: 4px 0 0; padding: 4px; list-style: none;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  max-height: 260px; overflow-y: auto;
+}
+.combobox-listbox li {
+  padding: 6px 10px; border-radius: 6px; cursor: pointer; font-family: var(--mono); font-size: 12px;
+}
+.combobox-listbox li.active, .combobox-listbox li[aria-selected="true"] {
+  background: rgba(45, 226, 200, 0.14); color: var(--accent);
+}
+
+/* --- A11Y-6: reduced motion -------------------------------------------------
+   Honour the OS "reduce motion" preference by zeroing every CSS transition and
+   animation. The Agent transcript's programmatic auto-scroll is separately gated
+   in Agent.tsx (jumps instantly instead of smooth-scrolling) under the same
+   media query. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --- A11Y-13: skip-to-content link ------------------------------------------
+   Visually hidden until focused, then it pins to the top-left so keyboard users
+   can jump past the nav rail straight to <main>. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  z-index: 100;
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 700;
+  transition: top 120ms ease;
+}
+.skip-link:focus { top: 8px; outline: none; }
