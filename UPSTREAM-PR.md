@@ -101,28 +101,25 @@ trail (`wallbreaker-audit.md`, `CHANGELOG.md`, `GATE-4-CLOSURE.md`).
 
 ---
 
-## Applying the security fixes via `agent_dashboard_harden`
+## If this PR is not merged
 
-If you are running `JailbrokenAI/wallbreaker` and cannot apply this PR yet, the
-`agent_dashboard_harden` package (in the fork at `pt-act/wallbreaker`) provides the same
-security layer as a stand-alone installable:
+If you are running `JailbrokenAI/wallbreaker` and this PR is not yet merged, the fastest path
+to protection is to switch to the fork directly:
 
 ```bash
-# Install the hardening shim directly from the fork
-pip install "git+https://github.com/pt-act/wallbreaker.git#subdirectory=agent_dashboard_harden"
-
-# Then wrap your dashboard launch:
-python -m agent_dashboard_harden.serve [your existing wallbreaker dashboard args]
+pip install "git+https://github.com/pt-act/wallbreaker.git@main"
 ```
 
-`agent_dashboard_harden` ships:
-- `SecurityMiddleware` (auth + CSRF gate)
-- `PinnedEgressBackend` (DNS-rebind-resistant SSRF guard)  
-- `build_dashboard_registry` (tool exposure policy)
-- Path-confinement helpers (`_fsutil.py`)
+The fork (`pt-act/wallbreaker`) is API-compatible with the upstream and carries the full
+remediation on `main`. A reusable hardening toolkit (`agent_dashboard_harden`) is also
+available on the fork's `main` branch for projects that want to import the security
+primitives (`SecurityMiddleware`, `PinnedEgressBackend`, `build_dashboard_registry`) directly
+into their own FastAPI apps — but **that package is not included in this upstream PR branch**,
+which carries only the audit-remediation commits.
 
-It is the **fallback delivery vehicle** (R-C1) if this upstream PR is not merged:
-operators of `JailbrokenAI/wallbreaker` can layer the protections without forking.
+> **Note to reviewers:** `agent_dashboard_harden` lives on `pt-act/wallbreaker:main`
+> (commit `53c9ca2`), not on this branch. This PR contains only the three audit-remediation
+> PRs (#1/#2/#3) merged to `6822499`.
 
 ---
 
