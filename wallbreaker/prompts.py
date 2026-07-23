@@ -607,7 +607,8 @@ def compose_system(endpoint, base: str | None = None) -> str:
     )
     if spf and os.path.isfile(spf):
         try:
-            text = open(spf, encoding="utf-8").read().strip()
+            with open(spf, encoding="utf-8") as _fh:
+                text = _fh.read().strip()
         except OSError:
             text = ""
         if text:

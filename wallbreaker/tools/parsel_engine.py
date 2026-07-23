@@ -25,9 +25,18 @@ degrade to an actionable message instead of a traceback; the pure-Python
 from __future__ import annotations
 
 import asyncio
+import sys
+from pathlib import Path
 from typing import Any
 
 from .registry import ToolContext, ToolRegistry
+
+# ---------------------------------------------------------------------------
+# Default path to the corpus lock file (repo root / library.lock.toml)
+# parsel_engine.py is at <repo>/wallbreaker/tools/parsel_engine.py so
+# parents[2] == <repo root>
+# ---------------------------------------------------------------------------
+_DEFAULT_LOCK_PATH: Path = Path(__file__).resolve().parents[2] / "library.lock.toml"
 
 try:
     from p4rs3lt0ngv3_mcp import bridge, format
@@ -499,3 +508,60 @@ def register(registry: ToolRegistry) -> None:
         },
         handler=_craft,
     )
+
+
+# ---------------------------------------------------------------------------
+# Supply-chain corpus pinning (TG3 / item D)
+# ---------------------------------------------------------------------------
+
+def verify_corpus_sha(*, pinned: str, actual: str) -> bool:
+    """Return True if pinned == actual (corpus may load), False otherwise (fail closed).
+
+    This is the integrity gate: a corpus whose HEAD SHA differs from the pin is refused.
+    Called by the corpus loader after resolving the actual HEAD SHA.
+    """
+    return pinned == actual
+
+
+def load_corpus_with_pin_check(
+    corpus_name: str,
+    lock_path: str | Path | None = None,
+) -> str:
+    """Verify the corpus SHA against library.lock.toml before loading.
+
+    Returns the pinned SHA string if the corpus entry is found and has a resolved
+    (non-UNRESOLVED) SHA.  Actual git HEAD resolution happens in the CLI; this
+    function is the gate used at load time.
+
+    Raises RuntimeError if:
+    - corpus_name not found in lock file
+    - SHA is "UNRESOLVED" (not yet pinned — refuse to load in production)
+
+    DNS/network failures during actual HEAD resolution raise RuntimeError (fail closed).
+    """
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        try:
+            import tomllib  # type: ignore[import]
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-reattr]
+
+    path = Path(lock_path) if lock_path is not None else _DEFAULT_LOCK_PATH
+    with path.open("rb") as fh:
+        data = tomllib.load(fh)
+
+    corpora: dict = data.get("corpus", {})
+    if corpus_name not in corpora:
+        raise RuntimeError(
+            f"corpus {corpus_name!r} not in library.lock.toml"
+        )
+
+    entry = corpora[corpus_name]
+    sha: str = entry.get("sha", "UNRESOLVED")
+    if sha == "UNRESOLVED":
+        raise RuntimeError(
+            f"corpus {corpus_name!r} SHA not yet pinned — run: wallbreaker corpus verify --update"
+        )
+
+    return sha

@@ -14,6 +14,11 @@ config.toml
 .wallbreaker_models.sqlite3-shm
 .wallbreaker_models.sqlite3-wal
 .rth_state.json
+# credentials / tokens — never commit (GitHub PATs, API keys, dashboard launch token)
+gh_token.txt
+*_token.txt
+*.pat
+.wallbreaker_dashboard_token
 
 # user presets (example.toml is the documented template, tracked)
 presets/*.toml
@@ -72,3 +77,4 @@ wallbreaker/dashboard/web/vite.config.d.ts
 .serena/
 *.log
 .DS_Store
+wallbreaker/dashboard/web/node_modules/

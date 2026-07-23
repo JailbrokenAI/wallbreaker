@@ -1,4 +1,5 @@
 import type { Overview as OverviewT } from "../api";
+import { AsyncView, type AsyncStatus } from "../primitives/AsyncView";
 
 function Bars({ data }: { data: Record<string, { hits: number; total: number }> }) {
   const rows = Object.entries(data)
@@ -19,8 +20,32 @@ function Bars({ data }: { data: Record<string, { hits: number; total: number }> 
   );
 }
 
-export function Overview({ ov }: { ov: OverviewT | null }) {
-  if (!ov) return <div className="empty">Loading…</div>;
+export function Overview({
+  ov,
+  status = ov ? "data" : "loading",
+  error = null,
+  onRetry,
+}: {
+  ov: OverviewT | null;
+  status?: AsyncStatus;
+  error?: string | null;
+  onRetry?: () => void;
+}) {
+  // REL-9: a failed overview load shows an error card + Retry via AsyncView,
+  // never a permanent "Loading…" spinner (the old `if (!ov)` bug).
+  return (
+    <AsyncView<OverviewT>
+      status={status === "data" && !ov ? "loading" : status}
+      data={ov ?? undefined}
+      error={error}
+      onRetry={onRetry}
+    >
+      {(data) => <OverviewBody ov={data} />}
+    </AsyncView>
+  );
+}
+
+function OverviewBody({ ov }: { ov: OverviewT }) {
   const sc = ov.scorecard || {};
   const asr = typeof sc.asr === "number" ? `${Math.round(sc.asr * 100)}%` : "—";
   const byTech = (sc.by_technique || {}) as Record<string, { hits: number; total: number }>;

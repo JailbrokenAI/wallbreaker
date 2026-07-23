@@ -19,7 +19,8 @@ classifiers = [
     "Intended Audience :: Information Technology",
 ]
 dependencies = [
-    "httpx[http2]>=0.27",
+    # private-attr dependency: see wallbreaker/tools/egress_guard.py make_pinned_transport self-check
+    "httpx[http2]>=0.27,<0.29",
     "textual>=0.79",
     "rich>=13.7",
     "mcp>=1.0",
@@ -34,6 +35,7 @@ Repository = "https://github.com/JailbrokenAI/wallbreaker"
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "hypothesis>=6.0",
 ]
 barcodes = [
     "qrcode[pil]>=7.4",
@@ -54,7 +56,7 @@ wb = "wallbreaker.cli:main"
 p4rs3lt0ngv3-mcp = "p4rs3lt0ngv3_mcp.server:main"
 
 [tool.setuptools.packages.find]
-include = ["wallbreaker*", "p4rs3lt0ngv3_mcp*"]
+include = ["wallbreaker*", "p4rs3lt0ngv3_mcp*", "agent_dashboard_harden*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

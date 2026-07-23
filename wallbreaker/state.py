@@ -2,9 +2,22 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
+import os
+import threading
 from pathlib import Path
 
+from ._fsutil import atomic_write
+
 STATE_FILENAME = ".wallbreaker_state.json"
+
+_log = logging.getLogger("wallbreaker.state")
+
+# Serialize read-modify-write within a single process (dashboard + TUI can both write the
+# shared flat-namespace state file — see the [state] lesson in CLAUDE.md). Cross-process
+# safety comes from the atomic os.replace in _atomic_write below (a reader always sees a
+# whole old or whole new file, never a torn/empty one).
+_state_lock = threading.RLock()
 
 
 def state_path_for(config) -> Path:
@@ -13,19 +26,41 @@ def state_path_for(config) -> Path:
 
 
 def load_state(path: str | Path) -> dict:
-    try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    p = Path(path)
+    if not p.exists():
         return {}
-
-
-def save_state(path: str | Path, prefs: dict) -> None:
     try:
-        Path(path).write_text(
-            json.dumps(prefs, ensure_ascii=False, indent=1), encoding="utf-8"
-        )
-    except OSError:
-        pass
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except OSError as exc:  # unreadable file — surface, don't silently wipe
+        _log.warning("could not read state file %s: %s", p, exc)
+        return {}
+    except ValueError as exc:  # corrupt/torn JSON — a real error, not "empty"
+        _log.warning("state file %s is corrupt (%s); treating as empty", p, exc)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_state(path: str | Path, prefs: dict) -> bool:
+    """Atomically persist prefs. Returns True on success (callers that ignore the return
+    value keep their old behaviour); logs instead of silently swallowing on failure."""
+    text = json.dumps(prefs, ensure_ascii=False, indent=1)
+    with _state_lock:
+        try:
+            atomic_write(Path(path), text)
+            return True
+        except OSError as exc:
+            _log.warning("could not save state file %s: %s", path, exc)
+            return False
+
+
+def save_state_merge(path: str | Path, updates: dict) -> bool:
+    """Read-modify-write under a lock, merging `updates` into the on-disk state instead of
+    clobbering the whole dict. Prevents lost updates when two writers (e.g. the dashboard
+    and the TUI) touch disjoint keys concurrently."""
+    with _state_lock:
+        current = load_state(path)
+        current.update(updates)
+        return save_state(path, current)
 
 
 def apply_attacker(config, endpoint, prefs: dict):

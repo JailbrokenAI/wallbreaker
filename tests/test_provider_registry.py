@@ -21,7 +21,7 @@ def _config(tmp_path):
 
 def test_provider_crud_redacts_key_and_updates_env(tmp_path):
     cfg = _config(tmp_path)
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
     response = client.put("/api/providers/custom", json={
         "protocol": "openai",
         "base_url": "https://custom.example/v1/",
@@ -75,7 +75,7 @@ def test_provider_can_be_saved_and_tested_without_default_model(monkeypatch, tmp
         }
 
     monkeypatch.setattr(server_mod, "_discover_profile_models", discover)
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
     saved = client.put("/api/providers/catalog-only", json={
         "protocol": "openai",
         "base_url": "https://catalog.example/v1",
@@ -101,7 +101,7 @@ def test_provider_can_be_saved_and_tested_without_default_model(monkeypatch, tmp
 
 def test_config_provider_can_be_edited_like_any_other_provider(tmp_path):
     cfg = _config(tmp_path)
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
     changed = client.put("/api/providers/base", json={"model": "override-model"})
     assert changed.json()["model"] == "override-model"
     assert cfg.profiles["base"].model == "override-model"
@@ -111,7 +111,7 @@ def test_config_provider_can_be_edited_like_any_other_provider(tmp_path):
 
 def test_config_provider_can_be_disabled_then_enabled(tmp_path):
     cfg = _config(tmp_path)
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
 
     assert client.put("/api/providers/other", json={
         "protocol": "openai", "base_url": "https://other.example/v1", "model": "other-model",
@@ -137,7 +137,7 @@ def test_config_provider_can_be_disabled_then_enabled(tmp_path):
 
 def test_config_provider_can_be_removed_and_recreated(tmp_path):
     cfg = _config(tmp_path)
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
 
     added = client.put("/api/providers/other", json={
         "protocol": "openai", "base_url": "https://other.example/v1", "model": "other-model",
@@ -161,7 +161,7 @@ def test_config_provider_can_be_removed_and_recreated(tmp_path):
 def test_roles_are_independent_and_persisted(tmp_path):
     cfg = _config(tmp_path)
     cfg.profiles["other"] = Endpoint("other", "anthropic", "https://other.example", "other-default")
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
     assert client.put("/api/roles/attacker", json={"provider": "other", "model": "attack-x"}).status_code == 200
     assert client.put("/api/roles/target", json={"provider": "base", "model": "target-x"}).status_code == 200
     roles = client.get("/api/roles").json()
@@ -190,12 +190,12 @@ def test_dashboard_removes_obsolete_provider_research_state(tmp_path):
         "research_agent_max_tokens": 12000,
     }), encoding="utf-8")
 
-    TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
     assert json.loads(state_path.read_text(encoding="utf-8")) == {}
 
 
 def test_provider_validation_and_localhost_cors(tmp_path):
-    client = TestClient(create_app(config=_config(tmp_path), sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=_config(tmp_path), sessions_dir=tmp_path / "sessions", require_auth=False))
     bad = client.put("/api/providers/nope", json={"protocol": "unknown", "model": "x"})
     assert bad.status_code == 400
     allowed = client.options("/api/providers", headers={

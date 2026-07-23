@@ -2,31 +2,34 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   runAgent,
-  verdictKind,
   type AgentConfig,
   type AgentEvent,
-  type AgentProfile,
   type Tool,
 } from "../api";
 import { AgentConfigDrawer, DEFAULT_AGENT_CONFIG, normalizeAgentConfig } from "./AgentConfigDrawer";
-import { ModelChooser } from "./ModelChooser";
-import { ProviderChooser } from "./ProviderChooser";
+import { isAbortError, useAbortableFetch } from "../primitives/useAbortableFetch";
+import { LiveRegion } from "../primitives/LiveRegion";
+import { AttackerSwitch, Row, transcriptStatus, type Item } from "./AgentTranscript";
 
-type Item =
-  | { kind: "text"; text: string }
-  | { kind: "round"; round: number; max: number }
-  | { kind: "tool_start"; name: string; args: string }
-  | { kind: "tool_result"; name: string; content: string; error: boolean; verdict: string }
-  | { kind: "progress"; text: string }
-  | { kind: "feedback"; text: string }
-  | { kind: "control"; text: string }
-  | { kind: "start"; brain: string; target: string }
-  | { kind: "done"; status: string; summary: string }
-  | { kind: "error"; error: string };
+// A11Y-6: honour prefers-reduced-motion for the transcript's programmatic
+// auto-scroll — jump instantly (no smooth animation) when the user asked to
+// reduce motion. Guarded for jsdom where matchMedia may be undefined.
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
-const DONE_KIND: Record<string, "bypass" | "held" | "neutral" | "error"> = {
-  finished: "bypass", ask: "neutral", stuck: "neutral", max_rounds: "held", error: "error",
-};
+// VIS-5: treat the transcript as "pinned to bottom" when the scroll position is
+// within a small threshold of the end. A user who has scrolled up sits far above
+// the bottom, so streaming events won't yank the viewport back down.
+const PIN_THRESHOLD_PX = 40;
+function isPinnedToBottom(el: HTMLElement | null): boolean {
+  if (!el) return true; // no pane yet (initial render) — follow by default
+  const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distance <= PIN_THRESHOLD_PX;
+}
+
 const TECHNIQUE_STORE = "wallbreaker.agentTechniques";
 
 function storedTechniques(): string[] | null {
@@ -54,9 +57,11 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
   const [runLog, setRunLog] = useState("");
   const [savingConfig, setSavingConfig] = useState(false);
   const [configStatus, setConfigStatus] = useState("");
+  const [techniqueError, setTechniqueError] = useState("");
   const [err, setErr] = useState("");
   const runningRef = useRef(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { start: startRun, abort: abortRun } = useAbortableFetch();
 
   useEffect(() => {
     api.settings()
@@ -69,7 +74,8 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       const initial = saved === null ? known : new Set(saved.filter((name) => known.has(name)));
       setTechniques(selectable);
       setEnabled(initial);
-    }).catch(() => {});
+      setTechniqueError("");
+    }).catch((e) => setTechniqueError(e instanceof Error ? e.message : "Could not load arsenal techniques."));
   }, []);
 
   const filteredTechniques = useMemo(() => {
@@ -91,6 +97,8 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
   }
 
   function push(it: Item) {
+    // VIS-5: decide whether to auto-scroll BEFORE the new content grows the pane.
+    const pinned = isPinnedToBottom(bodyRef.current);
     setItems((prev) => {
       if (it.kind === "text" && prev.length && prev[prev.length - 1].kind === "text") {
         const copy = prev.slice();
@@ -100,6 +108,8 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       }
       return [...prev, it];
     });
+    // A11Y-6: skip the programmatic auto-scroll when the user prefers reduced motion.
+    if (prefersReducedMotion() || !pinned) return;
     requestAnimationFrame(() => {
       if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     });
@@ -140,14 +150,19 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
     }
   }
 
+  // REL-4: abort the in-flight SSE stream when this component unmounts.
+  useEffect(() => abortRun, [abortRun]);
+
   async function run() {
     if (!objective.trim() || runningRef.current) return;
     runningRef.current = true;
     setItems([]); setErr(""); setRunLog(""); setPaused(false); setPauseReady(false); setRunning(true);
+    // REL-4: fresh controller; also aborts any prior in-flight run.
+    const controller = startRun();
     try {
-      await runAgent({ objective, ...agentConfig, enabled_techniques: [...enabled] }, onEvent);
+      await runAgent({ objective, ...agentConfig, enabled_techniques: [...enabled] }, onEvent, controller.signal);
     } catch (e) {
-      setErr((e as Error).message);
+      if (!isAbortError(e)) setErr((e as Error).message);
     } finally {
       runningRef.current = false;
       setRunning(false);
@@ -229,13 +244,14 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
               <button type="button" className="mini-btn" disabled={running || enabled.size === 0} onClick={() => saveEnabled(new Set())}>Disable all</button>
             </div>
             <div className="technique-checklist" aria-label="Agent arsenal techniques">
+              {techniqueError && <div className="err" role="alert">Could not load techniques: {techniqueError}</div>}
               {filteredTechniques.map((tool) => (
                 <label key={tool.name} className={`technique-option ${enabled.has(tool.name) ? "enabled" : ""}`} title={tool.description}>
                   <input type="checkbox" checked={enabled.has(tool.name)} disabled={running} onChange={() => toggleTechnique(tool.name)} />
                   <span><b>{tool.name}</b><small>{tool.description}</small></span>
                 </label>
               ))}
-              {!filteredTechniques.length && <div className="empty compact">No matching techniques.</div>}
+              {!techniqueError && !filteredTechniques.length && <div className="empty compact">No matching techniques.</div>}
             </div>
             <div className="mono muted technique-note">Run controls remain available even when every attack technique is disabled. Selection is saved in this browser.</div>
           </div>
@@ -290,11 +306,17 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
             }}
           />
         )}
-        {err && <div className="err" style={{ marginTop: 10 }}>{err}</div>}
+        {err && <div className="err agent-error">{err}</div>}
       </div>
 
       <div className="card agent-transcript-card">
         <h3>Transcript</h3>
+        {/* A11Y-7: a polite role=status live region announces the streaming
+            transcript's structural progress (round changes, tool verdicts) and
+            the final run verdict, so screen-reader users follow the loop without
+            reading the whole scroll pane. Visually hidden — the pane is the
+            visual channel. */}
+        <LiveRegion>{transcriptStatus(items)}</LiveRegion>
         <div className="transcript" ref={bodyRef}>
           {!items.length && <div className="empty">Set the objective and arsenal, then run. You can steer, pause, and switch the attacker without losing the conversation.</div>}
           {items.map((item, index) => <Row key={index} it={item} />)}
@@ -302,78 +324,4 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       </div>
     </div>
   );
-}
-
-function AttackerSwitch({
-  current,
-  onSwitched,
-}: {
-  current: { provider: string; model: string };
-  onSwitched: (next: { provider: string; model: string }) => void;
-}) {
-  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
-  const [profile, setProfile] = useState("");
-  const [provider, setProvider] = useState(current.provider);
-  const [model, setModel] = useState(current.model);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    api.agentProfiles().then((data) => setProfiles(data.roles.attacker?.profiles || [])).catch(() => {});
-  }, []);
-  useEffect(() => { setProvider(current.provider); setModel(current.model); }, [current]);
-
-  async function apply() {
-    if (!profile && (!provider || !model.trim())) return;
-    setBusy(true); setError("");
-    try {
-      const status = await api.switchAgentAttacker(profile ? { profile } : { provider, model: model.trim() });
-      onSwitched({ provider: status.provider, model: status.attacker });
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section className="attacker-switch">
-      <div className="attacker-switch-head">
-        <span><b>Switch attacker</b><small>Conversation and tool results stay intact</small></span>
-        <span className="mono muted">current: {current.model || "unknown"}</span>
-      </div>
-      <div className="attacker-switch-grid">
-        <label><span>Profile</span><select value={profile} onChange={(event) => {
-          const next = event.target.value;
-          setProfile(next);
-          const selected = profiles.find((item) => item.name === next);
-          if (selected) { setProvider(selected.provider); setModel(selected.model); }
-        }}><option value="">Custom</option>{profiles.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
-        {!profile && <>
-          <label><span>Provider</span><ProviderChooser value={provider} ariaLabel="Paused attacker provider" onChange={(next, item) => { setProvider(next); if (item) setModel(item.model); }} /></label>
-          <label><span>Model</span><ModelChooser profile={provider} value={model} onChange={setModel} ariaLabel="Paused attacker model" /></label>
-        </>}
-        <button type="button" className="primary-command" disabled={busy || (!profile && (!provider || !model.trim()))} onClick={() => void apply()}>{busy ? "Switching…" : "Use attacker"}</button>
-      </div>
-      {error && <div className="err">{error}</div>}
-    </section>
-  );
-}
-
-function Row({ it }: { it: Item }) {
-  switch (it.kind) {
-    case "start": return <div className="t-start mono">brain <b>{it.brain}</b> ▸ target <b className="accent">{it.target}</b></div>;
-    case "round": return <div className="t-round"><span /> round {it.round}/{it.max} <span /></div>;
-    case "text": return <div className="t-text">{it.text}</div>;
-    case "tool_start": return <div className="t-call mono"><span className="t-arrow">▸ call</span> <b>{it.name}</b> <span className="muted">{it.args}</span></div>;
-    case "tool_result": {
-      const kind = it.error ? "bypass" : it.verdict ? verdictKind(it.verdict) : "neutral";
-      return <div className={`t-result ${kind}`}><div className="t-result-head mono"><b>{it.name}</b> {it.error ? <span className="badge bypass">ERROR</span> : it.verdict ? <span className={`badge ${verdictKind(it.verdict)}`}>{it.verdict}</span> : null}</div><div className="t-result-body mono">{it.content.length > 1400 ? `${it.content.slice(0, 1400)}…` : it.content}</div></div>;
-    }
-    case "progress": return <div className="t-progress mono">{it.text}</div>;
-    case "feedback": return <div className="t-feedback mono">steering applied: {it.text}</div>;
-    case "control": return <div className="t-control mono">{it.text}</div>;
-    case "done": return <div className={`t-done ${DONE_KIND[it.status] || "neutral"}`}>● {it.status}{it.summary ? ` — ${it.summary}` : ""}</div>;
-    case "error": return <div className="err mono">{it.error}</div>;
-  }
 }

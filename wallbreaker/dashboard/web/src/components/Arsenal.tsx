@@ -75,7 +75,7 @@ export function Arsenal() {
   return (
     <div className="arsenal-layout">
       <section className="card arsenal-list-card">
-        <div className="section-title" style={{ gap: 16 }}>
+        <div className="section-title arsenal-kind-tabs">
           {(["presets", "transforms", "tools"] as Kind[]).map((item) => (
             <button
               type="button"
@@ -104,7 +104,7 @@ export function Arsenal() {
                   onClick={() => setSelectedKey(row.key)}
                   onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedKey(row.key); } }}
                 >
-                  <td className="mono" style={{ color: "var(--accent)" }}>{row.name}</td>
+                  <td className="mono accent">{row.name}</td>
                   <td className="mono muted">{row.tag}</td>
                   <td className="muted">{row.desc}</td>
                 </tr>

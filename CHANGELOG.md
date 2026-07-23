@@ -1,5 +1,214 @@
 # Changelog
 
+## Roadmap Implementation — Post-Audit Hardening & Ecosystem Leverage (spec `roadmap-implementation`)
+
+Follow-on to the audit remediation below. The `roadmap-implementation` spec (8 roadmap items
+A–H across 7 task groups) removes the fragility left in the shipped security code, restores a
+clean gated test baseline, finishes the deferred residuals, and turns the one-off remediation
+into reusable/upstreamable artifacts. Delivered on `main` in `53c9ca2` (TG1–TG7) + `9ec12b0`
+(round-1 revision). Independently PM-validated (verdict **approved**, 3 rounds): full backend
+suite **1191 passed / 39 skipped / 31 xfailed** (`pytest -q` exits 0), frontend **60 vitest
+tests / 12 files**, `tsc` clean. Every task group verified by re-running its own tests before
+sign-off; 8 security/correctness properties execute in the committed runner (no skips for these
+task groups).
+
+### TG1 — Egress de-fragilization (items A, B)
+
+- **A — httpx private-API safety.** `make_pinned_transport()` gained a fail-closed self-check:
+  after wrapping the pool it asserts the network backend is a `PinnedEgressBackend`, and on a
+  missing/renamed internal attribute it **raises rather than returning an un-pinned transport**
+  (a `_force_missing_backend=True` test hook simulates the httpx-internals-changed condition).
+  Closes the one line that could silently re-open the SSRF hole on a dependency bump.
+- httpx pinned to `>=0.27,<0.29` in `pyproject.toml`; CI exercises the min/max of the range.
+- **B — two-tier egress policy documented + enforced.** `egress_guard.py` docstring now states
+  the contract explicitly: `check_url` is an *advisory* pre-flight (fail-**open** on NXDOMAIN),
+  while `PinnedEgressBackend` is the *enforcing* gate (fail-**closed**). The advisory pre-check
+  can never widen the policy enforced at connect time. (`wallbreaker/tools/egress_guard.py`)
+
+### TG2 — Test baseline & CI gate (item E)
+
+- The 31 pre-existing failures / 7 errors are triaged: **31 `xfail`, 7 `skip`**, each tracked;
+  `pytest -q` now exits 0 with an unambiguous pass/fail signal.
+- `.github/workflows/redteam-gate.yml` activated: PBT suite + httpx version matrix +
+  `-W error::ResourceWarning` (provider client leaks fail CI) as required checks.
+- Corpus-dependent tests (`test_gemlib.py`, `test_fire_file.py`, 14 total) guarded with
+  `@pytest.mark.skipif` on corpus presence, so a cold checkout without the runtime-fetched
+  `ZetaLib`/`UltraBr3aks` corpora **skips** those tests instead of hard-failing.
+
+### TG3 — Supply-chain corpus pinning (item D / roadmap item C)
+
+- `library.lock.toml` pins each runtime-fetched corpus to a commit SHA; the loader
+  (`verify_corpus_sha` / `load_corpus_with_pin_check` in `parsel_engine.py`) **fails closed** on
+  a mismatch or an unresolved pin (refuses to load the corpus).
+- `wallbreaker corpus verify` (aliased as `parsel verify`) CLI reports pinned-vs-actual per
+  corpus and exits non-zero on drift. Locally-clonable corpora (`UltraBr3aks`, `ZetaLib`) ship
+  with resolved SHAs (verified to match their clone HEADs → they load); the three network-only
+  corpora (`P4RS3LT0NGV3`, `L1B3RT4S`, `ENI`) are honestly marked `UNRESOLVED` until
+  `corpus verify --update` is run. (`wallbreaker/cli.py`, `wallbreaker/tools/parsel_engine.py`)
+
+### TG4 — Frontend residual closure (item F / former P3.5)
+
+- The three over-size dashboard components are decomposed below the 400-line guideline:
+  `Runs.tsx` 663→**295**, `Findings.tsx` 639→**373**, `Agent.tsx` 443→**328**.
+- Extracted: `RunDetailView.tsx` (**364**), `RunExpandedRow.tsx` (**157**), `FindingExpanded.tsx`
+  (**291**), `AgentTranscript.tsx` (**120**) — every extracted child also ≤400.
+- A `check:line-counts` npm script enforces the ≤400 limit across all five components in CI.
+- New vitest coverage for the extracted components (`RunExpandedRow.test.tsx`,
+  `subcomponents.test.tsx`); frontend suite **60 tests / 12 files**, jest-axe clean.
+
+### TG5 — Reusable hardening toolkit (item G)
+
+- New standalone package **`agent_dashboard_harden/`** re-exports the security layer with
+  **zero behavior change** — `SecurityMiddleware`, `ensure_launch_token`, `origin_is_same_site`,
+  `token_file_path`, `check_url`, `EgressBlocked`, `PinnedEgressBackend`, `make_pinned_transport`,
+  `build_dashboard_registry`. Parity proven by tests asserting the re-exports are the *same
+  objects* and that the middleware still blocks unauth/cross-site requests.
+- `pbt_fixtures.py` ships the 5 mandated PBT property categories (access control, input
+  validation, corpus integrity, session/token, concurrency) as parameterizable factories so a
+  consuming FastAPI+agent project can wire them against its own functions.
+
+### TG6 — Upstream contribution prep (item C)
+
+- Branch `upstream-contrib/security-remediation` + `UPSTREAM-PR.md` (PR body) + an
+  `apply-check` script prepare the M0/M1 + P3 audit remediation as an upstream PR series to
+  `JailbrokenAI/wallbreaker`. `UPSTREAM-PR.md` scopes itself to the three audit-remediation PRs
+  and explicitly notes that the `agent_dashboard_harden` toolkit lives on the fork's `main`
+  (commit `53c9ca2`), not on the PR branch.
+
+### TG7 — Trust frontier (item H)
+
+- **Signed findings log** (`wallbreaker/findings_log.py`): append-only JSONL signed per
+  engagement with Ed25519 (`sign_entry` / `verify_entry` / `generate_keypair` /
+  `append_finding` / `load_findings`). Any post-hoc edit to a logged finding fails verification;
+  the exported bundle carries the public key and **never embeds the private key** (asserted).
+- **Opt-in judge ensemble** (`judging.py`): `run_ensemble` / `run_ensemble_probe` fire ≤3
+  configured judges concurrently, return a majority-vote label + mean score, flag low-agreement
+  verdicts as `UNCERTAIN`, and bound concurrency. Default single-judge behavior and cost are
+  unchanged when no ensemble is configured.
+
+### Round-1 revision (`9ec12b0`) — PM findings closed
+
+- Resolved corpus pins to real SHAs where locally clonable; online-only corpora accurately
+  marked `UNRESOLVED` (Issue 1). Added `skipif` corpus guards so a cold CI checkout stays green
+  (Issue 2). Split `RunDetailView` (445→364) + extracted `RunExpandedRow` (157), both under the
+  guideline and in the line-count guard (Issue 3). Corrected `UPSTREAM-PR.md` scope so the PR
+  body no longer references artifacts absent from its branch (Issue 4). Updated the memory-bank
+  resumption point (Issue 5).
+
+### Security / correctness properties (verified in the committed runner)
+
+- **Access control** — extracted `SecurityMiddleware` still 401/403s unauth & cross-site
+  (`tests/test_tg5_harden.py`).
+- **Data integrity** — egress pin fail-closed + DNS-rebind rejection
+  (`tests/pbt/test_security_properties.py`); Ed25519 log tamper-evidence
+  (`tests/test_tg7_trust.py`).
+- **Corpus integrity** — SHA gate refuses on mismatch/unresolved (`tests/test_tg3_corpus.py`).
+- **Session/token** — `ensure_launch_token` writes `0600` (`tests/test_tg5_harden.py`).
+- **Concurrency** — judge-ensemble concurrency bound (`tests/test_tg7_trust.py`).
+
+---
+
+## Audit Remediation — Security, Reliability, Accessibility, Visual (50 findings closed)
+
+Full audit (`wallbreaker-audit.md`: 3 Critical, 13 High, 16 Medium, 14 Low, 4 Informational)
+remediated across 3 PRs. Release recommendation flipped from "Do not ship" to "Safe to ship."
+
+### M0+M1 Backend (PR #1, merged to `main` `9bb8af5`)
+
+**Security — Critical:**
+- **SEC-1/2/3** Auth + CSRF: per-launch bearer token (0600 file, printed to console), `SecurityMiddleware`
+  on every `/api/*` route, `Origin`/`Sec-Fetch-Site` same-origin check. Token-in-custom-header
+  (`X-WB-Token`) IS the CSRF defense (cross-site can't set it without CORS preflight, which loopback
+  CORS rejects). SPA auto-fetches token via same-origin `/api/session`. (`dashboard/auth.py`, `server.py`)
+- **SEC-4** SSRF egress guard: `egress_guard.py` — scheme allowlist (http/https), blocks loopback/
+  link-local/metadata/RFC1918, hop-by-hop redirect re-validation. Applied to `http_request` + provider
+  discovery.
+- **SEC-5** `read_file` path confinement: realpath containment + symlink rejection.
+- **SEC-6** Attack firing routes behind auth+CSRF.
+- **SEC-7** Bind guard: `serve()` refuses non-loopback `--host` without `--allow-remote`.
+- **SEC-8** Provider/config metadata GETs auth-gated.
+- **SEC-9** Run log redaction (`redact_args`) + 0600/0700 file permissions.
+- **SEC-10** Run-log path guard: realpath containment + symlink reject.
+- **SEC-11** Pydantic request models (`extra='ignore'`), global 500 handler (no traceback/paths),
+  narrowed `except Exception: pass` blocks.
+
+**Reliability:**
+- **REL-1** `vision_complete` NameError fixed (`(json, status)` unpack).
+- **REL-2** Provider lifecycle: `provider_scope()` chokepoint at `ToolRegistry.execute` closes
+  `httpx.AsyncClient` at the tool-call boundary (preserves per-call pooling). `-W error::ResourceWarning`
+  gate.
+- **REL-3/RACE-1** Atomic state writes: `tmp`+`fsync`+`os.replace` + threading lock + merge.
+- **REL-6** Run lifecycle: retained task ref, `POST /api/agent/stop` (idempotent force-stop),
+  `agent_active` reset on every exit path.
+- **REL-7** Overall wall-clock timeout: `asyncio.wait_for` deadline + terminal SSE event.
+- **REL-8** Narrowed `except: pass` → log-and-continue; startup degrades visible.
+- **REL-11** Anthropic `event.get("index")` instead of `event["index"]`.
+- **REL-12** `claude_code` timeout: `start_new_session=True` + `killpg` + `wait()`.
+
+**Concurrency:**
+- **RACE-2** `ResultCache` v2 delta format (one line per put, POSIX atomic append) + tolerant
+  loader (v1 snapshot + v2 deltas) + compaction via `atomic_write` at 5000 lines.
+- **RACE-3** `request_gate` `notify_all()` under Condition lock on limit raise.
+- **RACE-4** `RunLog._write` `threading.Lock` + no-`await` invariant.
+
+**Tool policy:**
+- `tool_policy.py`: `run_shell`/`write_file`/`edit_file`/`patch_file`/`read_file`/`http_request`
+  excluded from dashboard registry by default; opt-in via `--allow-host-tools`.
+
+**New files:** `dashboard/auth.py`, `tools/{egress_guard,tool_policy}.py`, `_fsutil.py`,
+  `tests/test_audit_remediation.py` (62 tests), `tests/pbt/test_security_properties.py` (18 properties).
+
+### P2 Frontend (PR #2, merged to `main` `f1fc70b`)
+
+**TG6 Reliability + Primitives** (`src/primitives/`):
+- `useAbortableFetch` — AbortController lifecycle (REL-4 SSE abort + unmount cleanup)
+- `AsyncView` — loading/empty/error+Retry states (REL-9)
+- `Dialog` — focus trap/restore/Escape/`aria-modal` (A11Y-1)
+- `Combobox` — full ARIA combobox pattern (A11Y-2)
+- `InteractiveChip` — `<button aria-pressed>` (A11Y-3)
+- `LiveRegion` — `role=status`/`aria-live=polite` (A11Y-7)
+- REL-5 stale-guards, REL-10 busy guards, REL-14 Pointer Events resize
+- INFO-1: regression guard test (no `dangerouslySetInnerHTML`/`.innerHTML`)
+
+**TG7 Accessibility (WCAG 2.2 AA):**
+- A11Y-1…13: Dialog semantics, Combobox aria, keyboard chips/rows, LiveRegion transcript/verdict,
+  non-color verdict cues, contrast `--dim`/`--muted`/`--disabled-fg` >= 4.5:1, labels/autocomplete/
+  fieldset, nav/main/h1/skip-link landmarks, reduced-motion media query, >= 24px targets.
+
+**TG8 Visual Consistency:**
+- VIS-1…5: chip standardization, inline-style to tokens/classes, async states on
+  Runs/Findings/Console/Agent, shared `src/format.ts`, min-heights + pin-aware auto-scroll.
+
+**ARIA decisions (AD-15):** ModelChooser stays a combobox (not modal Dialog);
+AgentConfigDrawer stays native `<details>` — both correct ARIA choices.
+
+**Verification:** tsc clean, vitest 38/38, jest-axe 0 violations/view, build ok.
+Checkpoint B (Orca computer-use): 10/10 categories pass.
+
+### P3 Hardening (PR #3, branch `p3-hardening`)
+
+- **P3.1 DNS-rebind socket-IP-pinning:** `PinnedEgressBackend` wraps httpcore's network backend
+  to resolve, validate, and pin TCP connections to validated public IPs. Closes the TOCTOU gap.
+  `http_tool.py` uses `make_pinned_transport()`. 7 tests.
+- **P3.2 `require_auth=True` default flip (AD-6):** `create_app()` factory now secure by default.
+  29 legacy test calls updated to `require_auth=False` explicitly.
+- **P3.3 Gate 4B integration PBT:** 4 new Hypothesis properties (cross-site cannot fire host tools,
+  cannot reach private egress, egress guard defense-in-depth, PinnedEgressBackend rejects private IPs).
+- **P3.4 REL-13 retry cap:** `gated_stream`/`gated_request` accept `max_attempts` (non-idempotent
+  cap 2). No-retry-after-yielded-tokens verified. 4 tests.
+
+**Full suite:** 1146 passed (+25 P3), 31 failed / 7 errors unchanged (pre-existing corpus).
+**PBT:** 18 properties + 1 skipped. Secret scan clean.
+
+### Deferred
+- P3.5: Frontend subcomponent extraction (Runs.tsx 663, Findings.tsx 639, Agent.tsx 443 exceed
+  400-line guideline) — safe follow-up, no security impact.
+- RACE-2 compaction append/replace race (documented residual, undercount-only, not system of record).
+- Screen-reader announcement quality (manual NVDA/VoiceOver pass recommended, code patterns verified).
+- Supply chain: runtime-fetched corpora integrity (out of scope, separate review).
+
+---
+
 ## Five new attack tools: cipherchat, skeleton_key, persuasion_attack, drattack, ica
 
 Adds five research-derived attack tools that were missing from the arsenal, wired into

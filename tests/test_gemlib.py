@@ -1,8 +1,15 @@
 import asyncio
+from pathlib import Path
+
+import pytest
 
 from wallbreaker.config import Config
 from wallbreaker.tools import gemlib
 from wallbreaker.tools.registry import ToolContext, ToolRegistry
+
+_ZETALIB_PRESENT = (Path(__file__).resolve().parents[1] / "library" / "ZetaLib").exists()
+_ULTRABR3AKS_PRESENT = (Path(__file__).resolve().parents[1] / "library" / "UltraBr3aks").exists()
+_BOTH_PRESENT = _ZETALIB_PRESENT and _ULTRABR3AKS_PRESENT
 
 
 def _reg():
@@ -16,6 +23,7 @@ def test_corpora_keys():
     assert set(gemlib.CORPORA) == {"zetalib", "ultrabreaks"}
 
 
+@pytest.mark.skipif(not _BOTH_PRESENT, reason="requires offline corpus: ZetaLib + UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_library_root():
     root = gemlib.library_root()
     assert root.name == "library"
@@ -23,6 +31,7 @@ def test_library_root():
     assert (root / "UltraBr3aks").is_dir()
 
 
+@pytest.mark.skipif(not _BOTH_PRESENT, reason="requires offline corpus: ZetaLib + UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_both_corpora_present():
     assert gemlib.is_present("zetalib")
     assert gemlib.is_present("ultrabreaks")
@@ -34,12 +43,14 @@ def test_unknown_corpus_degrades():
     assert gemlib.list_files("nope") == []
 
 
+@pytest.mark.skipif(not _ZETALIB_PRESENT, reason="requires offline corpus: ZetaLib. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_zetalib_list_has_known_stems():
     files = gemlib.list_files("zetalib")
     assert "Aleph Null Portable" in files
     assert "Scientist POV" in files
 
 
+@pytest.mark.skipif(not _ULTRABR3AKS_PRESENT, reason="requires offline corpus: UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_ultrabreaks_list_has_known_stems():
     files = gemlib.list_files("ultrabreaks")
     assert "Attention-Breaking" in files
@@ -60,6 +71,7 @@ def test_seed_files_skip_info_and_subtrees():
     assert all("Museum" not in r for r in zeta_rels)
 
 
+@pytest.mark.skipif(not _BOTH_PRESENT, reason="requires offline corpus: ZetaLib + UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_find_resolves_real_file():
     p = gemlib.find("zetalib", "Scientist POV")
     assert p is not None and p.is_file()
@@ -67,11 +79,13 @@ def test_find_resolves_real_file():
     assert q is not None and q.is_file()
 
 
+@pytest.mark.skipif(not _ULTRABR3AKS_PRESENT, reason="requires offline corpus: UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_find_substring_and_case_insensitive():
     p = gemlib.find("ultrabreaks", "attention")
     assert p is not None and p.stem == "Attention-Breaking"
 
 
+@pytest.mark.skipif(not _ULTRABR3AKS_PRESENT, reason="requires offline corpus: UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_find_any_finds_ultrabreaks_only_name():
     hit = gemlib.find_any("Attention-Breaking")
     assert hit is not None
@@ -85,6 +99,7 @@ def test_find_any_miss():
     assert gemlib.find_any("zzz-nonexistent-seed-qqq") is None
 
 
+@pytest.mark.skipif(not _BOTH_PRESENT, reason="requires offline corpus: ZetaLib + UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_search_returns_hits():
     for corpus in ("zetalib", "ultrabreaks"):
         hits = gemlib.search(corpus, "you")
@@ -102,6 +117,7 @@ def test_registered_tool_names():
             assert f"{corpus}_{suffix}" in reg.names()
 
 
+@pytest.mark.skipif(not _BOTH_PRESENT, reason="requires offline corpus: ZetaLib + UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_list_tools_return_content():
     reg = _reg()
     for corpus in ("zetalib", "ultrabreaks"):
@@ -110,6 +126,7 @@ def test_list_tools_return_content():
         assert len(res.content) > 20
 
 
+@pytest.mark.skipif(not _BOTH_PRESENT, reason="requires offline corpus: ZetaLib + UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_search_tools_return_content():
     reg = _reg()
     for corpus in ("zetalib", "ultrabreaks"):
@@ -124,6 +141,7 @@ def test_search_tool_requires_query():
     assert "required" in res.content.lower()
 
 
+@pytest.mark.skipif(not _BOTH_PRESENT, reason="requires offline corpus: ZetaLib + UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_get_tools_return_content():
     reg = _reg()
     res = asyncio.run(reg.execute("zetalib_get", {"name": "Scientist POV"}))
@@ -135,6 +153,7 @@ def test_get_tools_return_content():
     assert len(res2.content) > 200
 
 
+@pytest.mark.skipif(not _ULTRABR3AKS_PRESENT, reason="requires offline corpus: UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_get_tool_all():
     reg = _reg()
     res = asyncio.run(reg.execute("ultrabreaks_get", {"name": "all"}))
@@ -148,6 +167,7 @@ def test_get_tool_requires_name():
     assert "required" in res.content.lower()
 
 
+@pytest.mark.skipif(not _ZETALIB_PRESENT, reason="requires offline corpus: ZetaLib. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_get_tool_miss():
     reg = _reg()
     res = asyncio.run(reg.execute("zetalib_get", {"name": "zzz-not-a-real-seed"}))

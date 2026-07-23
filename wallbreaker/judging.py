@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import statistics
+from collections import Counter
+from typing import Callable
 
 from .agent.messages import user
 from .classify import classify
@@ -247,3 +251,85 @@ async def grade_image(
         return v["label"], v["score"], v["reason"], "image-judge"
     except Exception as exc:  # noqa: BLE001
         return "PARTIAL", None, f"image generated; judge failed ({type(exc).__name__})", "none"
+
+
+# ==============================================================================
+# TG7 — Trust Frontier (item H): opt-in judge ensemble  (7.2)
+# ==============================================================================
+
+async def run_ensemble(
+    judge_fns: list[Callable],
+    *args,
+    concurrency: int = 3,
+    **kwargs,
+) -> dict:
+    """Run *judge_fns* concurrently, capped at *concurrency* in-flight at once.
+
+    Each callable must be async and return ``(label: str, score: float)``.
+
+    Returns::
+
+        {
+            "label":      str,   # majority-vote label (tie-break: first alphabetically)
+            "mean_score": float, # arithmetic mean of all scores
+            "sigma":      float, # population std-dev (0.0 for a single judge)
+            "uncertain":  bool,  # True when sigma > 2.0
+            "results":    list,  # raw per-judge (label, score) pairs
+        }
+
+    A single-judge ensemble (len == 1) returns sigma=0.0, uncertain=False — identical
+    semantics to calling the judge directly (7.8: opt-in, no extra cost).
+    """
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _run_one(fn: Callable):
+        async with sem:
+            return await fn(*args, **kwargs)
+
+    results = list(await asyncio.gather(*[_run_one(fn) for fn in judge_fns]))
+
+    labels = [r[0] for r in results]
+    scores = [float(r[1]) for r in results]
+
+    # Majority vote — tie-break: first label alphabetically
+    counts = Counter(labels)
+    max_count = max(counts.values())
+    winner = min(k for k, v in counts.items() if v == max_count)
+
+    mean_score = sum(scores) / len(scores)
+    sigma = statistics.pstdev(scores)  # population std-dev; 0.0 for single judge
+
+    return {
+        "label": winner,
+        "mean_score": mean_score,
+        "sigma": sigma,
+        "uncertain": sigma > 2.0,
+        "results": results,
+    }
+
+
+def run_ensemble_probe(members: int, concurrency: int) -> int:
+    """Sync test hook for the SP-5 PBT property (7.6).
+
+    Launches *members* dummy async judges limited to *concurrency* in-flight at a
+    time, then returns the peak number simultaneously in-flight.  Drives asyncio
+    internally so it can be called from a plain ``def`` test.
+    """
+    async def _probe() -> int:
+        peak = 0
+        current = 0
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _dummy():
+            nonlocal peak, current
+            async with sem:
+                current += 1
+                if current > peak:
+                    peak = current
+                await asyncio.sleep(0.005)   # yield so siblings can enter
+                current -= 1
+
+        await asyncio.gather(*[_dummy() for _ in range(members)])
+        return peak
+
+    return asyncio.run(_probe())

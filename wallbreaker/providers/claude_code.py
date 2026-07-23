@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import signal
 from collections.abc import AsyncIterator
 
 from ..agent.messages import (
@@ -159,6 +160,10 @@ class ClaudeCodeProvider(Provider):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # Lead a new process group so a timeout can kill the whole tree — the claude CLI
+                # is itself an agent that spawns children; proc.kill() alone orphaned them
+                # (same fix as the run_shell [shell] lesson, audit REL-12).
+                start_new_session=True,
             )
         except FileNotFoundError as exc:
             raise ProviderError(
@@ -171,8 +176,15 @@ class ClaudeCodeProvider(Provider):
             )
         except (asyncio.TimeoutError, TimeoutError) as exc:
             try:
-                proc.kill()
-            except ProcessLookupError:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)  # reap so it isn't a zombie
+            except (asyncio.TimeoutError, TimeoutError, ProcessLookupError):
                 pass
             raise ProviderError(
                 "claude CLI timed out after " + str(int(self.timeout)) + "s"

@@ -13,7 +13,7 @@ export function Settings({ onSaved }: { onSaved?: () => void }) {
     <div className="card settings-wide">
       <ProviderManager onChanged={() => { setRevision((value) => value + 1); onSaved?.(); }} />
     </div>
-    <div className="card settings-wide muted" style={{ fontSize: 12 }}>
+    <div className="card settings-wide muted settings-note">
       Provider connections own URLs, credentials, protocols, and model directories. Assign providers to attacker,
       target, and judge agents below or create reusable assignments on the Profiles page.
     </div>
@@ -22,7 +22,7 @@ export function Settings({ onSaved }: { onSaved?: () => void }) {
       <div className="settings-role-row">
         {roles && (["attacker", "target", "judge"] as const).map((role) => <RoleChooser key={role} role={role} value={roles[role]} onSaved={refreshRoles} />)}
       </div>
-      <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>Quickly apply a named profile or a Custom provider/model assignment. Create and edit named profiles on the Profiles page.</div>
+      <div className="muted settings-note settings-note-spaced">Quickly apply a named profile or a Custom provider/model assignment. Create and edit named profiles on the Profiles page.</div>
     </div>
     <div className="card settings-wide"><TargetOptions /></div>
   </div>;

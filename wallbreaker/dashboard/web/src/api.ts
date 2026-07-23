@@ -217,8 +217,35 @@ export interface FireResult extends ComposeResult {
   run_log?: string;
 }
 
+// --- Auth bootstrap (TG1.4, SEC-1/2) -----------------------------------------------
+// The dashboard requires a per-launch bearer token (X-WB-Token). We fetch it once from the
+// same-origin /api/session bootstrap and memoize it. The token IS the CSRF defense: a cross-site
+// page cannot set a custom header without a CORS preflight (rejected by loopback-only CORS) and
+// cannot read /api/session (same-origin policy). If auth is off (test factory), the token is
+// empty and we send no header — the app still works.
+let tokenPromise: Promise<string> | null = null;
+
+async function ensureToken(): Promise<string> {
+  if (!tokenPromise) {
+    tokenPromise = fetch("/api/session")
+      .then((r) => (r.ok ? r.json() : { token: "" }))
+      .then((b: { token?: string }) => b.token ?? "")
+      .catch(() => "");
+  }
+  return tokenPromise;
+}
+
+/** Merge the auth header into a RequestInit's headers. No-op when there is no token. */
+async function withAuth(init?: RequestInit): Promise<RequestInit> {
+  const token = await ensureToken();
+  if (!token) return init ?? {};
+  const headers = new Headers(init?.headers);
+  headers.set("X-WB-Token", token);
+  return { ...init, headers };
+}
+
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
+  const r = await fetch(url, await withAuth(init));
   if (!r.ok) {
     let detail = r.statusText;
     try {
@@ -317,12 +344,14 @@ export async function runAgent(
   onEvent: (ev: AgentEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const r = await fetch("/api/agent/run", {
+  // Streaming SSE via fetch + ReadableStream (NOT EventSource) so we can attach the custom
+  // X-WB-Token header — EventSource cannot set custom headers, which is why this path uses fetch.
+  const r = await fetch("/api/agent/run", await withAuth({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,
-  });
+  }));
   if (!r.ok || !r.body) {
     let detail = r.statusText;
     try { detail = (await r.json()).detail || detail; } catch { /* ignore */ }
@@ -331,19 +360,29 @@ export async function runAgent(
   const reader = r.body.getReader();
   const dec = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const frame = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const line = frame.startsWith("data:") ? frame.replace(/^data:\s?/, "") : frame;
-      if (line) {
-        try { onEvent(JSON.parse(line) as AgentEvent); } catch { /* ignore */ }
+  // Abort mid-stream: cancel the reader so the loop stops promptly (the pending
+  // reader.read() rejects with an AbortError, which the caller treats as an
+  // intentional cancel — see Agent.tsx).
+  const onAbort = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener("abort", onAbort);
+  try {
+    for (;;) {
+      if (signal?.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = frame.startsWith("data:") ? frame.replace(/^data:\s?/, "") : frame;
+        if (line) {
+          try { onEvent(JSON.parse(line) as AgentEvent); } catch { /* ignore */ }
+        }
       }
     }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type ProviderRecord } from "../api";
 import { invalidateModelCatalog, invalidateProviders, loadProviders } from "../dataCache";
 import { ModelChooser } from "./ModelChooser";
+import { Dialog } from "../primitives/Dialog";
 
 const EMPTY = {
   name: "", protocol: "openai", base_url: "", model: "", api_key_env: "",
@@ -95,9 +96,15 @@ export function ProviderManager({ onChanged }: { onChanged: () => void }) {
           {testResults[provider.name] && <div className={`connection-result ${testResults[provider.name].ok ? "ok" : "error"}`} role="status" aria-live="polite">{testResults[provider.name].message}</div>}
         </div>)}
       </div>
-      {editing && <div className="provider-editor">
-        <div className="editor-heading"><b>{providers.some((p) => p.name === form.name) ? "Edit provider" : "New provider"}</b><button type="button" aria-label="Close provider editor" title="Close" onClick={() => setEditing(false)}>×</button></div>
-        <div className="form-grid">
+      {/* A11Y-1: the provider editor is a modal editing surface — the Dialog
+          primitive gives it role=dialog + aria-modal + aria-labelledby, a focus
+          trap, Escape-to-close, and focus restore to the Add/Edit trigger.
+          A11Y-10: the field set is grouped in a <fieldset>/<legend>. */}
+      <Dialog open={editing} title={providers.some((p) => p.name === form.name) ? "Edit provider" : "New provider"} onClose={() => setEditing(false)}>
+        <div className="provider-editor">
+        <div className="editor-heading"><span className="visually-hidden">Provider details</span><button type="button" aria-label="Close provider editor" title="Close" onClick={() => setEditing(false)}>×</button></div>
+        <fieldset className="form-grid">
+          <legend className="visually-hidden">Provider connection details</legend>
           <label>Name<input value={String(form.name || "")} onChange={(e) => update("name", e.target.value)} /></label>
           <label>Protocol<select value={String(form.protocol)} onChange={(e) => update("protocol", e.target.value)}><option value="openai">OpenAI compatible</option><option value="anthropic">Anthropic compatible</option><option value="claude-code">Claude Code</option></select></label>
           <label className="wide">Base URL<input value={String(form.base_url || "")} placeholder="https://api.example.com/v1" onChange={(e) => update("base_url", e.target.value)} /></label>
@@ -109,16 +116,17 @@ export function ProviderManager({ onChanged }: { onChanged: () => void }) {
             ariaLabel="Default model"
           /></label>
           <label>Key environment variable<input value={String(form.api_key_env || "")} placeholder="PROVIDER_API_KEY" onChange={(e) => update("api_key_env", e.target.value)} /></label>
-          <label>API key<input type="password" value={String(form.api_key || "")} placeholder={form.has_api_key ? "Stored; enter to replace" : "Stored locally in .env"} onChange={(e) => update("api_key", e.target.value)} /></label>
+          <label>API key<input type="password" autoComplete="off" value={String(form.api_key || "")} placeholder={form.has_api_key ? "Stored; enter to replace" : "Stored locally in .env"} onChange={(e) => update("api_key", e.target.value)} /></label>
           <label>Authentication<select value={String(form.auth_style || "bearer")} onChange={(e) => update("auth_style", e.target.value)}><option value="bearer">Bearer token</option><option value="x-api-key">x-api-key</option></select></label>
           <label>Default modality<select value={String(form.modality || "text")} onChange={(e) => update("modality", e.target.value)}><option value="text">Text</option><option value="image">Image generation</option></select></label>
           <label>Request timeout (seconds)<input type="number" min={0} step={1} value={Number(form.timeout || 0)} onChange={(e) => update("timeout", Number(e.target.value))} /></label>
           <label className="toggle-field"><input type="checkbox" checked={Boolean(form.reasoning)} onChange={(e) => update("reasoning", e.target.checked)} /><span>Request reasoning output</span></label>
           <label>Inference path<input value={String(form.inference_path || "")} placeholder="Protocol default" onChange={(e) => update("inference_path", e.target.value)} /></label>
           <label>Models path<input value={String(form.models_path || "")} placeholder="Protocol default" onChange={(e) => update("models_path", e.target.value)} /></label>
-        </div>
+        </fieldset>
         <div className="editor-actions"><button type="button" onClick={() => setEditing(false)}>Cancel</button><button type="button" className="primary-command" disabled={busy} onClick={() => void save()}>Save provider</button></div>
-      </div>}
+        </div>
+      </Dialog>
     </div>
   </details>;
 }
