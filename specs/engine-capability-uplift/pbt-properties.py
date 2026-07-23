@@ -88,8 +88,7 @@ def test_row_roundtrip_reembed(descriptions, first, second, tmp_path):
 # ==================================================================================================
 # SP-DI5 · Data Integrity — ToolContext delegation parity  (TG2: item B)
 # ==================================================================================================
-@pytest.mark.skip(reason="implement in TG2.6")
-@settings(max_examples=200)
+@settings(max_examples=200, suppress_health_check=_SC)
 @given(
     field=st.sampled_from([
         "current_objective", "attacker_model", "vault_enabled",
