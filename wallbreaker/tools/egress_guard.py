@@ -1,4 +1,4 @@
-"""SSRF egress guard.
+"""SSRF egress guard — two-tier policy.
 
 The agent's `http_request` tool and the dashboard's provider-discovery both issue outbound
 requests to model/operator-supplied URLs. Without a guard those can reach cloud metadata
@@ -6,16 +6,31 @@ requests to model/operator-supplied URLs. Without a guard those can reach cloud 
 exfiltration primitive (audit SEC-4). This module centralises the allow/deny decision so both
 call sites share one policy.
 
-Policy:
+Two-tier policy
+---------------
+**Tier 1 — Advisory pre-flight (fail-OPEN): ``check_url``**
+  Called before a request is dispatched. Validates the URL scheme and resolves DNS to reject
+  obviously bad targets fast. DNS resolution failures are *ignored* (fail-open): a host that
+  does not resolve cannot reach an internal service, and the caller's connect will simply fail.
+  This tier is a fast, user-visible guard — NOT a security boundary. It can be bypassed by a
+  DNS rebind that changes its answer between the check and the actual connect.
+
+**Tier 2 — Enforcing gate (fail-CLOSED): ``PinnedEgressBackend`` / ``make_pinned_transport``**
+  A custom httpcore network backend that resolves the hostname, validates ALL resolved IPs
+  against the egress policy, and pins the socket to a validated public IP at connect time.
+  DNS resolution failures here raise ``EgressBlocked`` (fail-closed). This is the actual
+  security boundary: a DNS rebind between ``check_url`` and the physical connect is caught
+  and rejected at the TCP layer. No code path may bypass this tier.
+
+Policy applied by both tiers:
   * scheme must be http or https (blocks file://, gopher://, data://, ...);
   * every IP the hostname resolves to must be a public unicast address — loopback, link-local
     (incl. cloud metadata), private (RFC1918/ULA), reserved, multicast, and unspecified are denied;
   * redirects must be re-validated hop-by-hop (a public host that 302s to a metadata IP is denied).
 
-Residual risk: none after P3 pinning. The guard now resolves, validates, and pins
-the connection to the validated IP via a custom httpcore network backend (see
-``PinnedEgressBackend`` / ``make_pinned_transport``), so a DNS rebind between
-check and connect cannot redirect the socket to a private/metadata address.
+Residual risk: none after P3 pinning (``make_pinned_transport`` self-check ensures the
+backing transport is always a ``PinnedEgressBackend``; if httpx internal shape changes,
+construction raises rather than silently returning an unpinned transport).
 """
 from __future__ import annotations
 
@@ -79,9 +94,7 @@ def check_url(url: str) -> None:
     try:
         ips = _resolve_ips(host)
     except socket.gaierror:
-        # Fail-open on resolution failure: a host that does not resolve cannot reach any internal
-        # service (the caller's connect will simply fail). We only block hosts that positively
-        # resolve to a non-public address, which is what the SSRF threat requires.
+        # ADVISORY ONLY — DNS failures are ignored here; PinnedEgressBackend enforces at connect time
         return
     for ip in ips:
         if not _ip_is_public(ip):
@@ -195,22 +208,47 @@ class PinnedEgressBackend:
         return await self._inner.sleep(seconds)
 
 
-def make_pinned_transport(**transport_kwargs):
+def make_pinned_transport(_force_missing_backend: bool = False, **transport_kwargs):
     """Create an ``httpx.AsyncHTTPTransport`` with DNS-rebind-safe IP pinning.
 
     Any keyword args are forwarded to ``httpx.AsyncHTTPTransport`` (e.g. ``verify``,
     ``limits``, ``retries``).  The returned transport resolves DNS through
     ``PinnedEgressBackend`` so the actual TCP connection goes to a validated public
     IP, not a re-resolved address that could be rebinding.
+
+    Fail-closed self-check: after construction the function asserts that the pool's
+    network backend is an instance of ``PinnedEgressBackend``. If httpx internal
+    shape changes (the private attribute moves or is renamed), this raises
+    ``EgressBlocked`` rather than silently returning an unpinned transport.
+
+    Args:
+        _force_missing_backend: Test hook — when ``True``, skips installing the
+            ``PinnedEgressBackend`` so the self-check fires. Never pass in
+            production.
+        **transport_kwargs: Forwarded verbatim to ``httpx.AsyncHTTPTransport``.
     """
     import httpx  # lazy — httpx is an optional extra
 
     transport = httpx.AsyncHTTPTransport(**transport_kwargs)
-    # Replace the pool's network backend with our pinned version. The pool was
-    # already constructed by AsyncHTTPTransport.__init__ with a default AutoBackend;
-    # we wrap that backend so all other behaviour (keepalive, HTTP/2, etc.) is
-    # preserved — only the IP selection at connect time changes.
-    transport._pool._network_backend = PinnedEgressBackend(
-        transport._pool._network_backend,
-    )
+
+    if not _force_missing_backend:
+        # Replace the pool's network backend with our pinned version. The pool was
+        # already constructed by AsyncHTTPTransport.__init__ with a default AutoBackend;
+        # we wrap that backend so all other behaviour (keepalive, HTTP/2, etc.) is
+        # preserved — only the IP selection at connect time changes.
+        transport._pool._network_backend = PinnedEgressBackend(
+            transport._pool._network_backend,
+        )
+
+    # Fail-closed self-check: if httpx changes its internal shape, raise rather than
+    # returning an unpinned transport that silently bypasses DNS-rebind protection.
+    try:
+        backend = transport._pool._network_backend
+    except AttributeError:
+        backend = None
+    if not isinstance(backend, PinnedEgressBackend):
+        raise EgressBlocked(
+            "pinned transport unavailable: httpx internal shape changed"
+        )
+
     return transport

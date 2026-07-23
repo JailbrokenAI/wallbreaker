@@ -431,3 +431,26 @@ def test_pinned_backend_rejects_private_ip_connect(tmp_path, private_ip):
         import asyncio
         asyncio.run(backend.connect_tcp(private_ip, 443))
     inner.connect_tcp.assert_not_called()
+
+
+# ===========================================================================
+# TG1 — Egress De-Fragilization unit tests (tasks 1.5–1.6)
+# ===========================================================================
+
+def test_make_pinned_transport_returns_pinned_backend():
+    """1.5: make_pinned_transport() installs PinnedEgressBackend in the pool."""
+    from wallbreaker.tools.egress_guard import make_pinned_transport, PinnedEgressBackend
+
+    transport = make_pinned_transport()
+    assert isinstance(transport._pool._network_backend, PinnedEgressBackend), (
+        f"expected PinnedEgressBackend, got {type(transport._pool._network_backend)!r}"
+    )
+
+
+def test_pinned_transport_fail_closed_on_missing_attr():
+    """1.6: _force_missing_backend=True simulates the missing-internal-attr condition;
+    make_pinned_transport must raise rather than return an unpinned transport."""
+    from wallbreaker.tools.egress_guard import make_pinned_transport
+
+    with pytest.raises(Exception):
+        make_pinned_transport(_force_missing_backend=True)

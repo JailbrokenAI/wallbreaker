@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:line-counts": "node -e \"const fs=require('fs');const files=['src/components/Runs.tsx','src/components/Findings.tsx','src/components/Agent.tsx'];let fail=false;files.forEach(f=>{const n=fs.readFileSync(f,'utf8').split('\\n').length;if(n>400){console.error('FAIL: '+f+' has '+n+' lines (max 400)');fail=true;}else{console.log('OK: '+f+' ('+n+' lines)');}});if(fail)process.exit(1);\""
   },
   "dependencies": {
     "react": "^18.3.1",

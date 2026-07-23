@@ -1,0 +1,21 @@
+# Corpus integrity pins — see wallbreaker corpus verify
+# Each entry pins a runtime-fetched corpus to a commit SHA.
+# Mismatch at load time fails closed (refuses to load the corpus).
+
+[corpus.P4RS3LT0NGV3]
+repo = "https://github.com/JailbrokenAI/P4RS3LT0NGV3"
+sha = "UNRESOLVED"
+fetched = "2026-07-23"
+note = "SHA unresolved: corpus requires network fetch. Run: wallbreaker corpus verify --update"
+
+[corpus.L1B3RT4S]
+repo = "https://github.com/JailbrokenAI/L1B3RT4S"
+sha = "UNRESOLVED"
+fetched = "2026-07-23"
+note = "SHA unresolved: corpus requires network fetch. Run: wallbreaker corpus verify --update"
+
+[corpus.ENI]
+repo = "https://github.com/JailbrokenAI/ENI"
+sha = "UNRESOLVED"
+fetched = "2026-07-23"
+note = "SHA unresolved: corpus requires network fetch. Run: wallbreaker corpus verify --update"
