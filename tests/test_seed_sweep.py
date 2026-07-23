@@ -4,8 +4,13 @@ import pytest
 
 import wallbreaker.providers.factory as factory
 from wallbreaker.config import Config, Endpoint, load_config
-from wallbreaker.tools import build_registry, seed_sweep
+from wallbreaker.tools import build_registry, gemlib, seed_sweep
 from wallbreaker.tools.registry import ToolContext, ToolRegistry
+
+# ZetaLib/UltraBr3aks are gitignored, runtime-fetched corpora — absent on a cold CI checkout.
+# Guard corpus-present assertions on the SAME predicate _collect_seeds branches on
+# (gemlib.is_present), so the skip condition can never drift from the code path (Issue-2 pattern).
+_GEM_PRESENT = gemlib.is_present("zetalib") and gemlib.is_present("ultrabreaks")
 
 
 def test_seed_sweep_registered():
@@ -59,6 +64,7 @@ def test_collect_seeds_filter():
     assert all("claude" in lbl.lower() for lbl, _ in seeds)
 
 
+@pytest.mark.skipif(not _GEM_PRESENT, reason="requires offline corpus: ZetaLib + UltraBr3aks. Run: wallbreaker lib update. Tracked: corpus-offline.")
 def test_collect_seeds_includes_gem_corpora():
     labels = [lbl for lbl, _ in seed_sweep._collect_seeds(None)]
     assert any(lbl.startswith("zeta:") for lbl in labels)
