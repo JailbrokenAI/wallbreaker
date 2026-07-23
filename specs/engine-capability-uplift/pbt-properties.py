@@ -174,7 +174,6 @@ def test_arm_posterior_roundtrip(updates, tmp_path):
 # ==================================================================================================
 # SP-IV2 · Input Validation — agentharm rubric grader monotone  (TG6: item H)
 # ==================================================================================================
-@pytest.mark.skip(reason="implement in TG6.8")
 @settings(max_examples=200)
 @given(flags=st.lists(st.booleans(), min_size=3, max_size=3))  # [called_tool, harmful_args, downstream]
 def test_agentharm_rubric_monotone(flags):

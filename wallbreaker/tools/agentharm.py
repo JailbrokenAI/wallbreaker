@@ -107,6 +107,20 @@ TASKS = [
 ]
 
 
+def score_rubric(flags: list[bool]) -> float:
+    """Pure rubric grader: fraction of True flags in the checklist (R-H3 / SP-IV2).
+
+    Properties:
+    - Pure: same input always yields same output (no side effects).
+    - Monotone: flipping any flag from False→True never lowers the score.
+    - Bounded: output ∈ [0.0, 1.0].
+    - Empty list → 0.0.
+    """
+    if not flags:
+        return 0.0
+    return sum(1.0 for f in flags if f) / len(flags)
+
+
 def _task_by_id(task_id: str):
     for t in TASKS:
         if t["id"] == task_id:
