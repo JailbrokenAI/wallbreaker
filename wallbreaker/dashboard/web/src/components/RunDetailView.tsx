@@ -6,6 +6,7 @@ import {
 } from "react";
 import { verdictKind, type RunDetail } from "../api";
 import { emptyPlaceholder, formatTimestamp, snippet } from "../format";
+import { RunExpandedRow } from "./RunExpandedRow";
 
 // ── types shared with Runs.tsx ────────────────────────────────────────────────
 
@@ -147,34 +148,6 @@ export function previewForRecord(record: RunRecord, detail: RowDetail): PreviewL
   }
   const fields = Object.entries(record).filter(([key]) => key !== "ts" && key !== "kind");
   return fields.slice(0, 2).map(([key, value]) => ({ label: key, value: textValue(value) }));
-}
-
-// ── InferenceExpanded ─────────────────────────────────────────────────────────
-
-function InferenceExpanded({ record }: { record: RunRecord }) {
-  const request = objectValue(record.request) || {};
-  const endpoint = objectValue(request.endpoint);
-  const messages = Array.isArray(request.messages) ? request.messages : [];
-  const tools = request.tools;
-  const stream = Array.isArray(record.stream) ? record.stream as RunRecord[] : [];
-  return (
-    <div className="inference-expanded">
-      <section className="run-text-panel"><div className="run-text-head"><b>Request</b></div>
-        <div className="inference-meta"><span><b>Operation</b>{firstText(record, ["operation"])}</span><span><b>Provider / model</b>{firstText(endpoint, ["provider", "name"])} · {firstText(endpoint, ["model"])}</span></div>
-        {textValue(request.system) && <><b>System prompt</b><pre>{textValue(request.system)}</pre></>}
-        <b>Messages</b><pre>{jsonValue(messages)}</pre>
-        {tools != null && <><b>Tools and parameters</b><pre>{jsonValue({ tools, parameters: request.parameters })}</pre></>}
-      </section>
-      <section className="run-text-panel"><div className="run-text-head"><b>Stream transcript</b></div>
-        {stream.length ? stream.map((part, index) => <div className={`inference-segment ${textValue(part.channel)}`} key={index}><strong>{textValue(part.channel) === "reasoning" ? "REASONING" : "MODEL"}</strong><pre>{textValue(part.text)}</pre></div>) : <span className="muted">No streamed text captured.</span>}
-      </section>
-      <section className="run-text-panel"><div className="run-text-head"><b>Completion</b></div>
-        <div className="inference-meta"><span><b>Status</b>{firstText(record, ["status"])}</span><span><b>Duration</b>{firstText(record, ["duration_ms"])} ms</span><span><b>Stop</b>{textValue(record.stop_reasons) || "none"}</span></div>
-        {textValue(record.error) && <pre className="inference-error">{textValue(record.error)}</pre>}
-        <b>Final response</b><pre>{textValue(record.text) || emptyPlaceholder}</pre>
-      </section>
-    </div>
-  );
 }
 
 // ── RunDetailView — the open-run table view ───────────────────────────────────
@@ -357,11 +330,6 @@ export function RunDetailView({
             const rawLine = sourceLines.length ? sourceLines.map((line) => rawMap.get(line) || "").filter(Boolean).join("\n") : (runDetail?.raw_records?.[i] || jsonValue(r, false));
             const lineNumber = sourceLines[0] ?? runDetail?.line_numbers?.[i] ?? i + 1;
             const lineKey = `${rowKey}-line`;
-            const fields = Object.entries(r);
-            const fieldsText = fields
-              .map(([key, value]) => `${key}:\n${fieldValue(value)}`)
-              .join("\n\n");
-            const fieldsKey = `${rowKey}-fields`;
             const preview = previewForRecord(r, detail);
             return (
               <Fragment key={rowKey}>
@@ -372,67 +340,17 @@ export function RunDetailView({
                   {columns.map((column) => renderRunCell(column, r, i, preview, isExpanded, rawLine, lineKey))}
                 </tr>
                 {isExpanded && (
-                  <tr className="run-expanded-row">
-                    <td colSpan={columns.length}>
-                      <div className="run-expanded-head">
-                        <span className="mono muted">record {i + 1} · line {lineNumber}</span>
-                        <div className="run-actions">
-                          <button
-                            type="button"
-                            className="mini-btn"
-                            onClick={() => onCopyText(lineKey, rawLine)}
-                          >
-                            {copied === lineKey ? "Copied" : "Copy JSONL line"}
-                          </button>
-                        </div>
-                      </div>
-                      {textValue(r.kind).toLowerCase() === "inference" ? <InferenceExpanded record={r} /> : <div className="run-fields-panel">
-                        <div className="run-text-head">
-                          <b>All JSON fields</b>
-                          <button
-                            type="button"
-                            className="mini-btn"
-                            onClick={() => onCopyText(fieldsKey, fieldsText)}
-                          >
-                            {copied === fieldsKey ? "Copied" : "Copy fields"}
-                          </button>
-                        </div>
-                        <div className="run-field-list">
-                          {fields.map(([key, value]) => {
-                            const valueText = fieldValue(value);
-                            const valueKey = `${rowKey}-field-${key}`;
-                            return (
-                              <div className="run-field-row" key={key}>
-                                <div className="run-field-key mono">{key}</div>
-                                <pre>{valueText}</pre>
-                                <button
-                                  type="button"
-                                  className="mini-btn"
-                                  onClick={() => onCopyText(valueKey, valueText)}
-                                >
-                                  {copied === valueKey ? "Copied" : "Copy"}
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>}
-                      <details className="run-text-panel run-raw-panel">
-                        <summary>Raw record</summary>
-                        <div className="run-text-head">
-                          <b>Raw JSONL line</b>
-                          <button
-                            type="button"
-                            className="mini-btn"
-                            onClick={() => onCopyText(lineKey, rawLine)}
-                          >
-                            {copied === lineKey ? "Copied" : "Copy"}
-                          </button>
-                        </div>
-                        <pre>{rawLine}</pre>
-                      </details>
-                    </td>
-                  </tr>
+                  <RunExpandedRow
+                    record={r}
+                    index={i}
+                    lineNumber={lineNumber}
+                    lineKey={lineKey}
+                    rawLine={rawLine}
+                    colSpan={columns.length}
+                    copied={copied}
+                    rowKey={rowKey}
+                    onCopyText={onCopyText}
+                  />
                 )}
               </Fragment>
             );

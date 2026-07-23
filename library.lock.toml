@@ -1,21 +1,43 @@
 # Corpus integrity pins — see wallbreaker corpus verify
 # Each entry pins a runtime-fetched corpus to a commit SHA.
 # Mismatch at load time fails closed (refuses to load the corpus).
+#
+# Status values:
+#   sha = "<40-char hex>"  — pinned, enforced
+#   sha = "UNRESOLVED"    — not yet pinned; load is refused until resolved.
+#                           Run: wallbreaker corpus verify --update
+#
+# Locally present corpora (SHAs resolved from current checkout):
+
+[corpus.UltraBr3aks]
+repo = "https://github.com/SlowLow999/UltraBr3aks"
+sha = "48f45de488319b5bed16a73a554feaf02a12af66"
+fetched = "2026-07-23"
+note = "Resolved from local library/UltraBr3aks clone."
+
+[corpus.ZetaLib]
+repo = "https://github.com/Exocija/ZetaLib"
+sha = "a171235d851cc1b1dc5fd957897e7f938ff6fe4b"
+fetched = "2026-07-23"
+note = "Resolved from local library/ZetaLib clone."
+
+# Online-only corpora — require network fetch before they can be pinned.
+# Run: wallbreaker lib update && wallbreaker corpus verify --update
 
 [corpus.P4RS3LT0NGV3]
-repo = "https://github.com/JailbrokenAI/P4RS3LT0NGV3"
+repo = "https://github.com/elder-plinius/P4RS3LT0NGV3"
 sha = "UNRESOLVED"
 fetched = "2026-07-23"
-note = "SHA unresolved: corpus requires network fetch. Run: wallbreaker corpus verify --update"
+note = "Online-only corpus; not present in this checkout. Run: wallbreaker corpus verify --update after wallbreaker lib update."
 
 [corpus.L1B3RT4S]
-repo = "https://github.com/JailbrokenAI/L1B3RT4S"
+repo = "https://github.com/elder-plinius/L1B3RT4S"
 sha = "UNRESOLVED"
 fetched = "2026-07-23"
-note = "SHA unresolved: corpus requires network fetch. Run: wallbreaker corpus verify --update"
+note = "Online-only corpus; not present in this checkout. Run: wallbreaker corpus verify --update after wallbreaker lib update."
 
 [corpus.ENI]
-repo = "https://github.com/JailbrokenAI/ENI"
+repo = "https://github.com/elder-plinius/ENI"
 sha = "UNRESOLVED"
 fetched = "2026-07-23"
-note = "SHA unresolved: corpus requires network fetch. Run: wallbreaker corpus verify --update"
+note = "Online-only corpus; not present in this checkout. Run: wallbreaker corpus verify --update after wallbreaker lib update."
