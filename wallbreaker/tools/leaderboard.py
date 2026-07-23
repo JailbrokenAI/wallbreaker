@@ -109,7 +109,8 @@ async def _cross_family_leaderboard(args: dict, ctx: ToolContext) -> str:
 
     # Render the matrix
     col_w = max(14, max(len(f) for f in families) + 2)
-    header = f"{'origin \\ target':20} " + "".join(f"{f:>{col_w}}" for f in families)
+    _corner = "origin / target"  # avoid backslash in f-string expr (SyntaxError on Python 3.11)
+    header = f"{_corner:20} " + "".join(f"{f:>{col_w}}" for f in families)
     rows = [
         f"CROSS-FAMILY TRANSFER MATRIX ({len(endpoints)} profiles, {len(strategies)} strategies)",
         "=" * len(header),

@@ -68,6 +68,10 @@ wallbreaker/dashboard/web/dist/
 wallbreaker/dashboard/web/vite.config.js
 wallbreaker/dashboard/web/vite.config.d.ts
 
+# spec trees and validation artifacts — methodology IP, not repo content
+# (VALIDATION_PROTOCOL.md §09: specs/ travels with the operator, not the repo)
+specs/
+
 .pytest_cache/
 .serena/
 *.log
