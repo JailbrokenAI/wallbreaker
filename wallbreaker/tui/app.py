@@ -2212,10 +2212,29 @@ class RthApp(App):
         top_tools = sorted(tool_calls.items(), key=lambda kv: -kv[1])[:6]
         tool_lines = [f"  {t:16} {n}x" for t, n in top_tools] or ["  (none)"]
 
+        # TG3: best technique by family from the contextual bandit state (R-D3)
+        family_lines: list[str] = []
+        try:
+            from ..tools._bandit import best_technique_by_family, stats_path
+            by_fam = best_technique_by_family(stats_path(self.runlog.path.parent))
+            if by_fam:
+                for family in sorted(by_fam):
+                    cats = by_fam[family]
+                    cat_str = ", ".join(f"{c}→{t}" for c, t in sorted(cats.items()))
+                    family_lines.append(f"  {family:12} {cat_str}")
+        except Exception:  # noqa: BLE001
+            pass
+
+        family_section = (
+            ("best technique by family:\n" + "\n".join(family_lines) + "\n\n")
+            if family_lines else ""
+        )
+
         self._mount(widgets.info_panel(
             f"graded fires: {total}   ASR: {asr}   ({hits} bypass / {total - hits} held)\n\n"
             f"verdict mix:\n" + "\n".join(bar_lines) + "\n\n"
             "ASR by technique:\n" + "\n".join(tech_lines) + "\n\n"
+            + family_section +
             "busiest tools:\n" + "\n".join(tool_lines) + "\n\n"
             f"log: {self.runlog.path}",
             title="stats",

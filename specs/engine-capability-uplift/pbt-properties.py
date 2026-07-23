@@ -110,7 +110,6 @@ def test_context_delegation_parity(field, value, tmp_path):
 # ==================================================================================================
 # SP-IV1 · Input Validation — family classifier totality  (TG3: item D)
 # ==================================================================================================
-@pytest.mark.skip(reason="implement in TG3.5")
 @settings(max_examples=400)
 @given(model=_MODEL_STRINGS)
 def test_family_classifier_total(model):
