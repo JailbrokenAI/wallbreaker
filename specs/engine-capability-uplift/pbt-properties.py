@@ -125,7 +125,6 @@ def test_family_classifier_total(model):
 # ==================================================================================================
 # SP-C1 · Correctness — bandit only returns registered arms; posterior stays valid  (TG5: item G)
 # ==================================================================================================
-@pytest.mark.skip(reason="implement in TG5.7")
 @settings(max_examples=200, deadline=None)
 @given(
     arms=st.lists(st.tuples(st.sampled_from(["pair", "crescendo", "ica"]),
@@ -151,22 +150,23 @@ def test_bandit_registered_arms_only(arms, rewards):
         assert b.count(k) >= 0 and 0.0 <= b.mean(k) <= 1.0
 
 
-@pytest.mark.skip(reason="implement in TG5.8")
-@settings(max_examples=100)
+@settings(max_examples=100, suppress_health_check=_SC)
 @given(updates=st.lists(st.tuples(st.sampled_from(["a", "b", "c"]), st.floats(0.0, 1.0)),
                         min_size=1, max_size=40))
 def test_arm_posterior_roundtrip(updates, tmp_path):
     """A bandit's (alpha,beta,n) per arm survives save->load exactly (campaign resume must not lose
     posterior state). (R-G3)"""
+    import uuid
     from wallbreaker.tools._bandit import BanditStore
 
-    store = BanditStore(str(tmp_path / "state.json"))
+    path = str(tmp_path / f"state_{uuid.uuid4().hex}.json")
+    store = BanditStore(path)
     band = store.bandit("gpt-5", "cyber")
     for arm, r in updates:
         band.update(arm, r)
     store.save("gpt-5", "cyber", band)
 
-    reopened = BanditStore(str(tmp_path / "state.json")).bandit("gpt-5", "cyber")
+    reopened = BanditStore(path).bandit("gpt-5", "cyber")
     for arm in {a for a, _ in updates}:
         assert reopened.count(arm) == band.count(arm)
 
