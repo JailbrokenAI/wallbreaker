@@ -170,6 +170,60 @@ def retrieval_bonus(score: float) -> float:
     return score / (score + 10.0)
 
 
+def cross_family_matrix(
+    strategies: list[dict],
+    families: list[str],
+) -> dict:
+    """Build a winning-technique-per-family transfer matrix (R-I3).
+
+    ``strategies`` is a list of strategy rows (from StrategyLibrary.all()).
+    ``families`` is the list of family strings to report.
+
+    Returns::
+        {
+            "matrix": {
+                origin_family: {target_family: best_strategy_name | None}
+            },
+            "families": list[str],
+        }
+
+    A cell [A][B] = "technique_X" means strategy_X was won on family A and also
+    achieved the highest cross_family_wins on family B.  None means no data.
+    """
+    # Group effective/promising strategies by family
+    by_family: dict[str, list[dict]] = {f: [] for f in families}
+    for row in strategies:
+        fam = row.get("family", "other")
+        if fam in by_family and tier_of(row) != TIER_INEFFECTIVE:
+            by_family[fam].append(row)
+
+    matrix: dict = {}
+    for orig in families:
+        matrix[orig] = {}
+        orig_strats = sorted(
+            by_family.get(orig, []),
+            key=lambda r: float(r.get("avg_score", 0.0)),
+            reverse=True,
+        )
+        for tgt in families:
+            if orig == tgt:
+                matrix[orig][tgt] = None
+                continue
+            if not orig_strats:
+                matrix[orig][tgt] = None
+                continue
+            # Best-transferring strategy: highest cross_family_wins among strategies
+            # that originated on 'orig' family
+            best = max(
+                orig_strats,
+                key=lambda r: float(r.get("cross_family_wins", 0)),
+                default=None,
+            )
+            matrix[orig][tgt] = best["strategy_name"] if best else None
+
+    return {"matrix": matrix, "families": families}
+
+
 # ---------------------------------------------------------------------------
 # Tiers
 # ---------------------------------------------------------------------------
@@ -439,7 +493,8 @@ class StrategyLibrary:
     # ------------------------------------------------------------------
 
     def add(self, name: str, desc: str, example: str, score: float, *,
-            tier: str | None = None, avoid_rule: str | None = None) -> dict | None:
+            tier: str | None = None, avoid_rule: str | None = None,
+            family: str | None = None) -> dict | None:
         """Insert a new strategy, or fold a fresh observation into an existing one.
 
         ``tier`` (effective/promising/ineffective) is set explicitly when distilling from
@@ -470,6 +525,8 @@ class StrategyLibrary:
             existing["tier"] = tier if tier in TIERS else tier_from_score(existing["avg_score"])
             if avoid_rule:
                 existing["avoid_rule"] = avoid_rule
+            if family:
+                existing["family"] = str(family)
             self.save()
             return existing
         row: dict = {
@@ -485,12 +542,14 @@ class StrategyLibrary:
             row["embedding_model"] = tag
         if avoid_rule:
             row["avoid_rule"] = avoid_rule
+        if family:
+            row["family"] = str(family)
         self.rows.append(row)
         self.save()
         return row
 
     def distill(self, objective: str, prompt: str, response: str, reasoning: str,
-                label: str, score: float) -> dict | None:
+                label: str, score: float, *, family: str | None = None) -> dict | None:
         """Store a reusable strategy card from ONE graded attempt (win OR refusal)."""
         prompt = (prompt or "").strip()
         objective = objective or ""
@@ -502,7 +561,7 @@ class StrategyLibrary:
         if tier == TIER_INEFFECTIVE:
             avoid_rule = extract_refusal_reason(response, reasoning) or "target refused"
         return self.add(name, desc, prompt or desc, float(score or 0.0),
-                        tier=tier, avoid_rule=avoid_rule)
+                        tier=tier, avoid_rule=avoid_rule, family=family)
 
     def update_score(self, name: str, score: float) -> dict | None:
         row = self._find(name)
@@ -510,6 +569,53 @@ class StrategyLibrary:
             return None
         self._roll(row, float(score or 0.0))
         row["tier"] = tier_from_score(row["avg_score"])
+        self.save()
+        return row
+
+    # TG7 — cross-family transfer learning (item I / R-I1, R-I2)
+
+    def retrieve_by_family(self, family: str, k: int = 5) -> list[dict]:
+        """Return top-k effective/promising strategies tagged with the given family.
+
+        Used for cold-start: surface same-family strategies before any live probe (R-I1).
+        Ordered by avg_score descending; falls back to all tiers if < k positive rows.
+        """
+        family = str(family or "")
+        positive = [
+            r for r in self.rows
+            if r.get("family") == family and tier_of(r) != TIER_INEFFECTIVE
+        ]
+        positive.sort(key=lambda r: float(r.get("avg_score", 0.0)), reverse=True)
+        results = positive[:max(0, k)]
+        if len(results) < k:
+            # Fill from any tier
+            seen = {r["strategy_name"] for r in results}
+            fallback = [
+                r for r in self.rows
+                if r.get("family") == family and r["strategy_name"] not in seen
+            ]
+            fallback.sort(key=lambda r: float(r.get("avg_score", 0.0)), reverse=True)
+            results.extend(fallback[:k - len(results)])
+        return results
+
+    def update_transfer_score(
+        self, name: str,
+        origin_delta: int = 0,
+        same_family_delta: int = 0,
+        cross_family_delta: int = 0,
+    ) -> dict | None:
+        """Increment the transfer-score counters on a row (R-I2).
+
+        Components are non-negative integers; increments must be ≥ 0.
+        The retrieval bonus is computed on-the-fly from these counters using
+        ``transfer_score()`` and ``retrieval_bonus()``.
+        """
+        row = self._find(name)
+        if row is None:
+            return None
+        row["origin_wins"] = max(0, int(row.get("origin_wins", 0)) + max(0, origin_delta))
+        row["same_family_wins"] = max(0, int(row.get("same_family_wins", 0)) + max(0, same_family_delta))
+        row["cross_family_wins"] = max(0, int(row.get("cross_family_wins", 0)) + max(0, cross_family_delta))
         self.save()
         return row
 

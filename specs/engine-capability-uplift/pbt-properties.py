@@ -192,7 +192,6 @@ def test_agentharm_rubric_monotone(flags):
 # ==================================================================================================
 # SP-DI4 · Data Integrity — cross-family transfer score conservation  (TG7: item I)
 # ==================================================================================================
-@pytest.mark.skip(reason="implement in TG7.6")
 @settings(max_examples=200)
 @given(
     origin=st.integers(0, 50), same=st.integers(0, 50), cross=st.integers(0, 50),
