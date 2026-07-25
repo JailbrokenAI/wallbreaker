@@ -6,7 +6,6 @@ running the full suite (see tasks.md §2.4); this file covers the structural con
 """
 from __future__ import annotations
 
-import pytest
 import pytest; pytest.importorskip('hypothesis')
 from hypothesis import given, settings
 from hypothesis import strategies as st

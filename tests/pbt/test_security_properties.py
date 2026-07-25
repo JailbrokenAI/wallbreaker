@@ -13,6 +13,7 @@ import os
 import string
 
 import pytest
+import pytest; pytest.importorskip('hypothesis')
 from hypothesis import given, settings, strategies as st, HealthCheck
 
 # ---------------------------------------------------------------------------

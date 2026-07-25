@@ -6,6 +6,8 @@ REL-3/RACE-1 (atomic state). Runs offline; no network, no real subprocess.
 """
 from __future__ import annotations
 
+import pytest; pytest.importorskip('fastapi'); pytest.importorskip('hypothesis')
+
 import asyncio
 import json
 import os
