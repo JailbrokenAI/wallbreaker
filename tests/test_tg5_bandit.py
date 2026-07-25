@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 
 import pytest
+import pytest; pytest.importorskip('hypothesis')
 from hypothesis import given, settings
 from hypothesis import strategies as st
 

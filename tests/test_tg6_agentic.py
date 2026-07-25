@@ -6,6 +6,7 @@ coverage matrix shape (R-H4). All tests CI-cold-safe (no network, no corpora).
 from __future__ import annotations
 
 import pytest
+import pytest; pytest.importorskip('hypothesis')
 from hypothesis import given, settings
 from hypothesis import strategies as st
 

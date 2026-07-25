@@ -138,8 +138,9 @@ def wb_seed_list(source: str = "all") -> str:
             except Exception:
                 pass
 
-        # Always include built-in static seeds as a fallback
-        if source in ("all", "builtin"):
+        # Always include built-in static seeds as a fallback when no
+        # external categories were found, or when source is "all"/"builtin".
+        if not categories_list or source in ("all", "builtin"):
             categories_list.extend(_STATIC_CATEGORIES)
 
         return json.dumps({"categories": categories_list, "source": source})

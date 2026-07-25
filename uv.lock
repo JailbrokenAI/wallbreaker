@@ -1404,6 +1404,7 @@ stego = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "hypothesis" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -1430,6 +1431,7 @@ provides-extras = ["dev", "barcodes", "stego", "dashboard"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "hypothesis", specifier = ">=6.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
 ]

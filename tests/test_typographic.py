@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest; pytest.importorskip('PIL', reason='Pillow not installed')
+
 import asyncio
 
 from PIL import Image

@@ -7,6 +7,7 @@ SP-DI4 PBT. All tests CI-cold-safe.
 from __future__ import annotations
 
 import pytest
+import pytest; pytest.importorskip('hypothesis')
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
