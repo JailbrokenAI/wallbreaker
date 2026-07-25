@@ -5,7 +5,7 @@ import asyncio
 from ..agent.messages import user
 from ..judging import grade
 from ._bandit import BanditStore, stats_path
-from ._util import complete_untruncated, gather_capped
+from ._util import complete_untruncated, gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 # ENI personas run ~35KB; truncating them mid-prompt cripples the jailbreak, so keep the
@@ -90,15 +90,13 @@ async def _seed_sweep(args: dict, ctx: ToolContext) -> str:
                 msgs, sysp = [user(request)], seed
             else:
                 msgs, sysp = [user(seed + "\n\n" + request)], None
-            reply, reasoning, _stop, _trunc = await asyncio.wait_for(
-                complete_untruncated(target, msgs, system=sysp, max_tokens=max_tokens),
+            reply, reasoning, _stop, _trunc = await await_llm(complete_untruncated(target, msgs, system=sysp, max_tokens=max_tokens),
                 timeout=timeout,
             )
-            vl, score, reason, _s = await asyncio.wait_for(
-                grade(ctx.judge_endpoint, reply, payload=request, objective=request, reasoning=reasoning),
+            vl, score, reason, _s = await await_llm(grade(ctx.judge_endpoint, reply, payload=request, objective=request, reasoning=reasoning),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             return {"label": label, "verdict": "ERROR", "score": -1, "reason": "timeout"}
         except Exception as exc:  # noqa: BLE001
             return {"label": label, "verdict": "ERROR", "score": -1, "reason": str(exc)[:60]}

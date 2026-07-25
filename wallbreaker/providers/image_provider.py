@@ -196,7 +196,9 @@ class OpenRouterImageProvider(Provider):
                 duration_ms=round((time.monotonic() - started) * 1000, 3),
             )
             if isinstance(exc, httpx.HTTPError):
-                raise ProviderError(f"network error from {url}: {exc!r}") from exc
+                from .base import classify_http_error
+
+                raise ProviderError(classify_http_error(url, exc)) from exc
             raise
 
     async def generate(
@@ -348,7 +350,9 @@ async def vision_complete(
             duration_ms=round((time.monotonic() - started) * 1000, 3),
         )
         if isinstance(exc, httpx.HTTPError):
-            raise ProviderError(f"network error from {url}: {exc!r}") from exc
+            from .base import classify_http_error
+
+            raise ProviderError(classify_http_error(url, exc)) from exc
         raise
     choices = data.get("choices") or []
     if choices:

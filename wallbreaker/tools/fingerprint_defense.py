@@ -4,7 +4,7 @@ import asyncio
 
 from ..agent.messages import assistant, user
 from ..transforms import TRANSFORMS, apply_chain, decode_chain
-from ._util import complete_with_reasoning as _complete
+from ._util import complete_with_reasoning as _complete, await_llm
 from ._util import gather_capped
 from .registry import ToolContext, ToolRegistry
 
@@ -124,8 +124,7 @@ async def _fire_one(ctx, messages, system, max_tokens, timeout):
     from ..providers.factory import build_provider
 
     provider = build_provider(ctx.config.target, timeout=timeout)
-    reply, _reasoning = await asyncio.wait_for(
-        _complete(provider, messages, system, max_tokens), timeout=timeout
+    reply, _reasoning = await await_llm(_complete(provider, messages, system, max_tokens), timeout=timeout
     )
     stop = getattr(provider, "last_stop_reason", None)
     empty = not (reply or "").strip()
@@ -140,7 +139,7 @@ async def _probe_simple(
     messages.append(user(prompt))
     try:
         reply, stop, empty = await _fire_one(ctx, messages, system, max_tokens, timeout)
-    except asyncio.TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         return name, "error"
     except Exception:  # noqa: BLE001
         return name, "error"
@@ -165,7 +164,7 @@ async def _probe_ramp(ctx, benign, payload, system, max_tokens, timeout):
     thread = [user(benign), assistant(first or "Sure."), user(payload)]
     try:
         reply, stop, empty = await _fire_one(ctx, thread, system, max_tokens, timeout)
-    except asyncio.TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         return "ramp", "error"
     except Exception:  # noqa: BLE001
         return "ramp", "error"

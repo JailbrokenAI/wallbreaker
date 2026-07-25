@@ -6,7 +6,7 @@ from ..agent.messages import assistant, user
 from ..judging import grade
 from ..transforms import apply_chain
 from ._bandit import BanditStore, stats_path
-from ._util import gather_capped
+from ._util import gather_capped, await_llm
 from .many_shot import _build_shots
 from .narrate import DEFAULT_CHARACTER, DEFAULT_GENRE, build_frame, build_opener
 from .registry import ToolContext, ToolRegistry
@@ -212,15 +212,13 @@ async def _grid_sweep(args: dict, ctx: ToolContext) -> str:
         nonlocal done
         try:
             msgs = builder(behavior)
-            reply = await asyncio.wait_for(
-                target.complete(msgs, system=system, max_tokens=max_tokens),
+            reply = await await_llm(target.complete(msgs, system=system, max_tokens=max_tokens),
                 timeout=timeout,
             )
-            label, _score, reason, _s = await asyncio.wait_for(
-                grade(ctx.judge_endpoint, reply, payload=behavior, objective=behavior),
+            label, _score, reason, _s = await await_llm(grade(ctx.judge_endpoint, reply, payload=behavior, objective=behavior),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             label, reply, reason = "ERROR", "", "timeout"
         except Exception as exc:  # noqa: BLE001
             label, reply, reason = "ERROR", "", str(exc)[:50]

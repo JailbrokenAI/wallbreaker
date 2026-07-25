@@ -2,6 +2,12 @@
 
 Deduped, ranked, phased. "Convergence" = how many independent agents flagged it (higher = stronger signal). Each item maps to the file(s) it touches.
 
+## Active product bugs (desktop fork)
+
+See **[docs/BUGS.md](docs/BUGS.md)** for the living list.
+
+- **BUG-001 (P1, open)** — Attack/transcript can show success (`COMPLIED` / real target content) **and** still surface `network error` (likely over-broad `httpx.HTTPError` → `network error` mapping in stream provider + multi-call aggregation). Do not treat final red “network error” as ground truth until fixed; check `sessions/run-*.jsonl` / Findings.
+
 ## Convergence signals (what multiple agents independently demanded)
 - **StrongREJECT decomposed judge** — judge + benchmarks + frameworks agents (×3). Highest-confidence change.
 - **Adaptive multi-turn core (backtrack/beam)** — optimizers + multi-turn + frameworks (×3). Where 96% ASR lives.

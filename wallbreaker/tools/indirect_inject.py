@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ._util import await_llm
+
 import asyncio
 import re
 
@@ -278,17 +280,15 @@ async def _indirect_inject(args: dict, ctx: ToolContext) -> str:
     timeout = float(args.get("timeout", 90))
     target = build_provider(ctx.config.target, timeout=timeout)
     try:
-        resp = await asyncio.wait_for(
-            target.complete([user(framed)], max_tokens=int(args.get("max_tokens", 600))),
+        resp = await await_llm(target.complete([user(framed)], max_tokens=int(args.get("max_tokens", 600))),
             timeout=max(timeout, 30.0),
         )
-    except asyncio.TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         return f"[target error] timeout after {timeout}s on indirect_inject ({carrier})"
     except Exception as exc:  # noqa: BLE001
         return f"[target error] {type(exc).__name__}: {exc}"
 
-    label, score, reason, _ = await asyncio.wait_for(
-        grade(ctx.judge_endpoint, resp, payload=goal, objective=objective),
+    label, score, reason, _ = await await_llm(grade(ctx.judge_endpoint, resp, payload=goal, objective=objective),
         timeout=max(timeout, 60.0),
     )
 

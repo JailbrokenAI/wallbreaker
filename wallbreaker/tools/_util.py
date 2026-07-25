@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Coroutine
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 
 def _default_concurrency() -> int:
@@ -24,6 +27,42 @@ DEFAULT_CONCURRENCY = _default_concurrency()
 
 _TRUNC_REASONS = {"length", "max_tokens", "model_length"}
 _TRUNC_CEILING = 8000
+
+# Outer asyncio.wait_for floors (seconds). Short tool defaults used to cancel mid-stream
+# CoT/refusals and surface false ERROR/network labels (BUG-001). Provider HTTP timeouts
+# remain the real deadline via build_provider(..., timeout=...).
+_MIN_OUTER_LLM_TIMEOUT = 120.0
+
+
+async def await_llm(coro: Awaitable[T] | Coroutine[Any, Any, T], timeout: float | None = None) -> T:
+    """Await an LLM completion without cancelling a healthy stream.
+
+    Historical tools wrapped ``complete*`` in ``asyncio.wait_for(..., 30|45)``. That
+    cancels the task mid-SSE even after hundreds of tokens, producing CancelledError
+    and false network/ERROR verdicts (see docs/BUGS.md BUG-001).
+
+    Policy:
+    - Prefer the provider's HTTP timeout (httpx) as the only hard stop.
+    - If a caller still passes ``timeout``, floor it to at least 120s so long CoT
+      refusals can finish; never use sub-minute outer cancels on streaming calls.
+    - ``timeout <= 0`` or ``None`` → plain await (provider timeout only).
+    """
+    if timeout is None:
+        return await coro
+    try:
+        t = float(timeout)
+    except (TypeError, ValueError):
+        return await coro
+    if t <= 0:
+        return await coro
+    hard = max(t, _MIN_OUTER_LLM_TIMEOUT)
+    try:
+        return await asyncio.wait_for(coro, timeout=hard)
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(
+            f"LLM call exceeded outer timeout {hard:g}s (not a network failure; "
+            f"raise tool timeout or provider timeout)"
+        ) from exc
 
 
 async def complete_with_reasoning(provider, messages, system=None, max_tokens=1024, temperature=None):

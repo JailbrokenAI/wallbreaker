@@ -7,7 +7,7 @@ import time
 
 from ..agent.messages import user
 from ..judging import grade
-from ._util import complete_with_reasoning, gather_capped
+from ._util import complete_with_reasoning, gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 DECOMPOSER_SYSTEM = (
@@ -75,8 +75,7 @@ def _parse_subparts(text: str) -> list[str]:
 
 async def _fire(provider, prompt, system, max_tokens, timeout=_CALL_TIMEOUT):
     try:
-        return await asyncio.wait_for(
-            provider.complete([user(prompt)], system=system, max_tokens=max_tokens),
+        return await await_llm(provider.complete([user(prompt)], system=system, max_tokens=max_tokens),
             timeout=timeout,
         )
     except Exception as exc:  # noqa: BLE001
@@ -107,8 +106,7 @@ async def _drattack(args: dict, ctx: ToolContext) -> str:
     ctx.emit(f"drattack: decomposing objective vs {ctx.config.target.model}")
     seed = DECOMPOSE_TEMPLATE.format(objective=objective)
     try:
-        raw_parts = await asyncio.wait_for(
-            attacker.complete([user(seed)], system=DECOMPOSER_SYSTEM, max_tokens=500),
+        raw_parts = await await_llm(attacker.complete([user(seed)], system=DECOMPOSER_SYSTEM, max_tokens=500),
             timeout=_CALL_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001
@@ -138,16 +136,14 @@ async def _drattack(args: dict, ctx: ToolContext) -> str:
         objective=objective, fragments=fragments_block,
     )
     try:
-        reassemble_prompt = await asyncio.wait_for(
-            attacker.complete([user(reassemble_seed)], system=DECOMPOSER_SYSTEM, max_tokens=800),
+        reassemble_prompt = await await_llm(attacker.complete([user(reassemble_seed)], system=DECOMPOSER_SYSTEM, max_tokens=800),
             timeout=_CALL_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001
         return f"drattack: reassembly prompt failed: {exc}"
 
     try:
-        reply, reasoning = await asyncio.wait_for(
-            complete_with_reasoning(
+        reply, reasoning = await await_llm(complete_with_reasoning(
                 target, [user(reassemble_prompt)], system=system, max_tokens=max_tokens,
             ),
             timeout=_CALL_TIMEOUT,
@@ -157,8 +153,7 @@ async def _drattack(args: dict, ctx: ToolContext) -> str:
     dt = time.monotonic() - start
 
     try:
-        label, score, reason, _src = await asyncio.wait_for(
-            grade(
+        label, score, reason, _src = await await_llm(grade(
                 ctx.judge_endpoint, reply, payload=reassemble_prompt,
                 objective=objective, reasoning=reasoning,
             ),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ._util import await_llm
+
 import base64
 import time
 from pathlib import Path
@@ -321,7 +323,7 @@ async def _image_chain_auto(args: dict, ctx: ToolContext) -> str:
     provider = build_provider(target, timeout=timeout)
 
     async def _bounded(coro):
-        return await asyncio.wait_for(coro, timeout=timeout)
+        return await await_llm(coro, timeout=timeout)
 
     history: list[dict] = []
     transcript: list[str] = []

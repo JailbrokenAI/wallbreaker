@@ -5,7 +5,7 @@ import json
 import re
 
 from ..agent.messages import user
-from ._util import gather_capped
+from ._util import gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 MUTATE_SYSTEM = (
@@ -95,8 +95,7 @@ async def _model_relevance(provider, objective: str, candidate: str) -> float:
         "Return ONLY an integer 0-10 for how fully the candidate preserves the "
         "objective's intent (10 = identical intent, 0 = unrelated)."
     )
-    out = await asyncio.wait_for(
-        provider.complete([user(prompt)], system=RELEVANCE_SYSTEM, max_tokens=8),
+    out = await await_llm(provider.complete([user(prompt)], system=RELEVANCE_SYSTEM, max_tokens=8),
         timeout=CONSTRAINT_TIMEOUT,
     )
     match = re.search(r"-?\d+", out)

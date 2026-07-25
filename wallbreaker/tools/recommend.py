@@ -6,7 +6,7 @@ from ..agent.messages import user
 from ..judging import grade
 from ..transforms import TRANSFORMS, apply_chain
 from ._bandit import BanditStore, stats_path
-from ._util import gather_capped
+from ._util import gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 SURVEY = [
@@ -63,17 +63,15 @@ async def _recommend(args: dict, ctx: ToolContext) -> str:
             try:
                 # bound BOTH the target call and the judge grade, so a hung backend or a slow
                 # judge can never stall the whole survey - the probe becomes a timed-out row.
-                reply = await asyncio.wait_for(
-                    target.complete([user(encoded)], system=system, max_tokens=max_tokens),
+                reply = await await_llm(target.complete([user(encoded)], system=system, max_tokens=max_tokens),
                     timeout=timeout,
                 )
-                label, score, _r, _s = await asyncio.wait_for(
-                    grade(ctx.judge_endpoint, reply, payload=encoded, objective=base),
+                label, score, _r, _s = await await_llm(grade(ctx.judge_endpoint, reply, payload=encoded, objective=base),
                     timeout=timeout,
                 )
                 rank = _SCORE.get(label, 0) * 10 + (score or 0)
                 outcome = (name, label, rank)
-            except asyncio.TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 outcome = (name, "ERROR", "timeout")
             except Exception as exc:  # noqa: BLE001
                 outcome = (name, "ERROR", str(exc)[:50])

@@ -6,7 +6,7 @@ import json
 from ..agent.messages import user
 from ..judging import grade
 from ..strategy_lib import StrategyLibrary
-from ._util import complete_with_reasoning
+from ._util import complete_with_reasoning, await_llm
 from .registry import ToolContext, ToolRegistry
 
 ATTACKER_SYSTEM = (
@@ -152,7 +152,7 @@ async def _run_strategy_attack(objective, attacker, target, judge_endpoint, libr
     last_response = str(objective)
 
     async def _bounded(coro):
-        return await asyncio.wait_for(coro, timeout=call_timeout)
+        return await await_llm(coro, timeout=call_timeout)
 
     def _note(text: str) -> None:
         if run is not None:
