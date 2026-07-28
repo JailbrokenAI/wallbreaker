@@ -160,7 +160,7 @@ P0 工程收敛 → P1 测量可信与回归门禁 → P2 真实目标上的解�
 
 ## Status snapshot (2026-07-28)
 
-- **P0 partially done:** dirty tree split into 7 thematic commits on `fix/bug-001-stream-timeout-await-llm` (docs/gate, daedalus, measure, datasets/cli, engine surfaces, tui/providers, desktop/dashboard).
+- **P0 done:** dirty tree split into 7 thematic commits on `fix/bug-001-stream-timeout-await-llm` (docs/gate, daedalus, measure, datasets/cli, engine surfaces, tui/providers, desktop/dashboard).
 - **P1 gate:** `scripts/minimal_gate.sh` / `.ps1` + `.github/workflows/minimal-gate.yml` (127-test core subset green).
 - **P2 blocked on live keys:** local `config.toml` target `grok-4.5` currently has no resolved API key in this environment; Liberation loop needs operator key/env before live CODE→LIBERATE→Memory run.
 - Worktree clean except ignored `work/`.
@@ -170,11 +170,13 @@ P0 工程收敛 → P1 测量可信与回归门禁 → P2 真实目标上的解�
 
 ## Immediate next actions (when resuming)
 
-1. **Branch hygiene:** 从 `fix/bug-001-stream-timeout-await-llm` 按 P0 切片提交  
-2. **Smoke:**  
-   `pytest tests/test_await_llm.py tests/test_bug001_partial_salvage.py tests/test_daedalus.py tests/test_judging.py tests/test_frr_scan.py tests/test_relentless.py tests/test_schedule_and_phase5_extras.py -q`  
-3. **One real loop:** 选一个 cyber objective，跑 auto + validate + 确认 memory 写入  
-4. **Only then** 做 Phase 5 深挖或 OS 级 schedule 注册
+1. **Push/PR** ix/bug-001-stream-timeout-await-llm (optional rename eat/daedalus-operating-engine).
+2. **Keep gate green:** scripts/minimal_gate.ps1 / CI minimal-gate.
+3. **Hard-target playbook** on grok-4.5-class holds: pair_attack / goat / seed_sweep / multi_fire — not new tools.
+4. **Optional P4:** wallbreaker schedule install ... --system then register OS task.
+
+Full audit + goal prompts: [FULL_AUDIT_AND_FORWARD_PLAN.md](FULL_AUDIT_AND_FORWARD_PLAN.md).
+
 
 ---
 
