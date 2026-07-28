@@ -59,16 +59,38 @@ class ToolContext:
         return RunHandle(self, self._run_seq, label, total, target, objective)
 
     def record_verdict(
-        self, payload: str, response: str, label: str, reason: str, technique: str
+        self,
+        payload: str,
+        response: str,
+        label: str,
+        reason: str,
+        technique: str,
+        *,
+        benign: bool = False,
+        axis: str = "",
     ) -> None:
         """Report a graded fire to the host (run log + ASR) if a sink is wired.
 
         Every COMPLIED/PARTIAL verdict also auto-files into the BreakVault
         (library/breaks/<target>/<objective>/) so a working prompt is never lost.
+        Benign / FRR probes pass ``benign=True`` (or technique ``frr:...``) so
+        report scorecards can compute over-refusal rate separately from ASR.
         """
+        tech = technique or ""
+        if benign and not (tech.startswith("frr:") or tech.startswith("benign:")):
+            tech = f"frr:{tech}" if tech else "frr:benign"
         if self.record is not None:
             try:
-                self.record(payload, response, label, reason, technique)
+                # Prefer kwargs when the sink is RunLog.verdict; fall back for lambdas.
+                self.record(
+                    payload, response, label, reason, tech,
+                    **({"benign": True, "axis": axis or "benign"} if benign or axis else {}),
+                )
+            except TypeError:
+                try:
+                    self.record(payload, response, label, reason, tech)
+                except Exception:
+                    pass
             except Exception:
                 pass
         if self.vault_enabled:
@@ -97,6 +119,26 @@ class ToolContext:
             technique=technique,
             attacker_model=self.attacker_model,
         )
+        # Global Liberation Memory (Daedalus REPLAY store) — best-effort.
+        try:
+            from ..harness.replay import maybe_save_liberation
+
+            system_prefix = str(self.target_system or "")
+            maybe_save_liberation(
+                config=self.config,
+                cwd=self.cwd,
+                objective=self.current_objective or "",
+                payload=payload,
+                response=response,
+                label=label,
+                reason=reason,
+                technique=technique,
+                model=target,
+                system_prefix=system_prefix,
+                attacker_model=self.attacker_model,
+            )
+        except Exception:
+            pass
 
 
 class RunHandle:

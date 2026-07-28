@@ -43,20 +43,30 @@ class StatusHeader(Static):
         out = Text(no_wrap=True, overflow="ellipsis")
         out.append("☠ ", style=f"bold {PALETTE['brand']}")
         if busy:
-            out.append(f"{SPINNER[self._frame]} BR34CH1NG", style=f"bold {PALETTE['accent']}")
+            out.append(f"{SPINNER[self._frame]} 执行中", style=f"bold {PALETTE['accent']}")
         else:
-            out.append("4RM3D", style=f"bold {PALETTE['assistant']}")
+            out.append("就绪", style=f"bold {PALETTE['assistant']}")
         out.append_text(sep.copy())
         if f.get("round"):
-            out.append(f"r{f['round']} ", style=f"bold {PALETTE['secondary']}")
+            out.append(f"第{f['round']}轮 ", style=f"bold {PALETTE['secondary']}")
         out.append(f"{f.get('profile', '')}", style=PALETTE["user"])
         out.append(" ▸ ", style=PALETTE["muted"])
-        out.append(f"{f.get('target', 'n0n3')}", style=f"bold {PALETTE['accent']}")
+        out.append(f"{f.get('target', '无')}", style=f"bold {PALETTE['accent']}")
         out.append_text(sep.copy())
         out.append(f"{f.get('mode', '')}", style=PALETTE["label"])
+        # Daedalus engagement mode badge: CODE / LIBERATE / REPLAY
+        dmode = str(f.get("daedalus_mode") or "CODE").upper()
+        if dmode == "LIBERATE":
+            dstyle = f"bold {PALETTE.get('secondary', PALETTE['accent'])}"
+        elif dmode == "REPLAY":
+            dstyle = f"bold {PALETTE['assistant']}"
+        else:
+            dstyle = PALETTE["label"]
         out.append_text(sep.copy())
-        out.append("PWNZ ", style=PALETTE["label"])
+        out.append(dmode, style=dstyle)
+        out.append_text(sep.copy())
+        out.append("命中 ", style=PALETTE["label"])
         out.append(f"{f.get('asr', '0/0')}", style=f"bold {PALETTE['assistant']}")
         out.append_text(sep.copy())
-        out.append(f"{f.get('tokens', '')} t0k", style=PALETTE["label"])
+        out.append(f"{f.get('tokens', '')} tok", style=PALETTE["label"])
         return out

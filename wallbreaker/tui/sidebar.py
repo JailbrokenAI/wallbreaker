@@ -47,23 +47,23 @@ class StatsPanel(Static):
             return Text(txt, style=f"bold {PALETTE['secondary']}")
 
         kill = _kv([
-            ("PWNZ", Text(s.get("asr", "0/0"), style=f"bold {PALETTE['assistant']}")),
-            ("L4ST", _verdict_text(s.get("last"))),
+            ("命中", Text(s.get("asr", "0/0"), style=f"bold {PALETTE['assistant']}")),
+            ("最近", _verdict_text(s.get("last"))),
         ])
         raid = _kv([
-            ("V1CT1M", Text(s.get("target", "n0n3"), style=f"bold {PALETTE['accent']}")),
-            ("CR3W", Text(s.get("profile", ""), style=PALETTE["user"])),
-            ("W3P0N", Text(s.get("model", ""))),
-            ("M0D3", Text(s.get("mode", ""))),
-            ("R3F", Text(s.get("judge", ""))),
-            ("T0K3NZ", Text(s.get("tokens", ""), style=PALETTE["label"])),
+            ("目标", Text(s.get("target", "无"), style=f"bold {PALETTE['accent']}")),
+            ("配置", Text(s.get("profile", ""), style=PALETTE["user"])),
+            ("模型", Text(s.get("model", ""))),
+            ("模式", Text(s.get("mode", ""))),
+            ("裁判", Text(s.get("judge", ""))),
+            ("Token", Text(s.get("tokens", ""), style=PALETTE["label"])),
         ])
         return Group(
             Text("☠ W4LLBR34K3R", style=f"bold {PALETTE['brand']}"),
             rule,
-            header("K1LL-C0UNT"),
+            header("战绩"),
             kill,
             rule,
-            header("TEH R41D"),
+            header("本次任务"),
             raid,
         )
