@@ -212,10 +212,13 @@ def test_config_parses_auth_style():
 
 
 # ---- compose_system: operator file + harness instructions -------------------
+# Daedalus doctrine injects by default; these unit tests pin operator/base stacking
+# with WALLBREAKER_DOCTRINE=0. Doctrine behaviour is covered in test_daedalus.py.
 
-def test_compose_system_prepends_file_to_base(tmp_path):
+def test_compose_system_prepends_file_to_base(tmp_path, monkeypatch):
     from wallbreaker.prompts import compose_system
     from wallbreaker.config import Endpoint
+    monkeypatch.setenv("WALLBREAKER_DOCTRINE", "0")
     f = tmp_path / "sys.txt"; f.write_text("OPERATOR IDENTITY")
     ep = Endpoint(name="o", protocol="openai", base_url="http://x", model="m",
                   system_prompt_file=str(f))
@@ -223,17 +226,19 @@ def test_compose_system_prepends_file_to_base(tmp_path):
     assert out == "OPERATOR IDENTITY\n\nHARNESS-DOCTRINE"
 
 
-def test_compose_system_no_file_returns_base(tmp_path):
+def test_compose_system_no_file_returns_base(tmp_path, monkeypatch):
     from wallbreaker.prompts import compose_system
     from wallbreaker.config import Endpoint
+    monkeypatch.setenv("WALLBREAKER_DOCTRINE", "0")
     ep = Endpoint(name="o", protocol="openai", base_url="http://x", model="m",
                   system_prompt_file=str(tmp_path / "missing.txt"))
     assert compose_system(ep, "BASE") == "BASE"
 
 
-def test_compose_system_skips_claude_code_to_avoid_double(tmp_path):
+def test_compose_system_skips_claude_code_to_avoid_double(tmp_path, monkeypatch):
     from wallbreaker.prompts import compose_system
     from wallbreaker.config import Endpoint
+    monkeypatch.setenv("WALLBREAKER_DOCTRINE", "0")
     f = tmp_path / "sys.txt"; f.write_text("OPERATOR")
     ep = Endpoint(name="cc", protocol="claude-code", base_url="", model="opus",
                   system_prompt_file=str(f))
@@ -244,6 +249,7 @@ def test_compose_system_skips_claude_code_to_avoid_double(tmp_path):
 def test_compose_system_env_override(tmp_path, monkeypatch):
     from wallbreaker.prompts import compose_system
     from wallbreaker.config import Endpoint
+    monkeypatch.setenv("WALLBREAKER_DOCTRINE", "0")
     f = tmp_path / "env.txt"; f.write_text("ENV-OPERATOR")
     monkeypatch.setenv("WALLBREAKER_CLAUDE_SYSTEM_PROMPT_FILE", str(f))
     ep = Endpoint(name="o", protocol="openai", base_url="http://x", model="m")

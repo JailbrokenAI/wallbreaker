@@ -19,6 +19,27 @@ class ProviderError(Exception):
 DEFAULT_TIMEOUT = 120.0
 
 
+def resolve_timeout(
+    endpoint_timeout: float | None = None,
+    override: float | None = None,
+    default: float = DEFAULT_TIMEOUT,
+) -> float:
+    """Effective HTTP timeout used by ``build_provider``.
+
+    Config often stores ``timeout = 0`` meaning "unset". Operators then see ``0.0``
+    in logs/UI while the real deadline is still 120s (audit P1-4). Always report
+    the resolved value.
+    """
+    for candidate in (endpoint_timeout, override, default):
+        try:
+            val = float(candidate) if candidate is not None else 0.0
+        except (TypeError, ValueError):
+            continue
+        if val > 0:
+            return val
+    return float(default)
+
+
 def classify_http_error(url: str, exc: BaseException) -> str:
     """Map transport failures to precise ProviderError messages (BUG-001).
 
@@ -304,17 +325,21 @@ class Provider(ABC):
                     stream_events.append({"type": "stop", "stop_reason": event.stop_reason})
                     trace_inference_event(inference_id, stream_events[-1])
         except asyncio.CancelledError as exc:
-            # wait_for()/task cancel mid-stream: keep any answer already received.
-            text, reasoning = _finalize_partial(
+            # Always re-raise CancelledError so operator stop / task.cancel() can end the run.
+            # Still finalize the inference trace so sessions keep any partial text/reasoning
+            # (BUG-001 observability) without swallowing the cancel (which made "结束任务" hang
+            # inside long tools like profile_target).
+            _finalize_partial(
                 "partial" if (text_chunks or reasoning_chunks) else "error",
                 error=f"CancelledError: {exc}",
             )
-            if text.strip() or reasoning.strip():
-                return text, reasoning
             raise
         except BaseException as exc:
-            # Prefer partial success over total failure when the model already answered.
-            if text_chunks and not isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            # Prefer partial success over total failure when the model already answered
+            # (answer channel OR reasoning/CoT channel).
+            if (text_chunks or reasoning_chunks) and not isinstance(
+                exc, (KeyboardInterrupt, SystemExit)
+            ):
                 return _finalize_partial(
                     "partial",
                     error=f"{type(exc).__name__}: {exc}",

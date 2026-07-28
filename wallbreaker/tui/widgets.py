@@ -155,19 +155,19 @@ def banner() -> Panel:
     for r in rows[1:-1]:
         art.append(r + "\n", style=f"bold {brand}")
     art.append(rows[-1] + "\n", style=f"bold {orange}")
-    art.append("☠ D4NG3R: H1-V0LT4G3 PWN Z0N3 // R3SP3CT MAH 4UTH0R1T4H!!1\n",
+    art.append("☠ 警告：高压红队区域 // 仅限授权测试\n",
                style=f"bold {red}")
     art.append("/help", style=accent)
-    art.append(" = RTFM   ", style=muted)
+    art.append(" = 帮助   ", style=muted)
     art.append("/target", style=accent)
-    art.append(" = P1CK UR V1CT1M   ", style=muted)
+    art.append(" = 选择目标   ", style=muted)
     art.append("/auto", style=accent)
-    art.append(" = G0D M0D3", style=muted)
+    art.append(" = 自动模式", style=muted)
     return Panel(
         art,
         title=_title("☠ W4LLBR34K3R ☠", brand, ts=False),
         title_align="left",
-        subtitle=Text("4UTH0R1Z3D PWNP1NG 0NLY", style=muted),
+        subtitle=Text("仅限授权测试", style=muted),
         subtitle_align="right",
         border_style=brand,
     )
@@ -176,7 +176,7 @@ def banner() -> Panel:
 def user_panel(text: str) -> Panel:
     return Panel(
         Text(text),
-        title=_title("J00", PALETTE["user"]),
+        title=_title("你", PALETTE["user"]),
         title_align="left",
         border_style=PALETTE["user"],
     )
@@ -186,7 +186,7 @@ def assistant_panel(text: str, model: str) -> Panel:
     body = Markdown(text) if text.strip() else Text("...", style=PALETTE["label"])
     return Panel(
         body,
-        title=_title(f"TEH BR41N · {model}", PALETTE["assistant"], ts=False),
+        title=_title(f"攻击脑 · {model}", PALETTE["assistant"], ts=False),
         title_align="left",
         border_style=PALETTE["assistant"],
     )
@@ -196,11 +196,11 @@ def _call_summary(name: str, args: dict) -> str:
     if not isinstance(args, dict):
         return _clip(str(args), 400)
     if not args:
-        return "(n0 4rgz)"
+        return "（无参数）"
     if name in _FIRE_TOOLS:
         payload = str(args.get("prompt") or args.get("request") or args.get("text") or "")
         extra = {k: v for k, v in args.items() if k not in ("prompt", "request", "text")}
-        head = f"pwnl04d {len(payload)} chars"
+        head = f"载荷 {len(payload)} 字符"
         if extra:
             try:
                 head += "  " + json.dumps(extra, ensure_ascii=False)
@@ -217,7 +217,7 @@ def _call_summary(name: str, args: dict) -> str:
 def tool_call_panel(name: str, args: dict) -> Panel:
     return Panel(
         Text(_call_summary(name, args)),
-        title=_title(f"HAX » {name}", PALETTE["tool_call"]),
+        title=_title(f"工具调用 » {name}", PALETTE["tool_call"]),
         title_align="left",
         border_style=PALETTE["tool_call"],
     )
@@ -229,15 +229,15 @@ def tool_result_panel(
     color = PALETTE["error"] if is_error else PALETTE["tool_result"]
     subtitle: Text | str = ""
     if is_error:
-        subtitle = Text("3PIC FA1L", style=f"bold {PALETTE['error']}")
+        subtitle = Text("失败", style=f"bold {PALETTE['error']}")
     elif verdict:
         label = verdict[0] if isinstance(verdict, tuple) else str(verdict)
         color = verdict_color(label)
         word, glyph = verdict_display(label)
-        subtitle = Text(f"V3RD1KT: {glyph} {word}", style=f"bold {color}")
+        subtitle = Text(f"裁决: {glyph} {word}", style=f"bold {color}")
     return Panel(
         Text(_clip(content)),
-        title=_title(f"{name} :: TEH L00T", color),
+        title=_title(f"{name} :: 结果", color),
         subtitle=subtitle,
         subtitle_align="right",
         title_align="left",
@@ -248,7 +248,7 @@ def tool_result_panel(
 def verdict_panel(label: str, score, reason: str, source: str) -> Panel:
     color = verdict_color(label)
     word, glyph = verdict_display(label)
-    head = f"V3RD1KT: {glyph} {word}" + (f"  {score}/10" if score is not None else "")
+    head = f"裁决: {glyph} {word}" + (f"  {score}/10" if score is not None else "")
     return Panel(
         Text(reason),
         title=_title(head, color),
@@ -261,16 +261,16 @@ def verdict_panel(label: str, score, reason: str, source: str) -> Panel:
 
 def feedback_panel(text: str, queued: bool = False) -> Panel:
     color = PALETTE["feedback"]
-    state = "0N D3CK" if queued else "H0T M1C"
+    state = "排队中" if queued else "已注入"
     body = Text()
     body.append(
-        "l4ndz 0n teh n3xt br41n turn\n" if queued else "1NJ3CT3D — 4d4pt1ng n0w\n",
+        "将在下一轮攻击脑回合生效\n" if queued else "已注入 — 正在适配\n",
         style=f"bold {color}",
     )
     body.append(text)
     return Panel(
         body,
-        title=_title(f"TEH WH33L ({state})", color),
+        title=_title(f"实时干预 ({state})", color),
         title_align="left",
         border_style=color,
     )
@@ -279,13 +279,13 @@ def feedback_panel(text: str, queued: bool = False) -> Panel:
 def error_panel(message: str) -> Panel:
     return Panel(
         Text(message),
-        title=_title("3PIC FA1L", PALETTE["error"]),
+        title=_title("错误", PALETTE["error"]),
         title_align="left",
         border_style=PALETTE["error"],
     )
 
 
-def info_panel(message: str, title: str = "1NT3L") -> Panel:
+def info_panel(message: str, title: str = "提示") -> Panel:
     return Panel(
         Text(message),
         title=_title(title, PALETTE["info"]),
