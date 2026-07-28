@@ -99,9 +99,15 @@ Env overrides:
 
 ### Next
 
-- [ ] P2 live: set CPA/OpenRouter keys and run one real CODE→LIBERATE→Memory→REPLAY objective
+- [x] P2 live: CPA grok-4.5 loop — soft lab COMPLIED+validate+Memory+REPLAY (hard AES frames refused); see P2_LIVE_LOOP_EVIDENCE.md
 - [ ] Optional: register generated schedule runners into real OS task schedulers in production
 - [ ] Optional research deepenings beyond the in-tree AgentDojo/Morris-II wrappers
+
+### Done (P2 live loop)
+
+- [x] Real CPA target fire + judge + validate + Liberation Memory + REPLAY
+- [x] FRR sample + aggregate ASR/FRR/technique report fields from run logs
+- [x] Evidence note docs/P2_LIVE_LOOP_EVIDENCE.md
 
 ### Done (P0 engineering convergence)
 

@@ -165,6 +165,9 @@ P0 工程收敛 → P1 测量可信与回归门禁 → P2 真实目标上的解�
 - **P2 blocked on live keys:** local `config.toml` target `grok-4.5` currently has no resolved API key in this environment; Liberation loop needs operator key/env before live CODE→LIBERATE→Memory run.
 - Worktree clean except ignored `work/`.
 
+- **P2 live loop exercised:** CPA grok-4.5 with keys — CODE ok; hard AES-rShell frames refused; soft TCP lab client **COMPLIED** + validate **2/3** + Memory id 958e15389f68d9c0 + **REPLAY hit**; FRR 0% on 3 benign; report has ASR/FRR/technique mix. See docs/P2_LIVE_LOOP_EVIDENCE.md.
+- Worktree clean except ignored runtime/scratch.
+
 ## Immediate next actions (when resuming)
 
 1. **Branch hygiene:** 从 `fix/bug-001-stream-timeout-await-llm` 按 P0 切片提交  
