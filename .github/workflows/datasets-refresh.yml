@@ -1,0 +1,40 @@
+﻿# Active weekly dataset cache refresh + offline unit gate.
+# Bundled sorrybench/xstest samples keep offline unit tests green without network.
+name: datasets-refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"   # weekly Monday 05:00 UTC
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -e .
+
+      - name: List dataset cache status
+        run: wallbreaker datasets list
+
+      - name: Refresh remote corpora (best-effort)
+        run: |
+          # force re-download into library/; bundled samples remain as fallbacks
+          wallbreaker datasets refresh --force || true
+          wallbreaker datasets list
+
+      - name: Unit tests (datasets + FRR surface)
+        run: |
+          python -m pytest -q \
+            tests/test_datasets.py \
+            tests/test_frr_scan.py \
+            tests/test_branding.py \
+            tests/test_relentless.py

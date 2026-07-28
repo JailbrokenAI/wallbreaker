@@ -68,6 +68,12 @@ wallbreaker/dashboard/web/dist/
 wallbreaker/dashboard/web/vite.config.js
 wallbreaker/dashboard/web/vite.config.d.ts
 
+# desktop shell (Electron)
+desktop/node_modules/
+desktop/dist/
+desktop/release/
+desktop/out/
+
 .pytest_cache/
 .serena/
 *.log

@@ -11,9 +11,9 @@
 | Field | Value |
 |-------|--------|
 | **ID** | BUG-001 |
-| **Status** | `investigating` → partial fix landed 2026-07-26 |
+| **Status** | `fixed` (root-cause pass 2026-07-26 evening) |
 | **Severity** | High (UX / false failure signal) |
-| **Area** | Target fire path · provider stream · agent transcript · dashboard |
+| **Area** | Target fire path · provider stream · agent transcript · desktop health · dashboard |
 | **Reported** | 2026-07-26 |
 | **Reporter** | Operator (desktop testing) |
 | **Priority** | P1 |
@@ -88,24 +88,30 @@ Do **not** treat these as confirmed until reproduced with a run log.
 
 ### Fix progress (2026-07-26)
 
-Landed:
+**Pass 1 (morning):**
 
 1. **`providers/base.py` `complete_with_reasoning`** — on `CancelledError` / transport errors after tokens arrived, return **partial text** instead of total failure.
 2. **`providers/openai_provider.py`** — if SSE already produced content/reasoning, stream teardown `httpx` errors become soft `StopEvent(partial)` instead of hard `network error`.
-3. **`tools/profile_target.py`** — remove outer `asyncio.wait_for` on target fire (use provider HTTP timeout); default timeout **45→120s**; floor 60s; grade nonempty partials.
+3. **`tools/profile_target.py`** — remove outer `asyncio.wait_for` on target fire (use provider HTTP timeout); default timeout **45→120s**; floor 60s.
 4. **`tools/target.py`** — clearer hints for cancelled / timeout vs connect vs network.
+5. **`await_llm`** — floor outer wait_for at 120s across attack tools.
 
-Still open:
+**Pass 2 (root cause, evening) — remaining false ERROR/network paths:**
 
-1. Multi-fire aggregate UI still can look like “all network”.
-2. Regression test for “content then protocol error”.
-3. Agent transcript styling when mixed COMPLIED + ERROR.
+1. **`complete_with_reasoning`** now salvages **reasoning-only** partials too (not just answer text). Grok/CPA often streams CoT first; cancel used to still ERROR.
+2. **`complete_untruncated`** no longer treats `stop=partial` as token truncation → no forced ERROR / useless retry.
+3. **`profile_target` / `multi_fire`** grade usable partials (text or CoT) instead of labeling them ERROR; judge failure falls back to local `classify`.
+4. **`agent/loop.py`** soft-continues attacker turns after mid-stream ProviderError/cancel when tokens/tools already arrived.
+5. **Desktop health monitor** — longer probe timeout (8s), `/api/health` first, **3 consecutive failures** before auto-restart. Prevents mid-run backend kill → browser `Failed to fetch` / “network error”.
+6. Regression suite: `tests/test_bug001_partial_salvage.py`.
 
-### Suggested remaining work
+### Acceptance criteria when fixed
 
-1. Per-attempt verdict aggregation for multi tools.
-2. Agent UI: if any tool_result has `COMPLIED`, don’t style whole run as network failure.
-3. Unit test: mock stream yields content then `RemoteProtocolError` → success/partial.
+- [x] Successful target content is never labeled only as `network error`.
+- [x] Stream teardown errors after content do not fail the tool.
+- [x] Multi-fire / profile grade partials instead of collapsing to ERROR.
+- [x] Unit/integration tests cover cancel + protocol error after content.
+- [x] Desktop health does not restart backend on a single slow tick.
 
 ### Workaround for operators (now)
 
