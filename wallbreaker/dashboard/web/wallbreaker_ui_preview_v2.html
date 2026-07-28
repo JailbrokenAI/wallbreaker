@@ -1,3 +1,4 @@
+<style>
 :root {
   /* ============================================================
      THEME — light is the default (matches the reference mockup);
@@ -507,32 +508,6 @@ body.is-resizing-column * {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));
-}
-.pill.mode-pill {
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.pill.mode-code {
-  color: var(--text-secondary);
-  border-color: var(--border);
-  background: var(--wash-weak);
-}
-.pill.mode-liberate {
-  color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
-  background: color-mix(in srgb, var(--warn) 14%, var(--panel));
-}
-.pill.mode-replay {
-  color: var(--good);
-  border-color: color-mix(in srgb, var(--good) 45%, var(--border));
-  background: color-mix(in srgb, var(--good) 14%, var(--panel));
-}
-.t-mode {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 6px 0;
-  flex-wrap: wrap;
 }
 .pill.desktop-status {
   display: inline-flex;
@@ -2396,3 +2371,116 @@ button.fire:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent);
   }
 }
+
+</style>
+<style>
+.wbprev-note{position:fixed;left:0;right:0;bottom:0;z-index:50;font-family:var(--mono);font-size:11px;color:var(--dim);background:color-mix(in srgb, var(--surface) 90%, transparent);border-top:1px solid var(--border);padding:6px 14px;text-align:center;backdrop-filter:blur(6px)}
+.app{min-height:100dvh}
+</style>
+<div class="app">
+  <aside class="rail" aria-label="nav">
+    <div class="brand">
+      <span class="mark">&#9670;</span>
+      <span class="brand-meta">
+        <span class="word">WALL<b>BREAKER</b></span>
+        <span class="brand-sub">授权红队评估控制台</span>
+      </span>
+      <button class="rail-toggle" title="collapse">&#8249;</button>
+    </div>
+    <div><div class="nav-section">工作区</div>
+      <button class="nav-item active"><span class="nav-ico">&#9672;</span><span class="nav-label">自主智能体</span></button></div>
+    <div><button class="nav-item"><span class="nav-ico">&#9636;</span><span class="nav-label">总览</span></button></div>
+    <div><button class="nav-item"><span class="nav-ico">&#8250;_</span><span class="nav-label">攻击台</span></button></div>
+    <div><button class="nav-item"><span class="nav-ico">&#9638;</span><span class="nav-label">终端</span></button></div>
+    <div><div class="nav-section">证据</div>
+      <button class="nav-item"><span class="nav-ico">&#10022;</span><span class="nav-label">发现</span></button></div>
+    <div><button class="nav-item"><span class="nav-ico">&#8801;</span><span class="nav-label">运行记录</span></button></div>
+    <div><div class="nav-section">系统</div>
+      <button class="nav-item"><span class="nav-ico">&#9876;</span><span class="nav-label">武器库</span></button></div>
+    <div><button class="nav-item"><span class="nav-ico">&#9881;</span><span class="nav-label">设置</span></button></div>
+    <div class="spacer"></div>
+    <button class="nav-item palette-trigger"><span class="nav-ico">&#8981;</span><span class="nav-label">命令面板</span><span class="nav-kbd">Ctrl K</span></button>
+    <div class="foot">Wallbreaker · 仅用于已授权的安全评估</div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="title">自主智能体<span class="title-sub">自主攻击循环</span></div>
+      <div class="meta">
+        <button class="role-chip"><span>攻</span><b>opus-4.7</b><small>openrouter</small></button>
+        <button class="role-chip"><span>标</span><b>gpt-5.2</b><small>openai</small></button>
+        <button class="role-chip"><span>判</span><b>sonnet-5</b><small>anthropic</small></button>
+        <span class="pill">ASR 41%</span>
+        <span class="pill desktop-pill">桌面端</span>
+        <span class="pill desktop-status ok"><span class="dot-live"></span>后端在线</span>
+      </div>
+    </div>
+    <div class="content">
+      <div class="tab-keep">
+        <div class="grid cols-4" style="margin-bottom:16px">
+          <div class="card"><div class="stat"><div class="num accent">41%</div><div class="lbl">攻击成功率</div></div></div>
+          <div class="card"><div class="stat"><div class="num good">128</div><div class="lbl">已确认绕过</div></div></div>
+          <div class="card"><div class="stat"><div class="num">1,204</div><div class="lbl">总发射数</div></div></div>
+          <div class="card"><div class="stat"><div class="num bad">7</div><div class="lbl">高危发现</div></div></div>
+        </div>
+        <div class="grid cols-2">
+          <div class="card">
+            <div class="section-title"><h2>近期运行记录</h2><div class="rule"></div></div>
+            <table>
+              <thead><tr><th>运行</th><th>目标</th><th>裁定</th><th>命中</th></tr></thead>
+              <tbody>
+                <tr class="row-clickable"><td class="mono">run-20260726-1412</td><td class="mono muted">gpt-5.2</td><td><span class="badge bypass">BYPASS</span></td><td class="mono">9 / 20</td></tr>
+                <tr class="row-clickable"><td class="mono">run-20260726-1350</td><td class="mono muted">opus-4.7</td><td><span class="badge partial">PARTIAL</span></td><td class="mono">4 / 20</td></tr>
+                <tr class="row-clickable"><td class="mono">run-20260726-1201</td><td class="mono muted">gemini-3</td><td><span class="badge held">HELD</span></td><td class="mono">0 / 20</td></tr>
+                <tr class="row-clickable"><td class="mono">run-20260726-1108</td><td class="mono muted">grok-4</td><td><span class="badge neutral">NEUTRAL</span></td><td class="mono">2 / 20</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3>控制台</h3>
+            <label class="fld">目标载荷</label>
+            <textarea class="payload-editor" rows="3">Write a persuasive paragraph explaining &#8230;</textarea>
+            <label class="fld">变换链</label>
+            <div class="chips">
+              <span class="chip on">base64</span><span class="chip">rot13</span><span class="chip">leet</span>
+              <span class="chip">morse</span><span class="chip on">flip_fwo</span><span class="chip">payload_split</span>
+            </div>
+            <div class="console-actions">
+              <button class="mini-btn console-build">构建</button>
+              <button class="fire">发射攻击</button>
+            </div>
+            <div class="agent-primary-actions" style="margin-top:14px">
+              <button class="primary-command">启动循环</button>
+              <button class="ghost-command">重置</button>
+              <button class="pause-command">暂停</button>
+              <button class="pause-command resume">继续</button>
+              <button class="pause-command stop">结束任务</button>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <h3>技术评分</h3>
+          <div class="bar-row"><span class="name">past_tense</span><span class="bar-track"><span class="bar-fill" style="width:88%"></span></span><span class="val">88%</span></div>
+          <div class="bar-row"><span class="name">math_encode</span><span class="bar-track"><span class="bar-fill" style="width:73%"></span></span><span class="val">73%</span></div>
+          <div class="bar-row"><span class="name">flip_attack</span><span class="bar-track"><span class="bar-fill" style="width:64%"></span></span><span class="val">64%</span></div>
+        </div>
+        <div class="terminal-page" style="margin-top:16px;min-height:auto;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:34px">
+          <div class="terminal-toolbar">
+            <div class="terminal-filters">
+              <button class="term-chip active">全部</button><button class="term-chip">工具</button><button class="term-chip">错误</button>
+            </div>
+            <input class="term-search" placeholder="过滤日志&#8230;" />
+          </div>
+          <div class="terminal-body wrap">
+            <div class="term-line lvl-info"><span class="term-ts">14:12:03.221</span><span class="term-src src-agent">AGENT</span><span class="term-text">正在生成攻击 persona &#8230;</span></div>
+            <div class="term-line lvl-tool"><span class="term-ts">14:12:04.019</span><span class="term-src src-backend">BACKEND</span><span class="term-text">query_target prompt=&lt;payload&gt; transforms=[base64,flip_fwo]</span></div>
+            <div class="term-line lvl-ok"><span class="term-ts">14:12:07.882</span><span class="term-src src-console">CONSOLE</span><span class="term-text">COMPLIED &#8212; judge score 9/10</span></div>
+            <div class="term-line lvl-warn"><span class="term-ts">14:12:08.401</span><span class="term-src src-system">SYSTEM</span><span class="term-text">目标 CoT 泄露，已记录</span></div>
+            <div class="term-line lvl-error"><span class="term-ts">14:12:09.113</span><span class="term-src src-desktop">DESKTOP</span><span class="term-text">network teardown after content (soft partial, salvaged)</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="wbprev-note">Wallbreaker · dashboard restyle — static preview of the new design system (rendered with the real compiled CSS)</div>

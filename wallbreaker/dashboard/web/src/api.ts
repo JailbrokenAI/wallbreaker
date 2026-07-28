@@ -1,9 +1,29 @@
+export interface DaedalusOptions {
+  codename: string;
+  topology: "dual" | "single";
+  doctrine_enabled: boolean;
+  doctrine_file: string;
+  memory_scope: string;
+  memory_root: string;
+  cyber_gate_enabled: boolean;
+  memory_require_validate: boolean;
+  memory_embed_provider?: string;
+  memory_embed_model?: string;
+  memory_embed_base_url?: string;
+  memory_embed_api_key_env?: string;
+  memory_embed_profile?: string;
+  memory_embed_dimensions?: number;
+  memory_embed_has_key?: boolean;
+  memory_embed_mode?: string;
+}
+
 export interface ConfigInfo {
   has_target: boolean;
   target: string | null;
   target_modality?: string;
   profile: string | null;
   judge: string | null;
+  daedalus?: DaedalusOptions;
 }
 
 export interface Scorecard {
@@ -113,6 +133,7 @@ export interface Settings {
   judge_profile?: string | null;
   agent?: AgentConfig;
   target_options?: TargetOptions;
+  daedalus?: DaedalusOptions;
 }
 
 export interface ProfileDetail {
@@ -140,6 +161,26 @@ export interface ProviderRecord extends ProfileDetail {
   models_path: string;
   timeout: number;
   reasoning: boolean;
+}
+
+export interface ModelPoolItem {
+  id: string;
+  provider: string;
+  model: string;
+  protocol: string;
+  base_url: string;
+  label: string;
+  is_default?: boolean;
+}
+
+export interface ProbeResult {
+  ok: boolean;
+  profile?: string;
+  protocol: string;
+  models: string[];
+  fetched: boolean;
+  error: string;
+  url?: string;
 }
 
 export interface RoleChoice {
@@ -193,6 +234,7 @@ export interface AgentControlStatus {
   active: boolean;
   paused: boolean;
   pause_ready?: boolean;
+  stopping?: boolean;
   attacker: string;
   provider: string;
   objective?: string;
@@ -215,10 +257,31 @@ export interface FireResult extends ComposeResult {
   is_error: boolean;
   verdict: string;
   run_log?: string;
+  cancelled?: boolean;
+}
+
+export interface ConsoleControlStatus {
+  active: boolean;
+  stopping?: boolean;
+}
+
+function networkErrorMessage(err: unknown): string {
+  const name = err instanceof Error ? err.name : "";
+  const msg = err instanceof Error ? err.message : String(err);
+  if (name === "AbortError") return "请求已取消。";
+  if (/Failed to fetch|NetworkError|Load failed|ECONNREFUSED|fetch failed/i.test(msg)) {
+    return "无法连接后端（Failed to fetch）。请确认桌面端/Dashboard 仍在运行，并刷新页面（或 Ctrl+Shift+R 重启后端）。";
+  }
+  return msg || "网络错误";
 }
 
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init);
+  let r: Response;
+  try {
+    r = await fetch(url, init);
+  } catch (err) {
+    throw new Error(networkErrorMessage(err));
+  }
   if (!r.ok) {
     let detail = r.statusText;
     try {
@@ -250,10 +313,26 @@ export const api = {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: false }),
   }),
   testProvider: (name: string) => j<ModelCatalog & { ok: boolean }>(`/api/providers/${encodeURIComponent(name)}/test`, { method: "POST" }),
+  probeProvider: (body: {
+    name?: string;
+    protocol?: string;
+    base_url: string;
+    api_key?: string;
+    auth_style?: string;
+    models_path?: string;
+    model?: string;
+  }) => j<ProbeResult>("/api/providers/probe", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }),
   refreshModels: (name: string) => j<ModelCatalog>(`/api/providers/${encodeURIComponent(name)}/models/refresh`, { method: "POST" }),
   addModel: (name: string, model: string) => j(`/api/providers/${encodeURIComponent(name)}/models`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model }),
   }),
+  addModelsBulk: (name: string, models: string[]) => j<{ provider: string; added: number; models: string[] }>(
+    `/api/providers/${encodeURIComponent(name)}/models/bulk`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models }) },
+  ),
+  modelPool: () => j<{ items: ModelPoolItem[]; count: number }>("/api/model-pool"),
   roles: () => j<RoleAssignments>("/api/roles"),
   saveRole: (role: keyof RoleAssignments, body: { profile?: string; provider?: string; model?: string }) => j<RoleChoice>(`/api/roles/${role}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -288,6 +367,7 @@ export const api = {
   }),
   pauseAgent: () => j<AgentControlStatus>("/api/agent/pause", { method: "POST" }),
   resumeAgent: () => j<AgentControlStatus>("/api/agent/resume", { method: "POST" }),
+  stopAgent: () => j<AgentControlStatus>("/api/agent/stop", { method: "POST" }),
   switchAgentAttacker: (body: { profile?: string; provider?: string; model?: string }) =>
     j<AgentControlStatus>("/api/agent/attacker", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -298,16 +378,32 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  fire: (body: Record<string, unknown>) =>
+  fire: (body: Record<string, unknown>, signal?: AbortSignal) =>
     j<FireResult>("/api/fire", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal,
     }),
+  consoleStatus: () => j<ConsoleControlStatus>("/api/console/status"),
+  stopConsole: () => j<ConsoleControlStatus>("/api/console/stop", { method: "POST" }),
 };
 
 export interface AgentEvent {
-  type: "start" | "round" | "text" | "tool_start" | "tool_result" | "progress" | "feedback" | "usage" | "error" | "done" | "control" | "steer_queued";
+  type:
+    | "start"
+    | "round"
+    | "text"
+    | "tool_start"
+    | "tool_result"
+    | "progress"
+    | "feedback"
+    | "usage"
+    | "error"
+    | "done"
+    | "control"
+    | "steer_queued"
+    | "mode";
   run_log?: string;
   [k: string]: unknown;
 }
@@ -317,12 +413,17 @@ export async function runAgent(
   onEvent: (ev: AgentEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const r = await fetch("/api/agent/run", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
+  let r: Response;
+  try {
+    r = await fetch("/api/agent/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    throw new Error(networkErrorMessage(err));
+  }
   if (!r.ok || !r.body) {
     let detail = r.statusText;
     try { detail = (await r.json()).detail || detail; } catch { /* ignore */ }
@@ -331,19 +432,34 @@ export async function runAgent(
   const reader = r.body.getReader();
   const dec = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const frame = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const line = frame.startsWith("data:") ? frame.replace(/^data:\s?/, "") : frame;
-      if (line) {
-        try { onEvent(JSON.parse(line) as AgentEvent); } catch { /* ignore */ }
+  const onAbort = () => {
+    try {
+      void reader.cancel();
+    } catch {
+      /* ignore */
+    }
+  };
+  if (signal) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = frame.startsWith("data:") ? frame.replace(/^data:\s?/, "") : frame;
+        if (line) {
+          try { onEvent(JSON.parse(line) as AgentEvent); } catch { /* ignore */ }
+        }
       }
     }
+  } finally {
+    if (signal) signal.removeEventListener("abort", onAbort);
   }
 }
 

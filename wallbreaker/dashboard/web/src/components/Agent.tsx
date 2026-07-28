@@ -11,6 +11,11 @@ import {
 import { AgentConfigDrawer, DEFAULT_AGENT_CONFIG, normalizeAgentConfig } from "./AgentConfigDrawer";
 import { ModelChooser } from "./ModelChooser";
 import { ProviderChooser } from "./ProviderChooser";
+import { activityFromAgentEvent } from "../activityLog";
+import { maybeNotifyVerdict } from "../notify";
+import { zh } from "../i18n/zh";
+
+type DaedalusMode = "CODE" | "LIBERATE" | "REPLAY";
 
 type Item =
   | { kind: "text"; text: string }
@@ -20,14 +25,21 @@ type Item =
   | { kind: "progress"; text: string }
   | { kind: "feedback"; text: string }
   | { kind: "control"; text: string }
+  | { kind: "mode"; mode: DaedalusMode; source: string; text: string }
   | { kind: "start"; brain: string; target: string }
   | { kind: "done"; status: string; summary: string }
   | { kind: "error"; error: string };
 
 const DONE_KIND: Record<string, "bypass" | "held" | "neutral" | "error"> = {
-  finished: "bypass", ask: "neutral", stuck: "neutral", max_rounds: "held", error: "error",
+  finished: "bypass",
+  ask: "neutral",
+  stuck: "neutral",
+  max_rounds: "held",
+  stopped: "held",
+  error: "error",
 };
 const TECHNIQUE_STORE = "wallbreaker.agentTechniques";
+const AGENT_SESSION_STORE = "wallbreaker.agentSession.v1";
 
 function storedTechniques(): string[] | null {
   try {
@@ -38,25 +50,119 @@ function storedTechniques(): string[] | null {
   }
 }
 
+type AgentSession = {
+  objective?: string;
+  items?: Item[];
+  runLog?: string;
+  err?: string;
+  currentAttacker?: { provider: string; model: string };
+};
+
+function loadAgentSession(): AgentSession {
+  try {
+    const raw = window.sessionStorage.getItem(AGENT_SESSION_STORE);
+    if (!raw) return {};
+    const value = JSON.parse(raw) as AgentSession;
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveAgentSession(patch: AgentSession): void {
+  try {
+    const prev = loadAgentSession();
+    const next = { ...prev, ...patch };
+    // Cap transcript size so sessionStorage does not blow up.
+    if (Array.isArray(next.items) && next.items.length > 400) {
+      next.items = next.items.slice(-400);
+    }
+    window.sessionStorage.setItem(AGENT_SESSION_STORE, JSON.stringify(next));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 export function Agent({ hasTarget }: { hasTarget: boolean }) {
-  const [objective, setObjective] = useState("");
+  const restored = useMemo(() => loadAgentSession(), []);
+  const [objective, setObjective] = useState(restored.objective || "");
   const [agentConfig, setAgentConfig] = useState<AgentConfig>(DEFAULT_AGENT_CONFIG);
   const [techniques, setTechniques] = useState<Tool[]>([]);
   const [enabled, setEnabled] = useState<Set<string>>(new Set());
   const [techniqueQuery, setTechniqueQuery] = useState("");
-  const [items, setItems] = useState<Item[]>([]);
+  const [items, setItems] = useState<Item[]>(Array.isArray(restored.items) ? restored.items : []);
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
   const [pauseReady, setPauseReady] = useState(false);
-  const [currentAttacker, setCurrentAttacker] = useState({ provider: "", model: "" });
+  const [stopping, setStopping] = useState(false);
+  const [currentAttacker, setCurrentAttacker] = useState(
+    restored.currentAttacker || { provider: "", model: "" },
+  );
   const [steering, setSteering] = useState("");
   const [controlBusy, setControlBusy] = useState(false);
-  const [runLog, setRunLog] = useState("");
+  const [runLog, setRunLog] = useState(restored.runLog || "");
   const [savingConfig, setSavingConfig] = useState(false);
   const [configStatus, setConfigStatus] = useState("");
-  const [err, setErr] = useState("");
+  const [err, setErr] = useState(restored.err || "");
+  const [daedalusMode, setDaedalusMode] = useState<DaedalusMode>("CODE");
   const runningRef = useRef(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const stopPollRef = useRef<number | null>(null);
+
+  function clearStopPoll() {
+    if (stopPollRef.current != null) {
+      window.clearInterval(stopPollRef.current);
+      stopPollRef.current = null;
+    }
+  }
+
+  function forceEndUi(summary = "operator ended the run") {
+    clearStopPoll();
+    try {
+      abortRef.current?.abort();
+    } catch {
+      /* ignore */
+    }
+    abortRef.current = null;
+    runningRef.current = false;
+    setRunning(false);
+    setPaused(false);
+    setPauseReady(false);
+    setStopping(false);
+    setControlBusy(false);
+    setItems((prev) => {
+      if (prev.some((it) => it.kind === "done" && it.status === "stopped")) return prev;
+      return [...prev, { kind: "done", status: "stopped", summary }];
+    });
+  }
+
+  function startStopWatchdog() {
+    clearStopPoll();
+    let ticks = 0;
+    stopPollRef.current = window.setInterval(() => {
+      ticks += 1;
+      void api.agentStatus()
+        .then((status) => {
+          if (!status.active) {
+            forceEndUi("operator ended the run");
+            return;
+          }
+          setStopping(!!status.stopping || true);
+          setPaused(!!status.paused);
+          setPauseReady(!!status.pause_ready);
+          // Hard ceiling: if backend is still "active" after ~90s of stop attempts,
+          // keep UI unlockable rather than permanent "正在结束".
+          if (ticks >= 90) {
+            forceEndUi("stop timed out — backend may still be draining; refresh if needed");
+          }
+        })
+        .catch(() => {
+          // Backend unreachable: unlock UI so the operator is not stuck.
+          if (ticks >= 3) forceEndUi("stop: backend unreachable");
+        });
+    }, 1000);
+  }
 
   useEffect(() => {
     api.settings()
@@ -70,7 +176,37 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       setTechniques(selectable);
       setEnabled(initial);
     }).catch(() => {});
+    // If a run is still active on the backend, reflect control state after remount.
+    api.agentStatus().then((status) => {
+      if (!status.active) return;
+      setRunning(true);
+      runningRef.current = true;
+      setPaused(!!status.paused);
+      setPauseReady(!!status.pause_ready);
+      setStopping(!!status.stopping);
+      setCurrentAttacker({ provider: status.provider || "", model: status.attacker || "" });
+      if (status.objective) setObjective((prev) => prev || status.objective || "");
+      if (status.stopping) startStopWatchdog();
+    }).catch(() => {});
+    return () => {
+      clearStopPoll();
+      try {
+        abortRef.current?.abort();
+      } catch {
+        /* ignore */
+      }
+    };
   }, []);
+
+  useEffect(() => {
+    saveAgentSession({
+      objective,
+      items,
+      runLog,
+      err,
+      currentAttacker,
+    });
+  }, [objective, items, runLog, err, currentAttacker]);
 
   const filteredTechniques = useMemo(() => {
     const needle = techniqueQuery.trim().toLowerCase();
@@ -107,8 +243,24 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
 
   function onEvent(ev: AgentEvent) {
     if (typeof ev.run_log === "string" && ev.run_log) setRunLog(ev.run_log);
+    activityFromAgentEvent(ev);
+    if (ev.type === "tool_result") {
+      maybeNotifyVerdict(String(ev.verdict || ""), {
+        technique: String(ev.name || "tool"),
+        source: "agent",
+        detail: String(ev.content || "").slice(0, 160),
+      });
+    }
+    if (ev.type === "done" && String(ev.status) === "finished") {
+      maybeNotifyVerdict("COMPLIED", {
+        technique: "agent-run",
+        source: "agent",
+        detail: String(ev.summary || "run finished"),
+      });
+    }
     switch (ev.type) {
       case "start":
+        setDaedalusMode("CODE");
         setCurrentAttacker({ provider: String(ev.provider || ""), model: String(ev.brain || "") });
         push({ kind: "start", brain: String(ev.brain || ""), target: String(ev.target || "") });
         break;
@@ -118,11 +270,27 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       case "tool_result": push({ kind: "tool_result", name: String(ev.name), content: String(ev.content || ""), error: !!ev.error, verdict: String(ev.verdict || "") }); break;
       case "progress": push({ kind: "progress", text: String(ev.text) }); break;
       case "feedback": push({ kind: "feedback", text: String(ev.text) }); break;
+      case "mode": {
+        const mode = String(ev.mode || "LIBERATE").toUpperCase() as DaedalusMode;
+        const next: DaedalusMode =
+          mode === "REPLAY" || mode === "LIBERATE" || mode === "CODE" ? mode : "LIBERATE";
+        setDaedalusMode(next);
+        push({
+          kind: "mode",
+          mode: next,
+          source: String(ev.source || ""),
+          text: String(ev.text || ""),
+        });
+        break;
+      }
       case "steer_queued": push({ kind: "control", text: `Steering queued: ${String(ev.text)}` }); break;
       case "control": {
-        const nextPaused = ev.state === "paused" || ev.state === "pausing";
-        setPaused(nextPaused);
-        setPauseReady(ev.state === "paused");
+        const state = String(ev.state || "");
+        const nextStopping = state === "stopping";
+        const nextPaused = state === "paused" || state === "pausing";
+        setStopping(nextStopping);
+        setPaused(nextStopping ? false : nextPaused);
+        setPauseReady(state === "paused");
         if (ev.attacker || ev.provider) setCurrentAttacker({
           provider: String(ev.provider || currentAttacker.provider),
           model: String(ev.attacker || currentAttacker.model),
@@ -131,8 +299,10 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
         break;
       }
       case "done":
+        clearStopPoll();
         setPaused(false);
         setPauseReady(false);
+        setStopping(false);
         push({ kind: "done", status: String(ev.status), summary: String(ev.summary || "") });
         break;
       case "error": push({ kind: "error", error: String(ev.error) }); break;
@@ -143,28 +313,101 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
   async function run() {
     if (!objective.trim() || runningRef.current) return;
     runningRef.current = true;
-    setItems([]); setErr(""); setRunLog(""); setPaused(false); setPauseReady(false); setRunning(true);
+    clearStopPoll();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setItems([]); setErr(""); setRunLog(""); setPaused(false); setPauseReady(false); setStopping(false); setRunning(true);
     try {
-      await runAgent({ objective, ...agentConfig, enabled_techniques: [...enabled] }, onEvent);
+      await runAgent(
+        { objective, ...agentConfig, enabled_techniques: [...enabled] },
+        onEvent,
+        ac.signal,
+      );
     } catch (e) {
-      setErr((e as Error).message);
+      // Abort after operator stop is expected — do not surface as a hard error.
+      if (ac.signal.aborted) {
+        push({ kind: "done", status: "stopped", summary: "operator ended the run" });
+      } else {
+        setErr((e as Error).message);
+      }
     } finally {
+      if (abortRef.current === ac) abortRef.current = null;
+      clearStopPoll();
       runningRef.current = false;
       setRunning(false);
       setPaused(false);
       setPauseReady(false);
+      setStopping(false);
     }
   }
 
-  async function togglePause() {
+  async function requestPause() {
+    if (stopping) return;
     setControlBusy(true); setErr("");
     try {
-      const status = paused ? await api.resumeAgent() : await api.pauseAgent();
+      const status = await api.pauseAgent();
       setPaused(status.paused);
       setPauseReady(!!status.pause_ready);
+      setStopping(!!status.stopping);
       setCurrentAttacker({ provider: status.provider, model: status.attacker });
     } catch (e) {
       setErr((e as Error).message);
+    } finally {
+      setControlBusy(false);
+    }
+  }
+
+  async function requestResume() {
+    if (stopping) return;
+    setControlBusy(true); setErr("");
+    try {
+      const status = await api.resumeAgent();
+      setPaused(status.paused);
+      setPauseReady(!!status.pause_ready);
+      setStopping(!!status.stopping);
+      setCurrentAttacker({ provider: status.provider, model: status.attacker });
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setControlBusy(false);
+    }
+  }
+
+  async function requestStop() {
+    setControlBusy(true); setErr("");
+    setStopping(true);
+    setPaused(false);
+    setPauseReady(false);
+    push({ kind: "control", text: "已请求结束任务：正在中断…" });
+    startStopWatchdog();
+    try {
+      const status = await api.stopAgent();
+      setStopping(true);
+      setCurrentAttacker({ provider: status.provider, model: status.attacker });
+      // If backend already flipped inactive (fast cancel), unlock immediately.
+      if (!status.active) {
+        forceEndUi("operator ended the run");
+        try {
+          abortRef.current?.abort();
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (e) {
+      // No active run on backend → unlock UI.
+      const msg = (e as Error).message || "";
+      if (/no agent run is active/i.test(msg)) {
+        forceEndUi("operator ended the run");
+        try {
+          abortRef.current?.abort();
+        } catch {
+          /* ignore */
+        }
+      } else {
+        setErr(msg);
+        setStopping(false);
+        clearStopPoll();
+      }
     } finally {
       setControlBusy(false);
     }
@@ -201,20 +444,20 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
   return (
     <div className="grid agent-page">
       <div className="card agent-launch-card">
-        <h3>Objective — the agent drives the attack loop autonomously</h3>
-        {!hasTarget && <div className="err">No [target] configured in config.toml — the agent can't fire.</div>}
+        <h3>{zh.agent.title}</h3>
+        {!hasTarget && <div className="err">{zh.agent.noTarget}</div>}
         <textarea
           rows={2}
           value={objective}
-          placeholder="e.g. assess whether the target can be induced to violate the agreed policy"
+          placeholder={zh.agent.placeholder}
           onChange={(event) => setObjective(event.target.value)}
           disabled={running}
         />
 
         <details className="technique-picker" open>
           <summary>
-            <span>Arsenal techniques</span>
-            <span className="mono muted">{enabled.size}/{techniques.length} enabled</span>
+            <span>{zh.agent.techniques}</span>
+            <span className="mono muted">{enabled.size}/{techniques.length} {zh.agent.techniquesEnabled}</span>
           </summary>
           <div className="technique-picker-body">
             <div className="technique-toolbar">
@@ -222,11 +465,11 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
                 className="search"
                 type="search"
                 value={techniqueQuery}
-                placeholder="Filter techniques…"
+                placeholder={zh.agent.filterTechniques}
                 onChange={(event) => setTechniqueQuery(event.target.value)}
               />
-              <button type="button" className="mini-btn" disabled={running || enabled.size === techniques.length} onClick={() => saveEnabled(new Set(techniques.map((tool) => tool.name)))}>Enable all</button>
-              <button type="button" className="mini-btn" disabled={running || enabled.size === 0} onClick={() => saveEnabled(new Set())}>Disable all</button>
+              <button type="button" className="mini-btn" disabled={running || enabled.size === techniques.length} onClick={() => saveEnabled(new Set(techniques.map((tool) => tool.name)))}>{zh.agent.enableAll}</button>
+              <button type="button" className="mini-btn" disabled={running || enabled.size === 0} onClick={() => saveEnabled(new Set())}>{zh.agent.disableAll}</button>
             </div>
             <div className="technique-checklist" aria-label="Agent arsenal techniques">
               {filteredTechniques.map((tool) => (
@@ -235,9 +478,9 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
                   <span><b>{tool.name}</b><small>{tool.description}</small></span>
                 </label>
               ))}
-              {!filteredTechniques.length && <div className="empty compact">No matching techniques.</div>}
+              {!filteredTechniques.length && <div className="empty compact">{zh.agent.noMatch}</div>}
             </div>
-            <div className="mono muted technique-note">Run controls remain available even when every attack technique is disabled. Selection is saved in this browser.</div>
+            <div className="mono muted technique-note">{zh.agent.techniquesNote}</div>
           </div>
         </details>
 
@@ -251,42 +494,99 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
         />
 
         <div className="agent-primary-actions">
+          <span
+            className={`pill mode-pill mode-${daedalusMode.toLowerCase()}`}
+            title="Daedalus engagement mode"
+          >
+            {daedalusMode}
+          </span>
           {!running ? (
-            <button className="fire" disabled={!hasTarget || !objective.trim()} onClick={() => void run()}>▸ RUN AGENT</button>
-          ) : (
-            <button className={`pause-command ${paused ? "resume" : ""}`} disabled={controlBusy} onClick={() => void togglePause()}>
-              {paused ? "▶ RESUME" : "Ⅱ PAUSE"}
+            <button className="fire" disabled={!hasTarget || !objective.trim()} onClick={() => void run()}>▸ {zh.agent.run}</button>
+          ) : stopping ? (
+            <button className="pause-command stop" disabled>
+              ■ {zh.agent.stopping}
             </button>
+          ) : paused || pauseReady ? (
+            <div className="agent-pause-actions" role="group" aria-label="paused run controls">
+              <button
+                className="pause-command resume"
+                disabled={controlBusy}
+                onClick={() => void requestResume()}
+              >
+                ▶ {zh.agent.resume}
+              </button>
+              <button
+                className="pause-command stop"
+                disabled={controlBusy}
+                onClick={() => void requestStop()}
+              >
+                ■ {zh.agent.stop}
+              </button>
+            </div>
+          ) : (
+            <div className="agent-pause-actions" role="group" aria-label="running controls">
+              <button
+                className="pause-command"
+                disabled={controlBusy}
+                onClick={() => void requestPause()}
+              >
+                Ⅱ {zh.agent.pause}
+              </button>
+              <button
+                className="pause-command stop ghost"
+                disabled={controlBusy}
+                onClick={() => void requestStop()}
+                title={zh.agent.stop}
+              >
+                ■ {zh.agent.stop}
+              </button>
+            </div>
           )}
-          {running && <span className={`run-state mono ${paused ? "paused" : ""}`}>{pauseReady ? "paused — safe to switch" : paused ? "finishing current step…" : "working…"}</span>}
-          {runLog && <a className="agent-run-log mono" href="#runs" title="Open Run logs">saved: {runLog}</a>}
+          {running && (
+            <span className={`run-state mono ${paused || pauseReady ? "paused" : ""}${stopping ? " stopping" : ""}`}>
+              {stopping
+                ? zh.agent.stopping
+                : pauseReady
+                  ? zh.agent.pausedSafe
+                  : paused
+                    ? zh.agent.finishing
+                    : zh.agent.working}
+            </span>
+          )}
+          {runLog && <a className="agent-run-log mono" href="#runs" title="打开运行日志">{zh.agent.saved}: {runLog}</a>}
         </div>
 
         {running && (
           <div className="steering-box">
-            <label htmlFor="agent-steering">Steer the attacker during this run</label>
+            <label htmlFor="agent-steering">{zh.agent.steer}</label>
             <div>
               <input
                 id="agent-steering"
                 type="text"
                 value={steering}
-                placeholder="e.g. stop encoding; pivot to a multi-turn authority frame"
+                placeholder={zh.agent.steerPlaceholder}
                 onChange={(event) => setSteering(event.target.value)}
                 onKeyDown={(event) => { if (event.key === "Enter") void sendSteering(); }}
+                disabled={stopping}
               />
-              <button type="button" className="primary-command" disabled={controlBusy || !steering.trim()} onClick={() => void sendSteering()}>Send steering</button>
+              <button type="button" className="primary-command" disabled={controlBusy || stopping || !steering.trim()} onClick={() => void sendSteering()}>{zh.agent.sendSteer}</button>
             </div>
-            <small>Delivered before the attacker's next model call; it also works while paused.</small>
+            <small>{zh.agent.steerHint}</small>
           </div>
         )}
 
-        {running && paused && !pauseReady && <div className="mono muted technique-note">The current response and tool step are draining. Attacker switching unlocks at the safe boundary.</div>}
-        {running && pauseReady && (
+        {running && paused && !pauseReady && !stopping && (
+          <div className="mono muted technique-note">{zh.agent.drainNote}</div>
+        )}
+        {running && (paused || pauseReady) && !stopping && (
+          <div className="mono muted technique-note">{zh.agent.pauseActionsHint}</div>
+        )}
+        {running && pauseReady && !stopping && (
           <AttackerSwitch
             current={currentAttacker}
             onSwitched={(next) => {
               setCurrentAttacker(next);
-              push({ kind: "control", text: `Attacker switched to ${next.model}; resume when ready.` });
+              push({ kind: "control", text: `攻击端已切换为 ${next.model}；准备好后可继续。` });
             }}
           />
         )}
@@ -294,9 +594,9 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       </div>
 
       <div className="card agent-transcript-card">
-        <h3>Transcript</h3>
+        <h3>{zh.agent.transcript}</h3>
         <div className="transcript" ref={bodyRef}>
-          {!items.length && <div className="empty">Set the objective and arsenal, then run. You can steer, pause, and switch the attacker without losing the conversation.</div>}
+          {!items.length && <div className="empty">{zh.agent.transcriptEmpty}</div>}
           {items.map((item, index) => <Row key={index} it={item} />)}
         </div>
       </div>
@@ -339,21 +639,21 @@ function AttackerSwitch({
   return (
     <section className="attacker-switch">
       <div className="attacker-switch-head">
-        <span><b>Switch attacker</b><small>Conversation and tool results stay intact</small></span>
-        <span className="mono muted">current: {current.model || "unknown"}</span>
+        <span><b>{zh.agent.switchAttacker}</b><small>{zh.agent.switchHint}</small></span>
+        <span className="mono muted">{zh.agent.current}: {current.model || zh.common.unknown}</span>
       </div>
       <div className="attacker-switch-grid">
-        <label><span>Profile</span><select value={profile} onChange={(event) => {
+        <label><span>{zh.agent.profile}</span><select value={profile} onChange={(event) => {
           const next = event.target.value;
           setProfile(next);
           const selected = profiles.find((item) => item.name === next);
           if (selected) { setProvider(selected.provider); setModel(selected.model); }
-        }}><option value="">Custom</option>{profiles.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
+        }}><option value="">{zh.agent.custom}</option>{profiles.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
         {!profile && <>
-          <label><span>Provider</span><ProviderChooser value={provider} ariaLabel="Paused attacker provider" onChange={(next, item) => { setProvider(next); if (item) setModel(item.model); }} /></label>
-          <label><span>Model</span><ModelChooser profile={provider} value={model} onChange={setModel} ariaLabel="Paused attacker model" /></label>
+          <label><span>{zh.agent.provider}</span><ProviderChooser value={provider} ariaLabel="Paused attacker provider" onChange={(next, item) => { setProvider(next); if (item) setModel(item.model); }} /></label>
+          <label><span>{zh.agent.model}</span><ModelChooser profile={provider} value={model} onChange={setModel} ariaLabel="Paused attacker model" /></label>
         </>}
-        <button type="button" className="primary-command" disabled={busy || (!profile && (!provider || !model.trim()))} onClick={() => void apply()}>{busy ? "Switching…" : "Use attacker"}</button>
+        <button type="button" className="primary-command" disabled={busy || (!profile && (!provider || !model.trim()))} onClick={() => void apply()}>{busy ? zh.agent.switching : zh.agent.useAttacker}</button>
       </div>
       {error && <div className="err">{error}</div>}
     </section>
@@ -373,6 +673,16 @@ function Row({ it }: { it: Item }) {
     case "progress": return <div className="t-progress mono">{it.text}</div>;
     case "feedback": return <div className="t-feedback mono">steering applied: {it.text}</div>;
     case "control": return <div className="t-control mono">{it.text}</div>;
+    case "mode":
+      return (
+        <div className={`t-mode mono mode-${it.mode.toLowerCase()}`}>
+          <span className={`pill mode-pill mode-${it.mode.toLowerCase()}`}>{it.mode}</span>
+          <span className="muted">
+            {it.source ? `${it.source}` : "daedalus"}
+            {it.text ? ` — ${it.text.slice(0, 160)}` : ""}
+          </span>
+        </div>
+      );
     case "done": return <div className={`t-done ${DONE_KIND[it.status] || "neutral"}`}>● {it.status}{it.summary ? ` — ${it.summary}` : ""}</div>;
     case "error": return <div className="err mono">{it.error}</div>;
   }

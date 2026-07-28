@@ -83,16 +83,16 @@ export function Arsenal() {
               className={`chip ${kind === item ? "on" : ""}`}
               onClick={() => { setKind(item); setSelectedKey(""); }}
             >
-              {item === "tools" ? "agent techniques" : item} ({counts[item]})
+              {item === "tools" ? "智能体技术" : item === "presets" ? "预设" : "变换"} ({counts[item]})
             </button>
           ))}
           <div className="rule" />
         </div>
-        {loadError && <div className="err">Could not load presets: {loadError}</div>}
-        <input className="search" type="search" placeholder={`Search ${kind}…`} value={q} onChange={(event) => setQ(event.target.value)} />
+        {loadError && <div className="err">无法加载预设：{loadError}</div>}
+        <input className="search" type="search" placeholder={`搜索${kind === "tools" ? "技术" : kind === "presets" ? "预设" : "变换"}…`} value={q} onChange={(event) => setQ(event.target.value)} />
         <div className="arsenal-table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead>
+            <thead><tr><th>名称</th><th>类型</th><th>描述</th></tr></thead>
             <tbody>
               {rows.map((row) => (
                 <tr
@@ -112,7 +112,7 @@ export function Arsenal() {
             </tbody>
           </table>
         </div>
-        {!rows.length && <div className="empty">No matches.</div>}
+        {!rows.length && <div className="empty">无匹配项。</div>}
       </section>
 
       <aside className="card arsenal-detail" aria-live="polite">
@@ -122,11 +122,11 @@ export function Arsenal() {
             <button type="button" className="mini-btn" onClick={() => void copyDetail()}>{copied ? "Copied" : "Copy"}</button>
           </div>
           <p className="description">{selected.desc}</p>
-          <h3>{selected.kind === "presets" ? "Prompt template" : selected.kind === "tools" ? "Input schema" : "Properties"}</h3>
+          <h3>{selected.kind === "presets" ? "提示模板" : selected.kind === "tools" ? "输入 schema" : "属性"}</h3>
           {selected.kind === "transforms"
             ? <div className="mono muted">{selected.detail}</div>
             : <pre>{selected.detail}</pre>}
-        </> : <div className="empty">Select an arsenal item to inspect it.</div>}
+        </> : <div className="empty">选择一个武器库项目以查看详情。</div>}
       </aside>
     </div>
   );

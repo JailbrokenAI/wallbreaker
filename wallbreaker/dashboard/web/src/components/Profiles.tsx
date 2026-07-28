@@ -33,11 +33,12 @@ export function Profiles({ onSaved }: { onSaved?: () => void }) {
     try { await api.saveRole(role, { profile: name }); load(); onSaved?.(); }
     catch (error) { setErrors((value) => ({ ...value, [role]: (error as Error).message })); }
   };
-  if (!data) return <div className="empty">Loading profiles…</div>;
+  const roleZh: Record<string, string> = { attacker: "攻击端", target: "目标", judge: "评判" };
+  if (!data) return <div className="empty">正在加载档案…</div>;
   return <div className="agent-profile-grid">{ROLES.map((role) => {
     const roleData = data.roles[role]; const form = editing[role];
     return <section className="card agent-profile-card" key={role}>
-      <h3>{role} profiles</h3>
+      <h3>{roleZh[role] || role} 档案</h3>
       <div className="profile-active mono">Active: <b>{roleData.active.profile || `Custom · ${roleData.active.provider}`}</b> · {roleData.active.model}</div>
       <div className="profile-list">{roleData.profiles.map((item) => <div className="profile-list-item" key={item.name}>
         <button type="button" className="profile-select" onClick={() => edit(item)}><b>{item.name}</b><span>{item.provider} · {item.model}</span><small>{item.prompt_source === "none" ? "No system prompt" : `${item.prompt_source} system prompt`}</small></button>
