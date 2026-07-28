@@ -99,8 +99,16 @@ Env overrides:
 
 ### Next
 
+- [ ] P2 live: set CPA/OpenRouter keys and run one real CODE→LIBERATE→Memory→REPLAY objective
 - [ ] Optional: register generated schedule runners into real OS task schedulers in production
 - [ ] Optional research deepenings beyond the in-tree AgentDojo/Morris-II wrappers
+
+### Done (P0 engineering convergence)
+
+- [x] Dirty tree split into thematic commits on `fix/bug-001-stream-timeout-await-llm`
+- [x] Minimal regression gate scripts + `minimal-gate` workflow
+- [x] Offline dataset fixtures under `wallbreaker/datasets/fixtures/`
+- [x] Worktree clean (only ignored scratch)
 
 ### Done (schedule daemon + Phase 5 extras)
 
