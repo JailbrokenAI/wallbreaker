@@ -158,6 +158,13 @@ P0 工程收敛 → P1 测量可信与回归门禁 → P2 真实目标上的解�
 
 ---
 
+## Status snapshot (2026-07-28)
+
+- **P0 partially done:** dirty tree split into 7 thematic commits on `fix/bug-001-stream-timeout-await-llm` (docs/gate, daedalus, measure, datasets/cli, engine surfaces, tui/providers, desktop/dashboard).
+- **P1 gate:** `scripts/minimal_gate.sh` / `.ps1` + `.github/workflows/minimal-gate.yml` (127-test core subset green).
+- **P2 blocked on live keys:** local `config.toml` target `grok-4.5` currently has no resolved API key in this environment; Liberation loop needs operator key/env before live CODE→LIBERATE→Memory run.
+- Worktree clean except ignored `work/`.
+
 ## Immediate next actions (when resuming)
 
 1. **Branch hygiene:** 从 `fix/bug-001-stream-timeout-await-llm` 按 P0 切片提交  
