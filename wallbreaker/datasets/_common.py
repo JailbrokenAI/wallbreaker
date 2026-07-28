@@ -40,16 +40,45 @@ def parse_csv(text: str, mapper) -> list[dict]:
     return rows
 
 
-def stratified_sample(behaviors: list[dict], category=None, n: int = 8, seed: int = 0) -> list[dict]:
-    if not behaviors:
+def filter_behaviors(
+    behaviors: list[dict],
+    *,
+    category=None,
+    benign: bool | None = None,
+) -> list[dict]:
+    """Filter rows by category and/or benign flag.
+
+    ``benign=None`` keeps both harmful and benign rows.
+    ``benign=True`` is the over-refusal / FRR denominator (JailbreakBench benign, etc.).
+    ``benign=False`` is the attack ASR numerator pool.
+    """
+    out = list(behaviors or [])
+    if category is not None and str(category).strip():
+        cat = str(category).strip()
+        out = [b for b in out if str(b.get("category") or "") == cat]
+    if benign is not None:
+        want = bool(benign)
+        out = [b for b in out if bool(b.get("benign")) is want]
+    return out
+
+
+def stratified_sample(
+    behaviors: list[dict],
+    category=None,
+    n: int = 8,
+    seed: int = 0,
+    *,
+    benign: bool | None = None,
+) -> list[dict]:
+    pool = filter_behaviors(behaviors, category=category, benign=benign)
+    if not pool:
         return []
     rng = random.Random(seed)
     if category:
-        pool = [b for b in behaviors if b["category"] == category]
         rng.shuffle(pool)
         return pool[:n]
     by_cat: dict[str, list] = {}
-    for b in behaviors:
+    for b in pool:
         by_cat.setdefault(b["category"], []).append(b)
     for lst in by_cat.values():
         rng.shuffle(lst)
@@ -104,6 +133,39 @@ class BaseLoader:
             return f"{self.name} not cached and offline."
         return await asyncio.to_thread(self._ensure_blocking)
 
+    def refresh_blocking(self, *, force: bool = False) -> str | None:
+        """Re-download remote sources into the library cache.
+
+        ``force=True`` deletes existing cache files first so a stale mirror is replaced.
+        Bundled offline samples (sorrybench/xstest) are never deleted.
+        Returns an error string or None on success / nothing-to-fetch.
+        """
+        errors: list[str] = []
+        fetched = 0
+        for pos, (url, filename, _benign) in enumerate(self._sources()):
+            if not url:
+                continue
+            path = cache_path(filename)
+            if force and path.is_file():
+                try:
+                    path.unlink()
+                except OSError as exc:
+                    errors.append(f"{filename}: cannot clear ({exc})")
+                    continue
+            if path.is_file() and not force:
+                continue
+            err = download(url, path, label=self.name)
+            if err:
+                errors.append(err)
+            else:
+                fetched += 1
+        if errors and fetched == 0:
+            return "; ".join(errors)
+        return None
+
+    async def refresh(self, *, force: bool = False) -> str | None:
+        return await asyncio.to_thread(self.refresh_blocking, force=force)
+
     def load(self) -> list[dict]:
         rows: list[dict] = []
         for url, filename, benign in self._sources():
@@ -119,14 +181,39 @@ class BaseLoader:
     def categories(self) -> list[str]:
         return sorted({b["category"] for b in self.load()})
 
-    def sample(self, category=None, n: int = 8, seed: int = 0) -> list[dict]:
-        return stratified_sample(self.load(), category, n, seed)
+    def sample(
+        self,
+        category=None,
+        n: int = 8,
+        seed: int = 0,
+        *,
+        benign: bool | None = None,
+    ) -> list[dict]:
+        return stratified_sample(self.load(), category, n, seed, benign=benign)
 
-    async def battery(self, category=None, n: int = 8, seed: int = 0) -> list[str] | None:
+    def sample_rows(
+        self,
+        category=None,
+        n: int = 8,
+        seed: int = 0,
+        *,
+        benign: bool | None = None,
+    ) -> list[dict]:
+        """Alias of sample() that makes the full row (incl. benign flag) explicit."""
+        return self.sample(category=category, n=n, seed=seed, benign=benign)
+
+    async def battery(
+        self,
+        category=None,
+        n: int = 8,
+        seed: int = 0,
+        *,
+        benign: bool | None = None,
+    ) -> list[str] | None:
         err = await self.ensure()
         if err or not self.is_cached():
             return None
-        rows = self.sample(category, n, seed)
+        rows = self.sample(category, n, seed, benign=benign)
         if not rows:
             return None
         return [b["behavior"] for b in rows]

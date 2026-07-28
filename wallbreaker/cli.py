@@ -38,13 +38,13 @@ def _add_endpoint_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-key", help="API key literal (prefer --api-key-env)")
 
 
-SUBCOMMANDS = ("lib", "parsel", "eni", "transform", "findings", "report", "export", "check", "regrade", "baseline", "dashboard")
+SUBCOMMANDS = ("lib", "parsel", "eni", "transform", "findings", "report", "export", "check", "regrade", "baseline", "dashboard", "datasets", "schedule")
 
 
 def build_main_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wallbreaker",
-        description="Wallbreaker — red-team harness: a configurable agentic LLM terminal",
+        description="Daedalus — red-team harness (CLI: wallbreaker): a configurable agentic LLM terminal",
     )
     _add_endpoint_flags(parser)
     parser.add_argument(
@@ -61,6 +61,40 @@ def build_main_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--rounds", type=int, default=12, help="Autonomous round cap (default 12)"
+    )
+    parser.add_argument(
+        "--watch",
+        nargs="?",
+        const="5m",
+        default=None,
+        help=(
+            "Relentless mode: re-run --auto on an interval (default 5m). "
+            "Pass 30s / 5m / 1h. Implies --auto. Stops on finish() unless "
+            "--watch-max-cycles is hit first. --schedule is an alias."
+        ),
+    )
+    parser.add_argument(
+        "--schedule",
+        nargs="?",
+        const="5m",
+        default=None,
+        help="Alias for --watch (fixed-interval relentless re-run of --auto).",
+    )
+    parser.add_argument(
+        "--watch-max-cycles",
+        type=int,
+        default=0,
+        help="Max watch cycles (0 = unlimited). Each cycle runs up to --rounds.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        action="store_true",
+        help="Persist session checkpoints under sessions/checkpoints/ each autonomous round",
+    )
+    parser.add_argument(
+        "--checkpoint-name",
+        default="",
+        help="Checkpoint file stem (default: derived from the prompt)",
     )
     parser.add_argument(
         "--target", help="Target profile name to attack (overrides [target])"
@@ -165,11 +199,57 @@ def build_sub_parser() -> argparse.ArgumentParser:
         help="Max allowed ASR rise per technique before failing (default 0.05)",
     )
 
-    dash = sub.add_parser("dashboard", help="Serve the Wallbreaker web dashboard")
+    dash = sub.add_parser("dashboard", help="Serve the Daedalus web dashboard")
     dash.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1)")
     dash.add_argument("--port", type=int, default=8787, help="Bind port (default 8787)")
     dash.add_argument("--sessions", default="sessions", help="Run-log directory (default sessions/)")
     dash.add_argument("--config", help="Path to config.toml")
+
+    ds = sub.add_parser(
+        "datasets",
+        help="List / refresh behavior batteries (HarmBench, JBB, SORRY-Bench, XSTest, …)",
+    )
+    ds_sub = ds.add_subparsers(dest="datasets_action", required=True)
+    ds_list = ds_sub.add_parser("list", help="Show cached row counts per source")
+    ds_list.add_argument("--source", help="Only this source (default: all)")
+    ds_ref = ds_sub.add_parser(
+        "refresh",
+        help="Download/refresh remote CSVs into library/ (keeps bundled offline samples)",
+    )
+    ds_ref.add_argument("--source", help="Only this source (default: all)")
+    ds_ref.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download even when a cache file already exists",
+    )
+
+    sched = sub.add_parser(
+        "schedule",
+        help="Install/list long-running relentless jobs (OS-detachable runners)",
+    )
+    sched_sub = sched.add_subparsers(dest="schedule_action", required=True)
+    s_list = sched_sub.add_parser("list", help="List jobs under wb_runs/schedule/")
+    s_un = sched_sub.add_parser("uninstall", help="Remove a schedule job by name")
+    s_un.add_argument("name", help="Job name/slug")
+    s_in = sched_sub.add_parser(
+        "install",
+        help="Write a runner script that loops wallbreaker --auto --watch",
+    )
+    s_in.add_argument("objective", help="Engagement objective for each cycle")
+    s_in.add_argument("--name", default="", help="Job name (default: slug of objective)")
+    s_in.add_argument("--interval", default="5m", help="Watch interval (30s/5m/1h)")
+    s_in.add_argument("--rounds", type=int, default=12, help="Rounds per cycle")
+    s_in.add_argument("--max-cycles", type=int, default=0, help="Max watch cycles (0=inf)")
+    s_in.add_argument(
+        "--no-checkpoint",
+        action="store_true",
+        help="Disable per-round checkpoints inside the runner",
+    )
+    s_in.add_argument(
+        "--system",
+        action="store_true",
+        help="Print OS registration hints (schtasks/cron/systemd) after install",
+    )
 
     return parser
 
@@ -237,10 +317,94 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
 
     history = [user(args.prompt)]
     try:
-        if args.auto:
+        watch_interval = getattr(args, "watch", None) or getattr(args, "schedule", None)
+        if watch_interval is not None:
+            args.auto = True
+        use_checkpoint = bool(
+            getattr(args, "checkpoint", False) or watch_interval is not None
+        )
+        checkpoint_hook = None
+        if use_checkpoint:
+            from .relentless import make_round_checkpoint_hook
+
+            ck_name = (getattr(args, "checkpoint_name", None) or "").strip()
+            if not ck_name:
+                ck_name = (args.prompt or "run")[:40]
+            checkpoint_hook = make_round_checkpoint_hook(
+                root="sessions",
+                name=ck_name,
+                objective=args.prompt or "",
+            )
+            print(
+                f"[checkpoint] sessions/checkpoints/{ck_name}-*.json",
+                file=sys.stderr,
+            )
+
+        if args.auto and watch_interval is not None:
+            from .relentless import WatchConfig, run_watch
+
+            cfg_w = WatchConfig.from_args(
+                interval=watch_interval,
+                max_cycles=int(getattr(args, "watch_max_cycles", 0) or 0),
+                name=(getattr(args, "checkpoint_name", None) or "watch"),
+            )
+            print(
+                f"[watch] interval={cfg_w.interval_s:g}s "
+                f"max_cycles={cfg_w.max_cycles or 'inf'} "
+                f"rounds/cycle={args.rounds}",
+                file=sys.stderr,
+            )
+
+            async def _cycle(cycle_no: int):
+                print(f"\n=== watch cycle {cycle_no} ===", file=sys.stderr)
+                cycle_history = [user(args.prompt)]
+                res = await run_autonomous(
+                    provider,
+                    registry,
+                    cycle_history,
+                    system=system,
+                    events=events,
+                    max_rounds=args.rounds,
+                    config=config,
+                    objective=args.prompt or "",
+                    on_checkpoint=checkpoint_hook,
+                )
+                terminal = res.data.get("summary") or res.data.get("question") or ""
+                print(
+                    f"[watch cycle {cycle_no} -> {res.status}] {terminal}",
+                    file=sys.stderr,
+                )
+                runlog.event(
+                    "watch_cycle",
+                    cycle=cycle_no,
+                    status=res.status,
+                    summary=terminal,
+                )
+                return res.status, res.data or {}
+
+            watch_res = await run_watch(_cycle, cfg_w)
+            print(
+                f"\n\n[watch done] cycles={watch_res.cycles} "
+                f"status={watch_res.status} reason={watch_res.stopped_reason}",
+                file=sys.stderr,
+            )
+            runlog.event(
+                "run_end",
+                status=watch_res.status,
+                summary=watch_res.stopped_reason,
+                cycles=watch_res.cycles,
+            )
+        elif args.auto:
             result = await run_autonomous(
-                provider, registry, history, system=system,
-                events=events, max_rounds=args.rounds,
+                provider,
+                registry,
+                history,
+                system=system,
+                events=events,
+                max_rounds=args.rounds,
+                config=config,
+                objective=args.prompt or "",
+                on_checkpoint=checkpoint_hook,
             )
             terminal = result.data.get("summary") or result.data.get("question") or ""
             print(f"\n\n[{result.status}] {terminal}", file=sys.stderr)
@@ -375,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
                 config = None
             tgt = (config.target.model if config and config.target else "no target")
             print(
-                f"Wallbreaker dashboard -> http://{args.host}:{args.port}  (target: {tgt})",
+                f"Daedalus dashboard -> http://{args.host}:{args.port}  (target: {tgt})",
                 file=sys.stderr,
             )
             serve(host=args.host, port=args.port, config=config, sessions_dir=args.sessions)
@@ -399,6 +563,84 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print(format_regressions(regressions, ok, args.max_regression))
             return 0 if ok else 2
+        if args.command == "datasets":
+            from . import datasets as dsmod
+            import asyncio as _asyncio
+
+            if args.datasets_action == "list":
+                rows = dsmod.status(getattr(args, "source", None))
+                if not rows:
+                    print("No dataset sources matched.", file=sys.stderr)
+                    return 1
+                print(f"{'source':14} {'cached':7} {'rows':6} {'benign':7}")
+                print("-" * 40)
+                for row in rows:
+                    print(
+                        f"{row['source']:14} "
+                        f"{'yes' if row['cached'] else 'no':7} "
+                        f"{row['rows']:6} "
+                        f"{row['benign_rows']:7}"
+                    )
+                return 0
+            results = _asyncio.run(
+                dsmod.refresh(
+                    getattr(args, "source", None),
+                    force=bool(getattr(args, "force", False)),
+                )
+            )
+            rc = 0
+            for name, err in results.items():
+                if err:
+                    print(f"[datasets refresh] {name}: FAIL - {err}", file=sys.stderr)
+                    rc = 1
+                else:
+                    print(f"[datasets refresh] {name}: ok")
+            if rc == 0:
+                for row in dsmod.status(getattr(args, "source", None)):
+                    print(
+                        f"  {row['source']}: {row['rows']} rows "
+                        f"({row['benign_rows']} benign)"
+                    )
+            return rc
+        if args.command == "schedule":
+            from .schedule_daemon import (
+                format_jobs,
+                install_job,
+                list_jobs,
+                uninstall_job,
+            )
+
+            if args.schedule_action == "list":
+                print(format_jobs(list_jobs(".")))
+                return 0
+            if args.schedule_action == "uninstall":
+                ok = uninstall_job(args.name, ".")
+                if not ok:
+                    print("No schedule job named %r." % (args.name,), file=sys.stderr)
+                    return 1
+                print("uninstalled schedule job %s" % args.name)
+                return 0
+            job = install_job(
+                name=args.name or args.objective,
+                objective=args.objective,
+                interval=args.interval,
+                max_cycles=args.max_cycles,
+                rounds=args.rounds,
+                checkpoint=not args.no_checkpoint,
+                cwd=".",
+            )
+            print("installed schedule job %s" % job.name)
+            print("  runner: %s" % job.runner_path)
+            print("  meta:   %s" % job.meta_path)
+            print(
+                "  loops:  wallbreaker --auto --watch %s --rounds %s"
+                % (job.interval, job.rounds)
+            )
+            if args.system:
+                print("OS registration hints:")
+                for hint in job.system_hints:
+                    print("  %s" % hint)
+            return 0
         from .tools.l1b3rt4s import run_lib_cli
 
         return run_lib_cli(args)
