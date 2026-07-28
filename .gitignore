@@ -78,3 +78,7 @@ desktop/out/
 .serena/
 *.log
 .DS_Store
+
+# local agent scratch
+work/
+
