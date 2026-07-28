@@ -32,7 +32,7 @@ async def _recommend(args: dict, ctx: ToolContext) -> str:
     top = max(1, int(args.get("top", 3)))
     timeout = float(args.get("timeout", 45))
     concurrency = max(1, int(args.get("concurrency", 5)))
-    use_bandit = bool(args.get("bandit", False))
+    use_bandit = bool(args.get("bandit", True))
     category = args.get("category", "transform")
 
     store = None
@@ -146,7 +146,7 @@ def register(registry: ToolRegistry) -> None:
                 "top": {"type": "integer", "description": "How many winners to chain (default 3)"},
                 "concurrency": {"type": "integer", "description": "Probes in flight at once (default 5; lower for rate-limited single-key endpoints)"},
                 "timeout": {"type": "number", "description": "Per-probe seconds before it's marked timed-out (default 45)"},
-                "bandit": {"type": "boolean", "description": "Order the survey by a UCB1 bandit posterior from wb_runs/technique_stats.json (per target+category) when prior stats exist, and update it from this run's verdicts (default false; falls back to the fixed order)"},
+                "bandit": {"type": "boolean", "description": "Order the survey by a UCB1 bandit posterior from wb_runs/technique_stats.json (per target+category) when prior stats exist, and update it from this run's verdicts (default true; falls back to the fixed order when no prior stats)"},
                 "category": {"type": "string", "description": "Bandit bucket key paired with the target model (default 'transform')"},
                 "system": {"type": "string"},
                 "max_tokens": {"type": "integer"},

@@ -334,7 +334,7 @@ async def _crescendo_auto(args: dict, ctx: ToolContext) -> str:
 
 
 async def _crescendo(args: dict, ctx: ToolContext) -> str:
-    mode = str(args.get("mode", "static")).strip().lower()
+    mode = str(args.get("mode", "auto")).strip().lower()
     if mode in ("auto", "crescendomation", "adaptive"):
         return await _crescendo_auto(args, ctx)
     return await _crescendo_static(args, ctx)
@@ -344,7 +344,7 @@ def register(registry: ToolRegistry) -> None:
     registry.add(
         name="crescendo",
         description=(
-            "Run an automated multi-turn Crescendo attack. Default mode='static' fires an "
+            "Run an automated multi-turn Crescendo attack. Default mode='auto' (Crescendomation) lets an attacker LLM generate each next turn with judge-in-the-loop auto-backtrack. mode='static' fires an "
             "escalation ladder you supply in 'turns' one turn at a time, threading the growing "
             "conversation so each turn rides the target's prior compliance. mode='auto' "
             "(Crescendomation) drops the fixed ladder: an attacker LLM generates each NEXT "
@@ -362,8 +362,8 @@ def register(registry: ToolRegistry) -> None:
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["static", "auto"],
-                    "description": "'static' (default) uses 'turns'; 'auto' generates each turn adaptively",
+                    "enum": ["auto", "static"],
+                    "description": "'auto' (default, Crescendomation) generates each turn adaptively; 'static' uses 'turns'",
                 },
                 "turns": {
                     "type": "array",

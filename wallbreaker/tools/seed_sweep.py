@@ -60,7 +60,7 @@ async def _seed_sweep(args: dict, ctx: ToolContext) -> str:
     as_system = bool(args.get("as_system", True))
     max_tokens = int(args.get("max_tokens", 1024))
     timeout = float(args.get("timeout", 75))
-    use_bandit = bool(args.get("bandit", False))
+    use_bandit = bool(args.get("bandit", True))
     category = args.get("category", "seed")
 
     store = None
@@ -160,7 +160,7 @@ def register(registry: ToolRegistry) -> None:
                 "n": {"type": "integer", "description": "Max seeds to try (default 6)"},
                 "as_system": {"type": "boolean", "description": "Apply the seed as the target system prompt (default true)"},
                 "max_seed_chars": {"type": "integer", "description": "Per-seed char cap (default 40000; ENI personas run ~35KB - keep this high or they get crippled)"},
-                "bandit": {"type": "boolean", "description": "Order seeds by a UCB1 bandit warmed from wb_runs/technique_stats.json (per target+category) and update it from the verdicts, instead of pure round-robin (default false)"},
+                "bandit": {"type": "boolean", "description": "Order seeds by a UCB1 bandit warmed from wb_runs/technique_stats.json (per target+category) and update it from the verdicts, instead of pure round-robin (default true; cold-start = fixed order)"},
                 "category": {"type": "string", "description": "Bandit bucket key paired with the target model (default 'seed')"},
                 "max_tokens": {"type": "integer"},
             },

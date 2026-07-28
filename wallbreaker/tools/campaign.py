@@ -71,7 +71,7 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
     system = args.get("system")
     max_tokens = int(args.get("max_tokens", 500))
 
-    use_bandit = bool(args.get("bandit", False))
+    use_bandit = bool(args.get("bandit", True))
     store = None
     bandit = None
     if use_bandit:
@@ -298,7 +298,7 @@ def register(registry: ToolRegistry) -> None:
             "type": "object",
             "properties": {
                 "category": {"type": "string", "description": "Dataset semantic category to sample"},
-                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench). Default harmbench."},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, sorrybench, xstest). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -310,7 +310,7 @@ def register(registry: ToolRegistry) -> None:
                     "items": {"type": "string"},
                     "description": "Limit which techniques run (plain, enc:base64, enc:zero_width, prefill, many_shot:16)",
                 },
-                "bandit": {"type": "boolean", "description": "Order the technique ladder by a UCB1 bandit posterior from wb_runs/technique_stats.json (per target+category) when prior stats exist, so techniques that cracked this target before run first; updates the posterior from this run's verdicts (default false; falls back to the fixed escalation order)"},
+                "bandit": {"type": "boolean", "description": "Order the technique ladder by a UCB1 bandit posterior from wb_runs/technique_stats.json (per target+category) when prior stats exist, so techniques that cracked this target before run first; updates the posterior from this run's verdicts (default true; falls back to the fixed escalation order when no prior stats)"},
                 "seed": {"type": "integer"},
                 "system": {"type": "string"},
                 "max_tokens": {"type": "integer"},
@@ -338,7 +338,7 @@ def register(registry: ToolRegistry) -> None:
                     "items": {"type": "string"},
                     "description": "Sample 'n' behaviors per category and add a technique x category breakdown",
                 },
-                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench). Default harmbench."},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, sorrybench, xstest). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},

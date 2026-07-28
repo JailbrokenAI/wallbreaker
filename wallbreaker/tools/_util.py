@@ -26,7 +26,24 @@ DEFAULT_CONCURRENCY = _default_concurrency()
 
 
 _TRUNC_REASONS = {"length", "max_tokens", "model_length"}
+# Soft end-of-stream markers from BUG-001 salvage paths — NOT token truncation.
+_SOFT_STOP_REASONS = {"partial", "cancelled", "cancel", "error"}
 _TRUNC_CEILING = 8000
+
+
+def _looks_token_truncated(stop: str | None, empty: bool, reasoning: str | None) -> bool:
+    """True only when the model hit a token ceiling, not a soft/partial stop.
+
+    Empty answer + populated CoT used to always count as truncated, which made
+    mid-stream cancel salvages (stop=partial, reasoning-only) look truncated and
+    forced ERROR labels in profile_target / multi_fire. Soft stops are usable
+    partials and must be graded, not retried as length truncations.
+    """
+    if stop in _TRUNC_REASONS:
+        return True
+    if stop in _SOFT_STOP_REASONS:
+        return False
+    return empty and bool((reasoning or "").strip())
 
 # Outer asyncio.wait_for floors (seconds). Short tool defaults used to cancel mid-stream
 # CoT/refusals and surface false ERROR/network labels (BUG-001). Provider HTTP timeouts
@@ -97,7 +114,10 @@ async def complete_untruncated(
     )
     stop = getattr(provider, "last_stop_reason", None)
     empty = not (reply or "").strip()
-    truncated = stop in _TRUNC_REASONS or (empty and bool((reasoning or "").strip()))
+    # Token-budget truncation deserves a higher-max_tokens retry. Soft "partial"/
+    # cancelled stops (BUG-001 salvage) are NOT truncated — retrying them just
+    # re-spends budget and re-surfaces false ERROR labels.
+    truncated = _looks_token_truncated(stop, empty, reasoning)
     if truncated and max_tokens < ceiling:
         bumped = min(max_tokens * 2, ceiling)
         reply, reasoning = await complete_with_reasoning(
@@ -105,7 +125,7 @@ async def complete_untruncated(
         )
         stop = getattr(provider, "last_stop_reason", None)
         empty = not (reply or "").strip()
-        truncated = stop in _TRUNC_REASONS or (empty and bool((reasoning or "").strip()))
+        truncated = _looks_token_truncated(stop, empty, reasoning)
     return reply, reasoning, stop, truncated
 
 

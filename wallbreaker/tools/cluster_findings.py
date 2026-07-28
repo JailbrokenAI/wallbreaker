@@ -98,7 +98,7 @@ async def _label_clusters(judge_endpoint, reps: list[str]) -> list[str]:
             + text[:600]
         )
         try:
-            out = await await_llm(provider.complete([user(prompt)], max_tokens=24), timeout=30
+            out = await await_llm(provider.complete([user(prompt)], max_tokens=24), timeout=120
             )
         except Exception:  # noqa: BLE001
             return ""

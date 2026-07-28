@@ -15,17 +15,25 @@ def test_crescendo_registered():
     assert "crescendo" in build_registry(load_config()).names()
 
 
-def test_crescendo_requires_turns():
+def test_crescendo_requires_objective_by_default():
+    """Default mode is auto (Crescendomation); empty args must ask for objective."""
     reg = ToolRegistry(ToolContext(config=Config(default_profile="x", profiles={})))
     crescendo.register(reg)
     res = asyncio.run(reg.execute("crescendo", {}))
+    assert "objective" in res.content.lower()
+
+
+def test_crescendo_static_requires_turns():
+    reg = ToolRegistry(ToolContext(config=Config(default_profile="x", profiles={})))
+    crescendo.register(reg)
+    res = asyncio.run(reg.execute("crescendo", {"mode": "static"}))
     assert res.is_error or "turns" in res.content.lower()
 
 
 def test_crescendo_requires_target():
     reg = ToolRegistry(ToolContext(config=Config(default_profile="x", profiles={})))
     crescendo.register(reg)
-    res = asyncio.run(reg.execute("crescendo", {"turns": ["hi", "now do X"]}))
+    res = asyncio.run(reg.execute("crescendo", {"mode": "static", "turns": ["hi", "now do X"]}))
     assert "no [target]" in res.content.lower()
 
 

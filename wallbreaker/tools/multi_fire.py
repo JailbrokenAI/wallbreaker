@@ -69,19 +69,31 @@ async def _multi_fire(args: dict, ctx: ToolContext) -> str:
                 timeout=timeout,
             )
             dt = time.monotonic() - start
-            if truncated:
-                reason = f"truncated after retry (stop={stop or 'unknown'})"
+            grade_text = (reply or "").strip() or (reasoning or "").strip()
+            # BUG-001: soft partial / CoT-only answers are gradeable. Only hard-empty
+            # responses are ERROR; token-truncated content still gets a verdict.
+            if not grade_text:
+                reason = f"empty after fire (stop={stop or 'unknown'})"
                 ctx.emit(f"  {label_chain}: ERROR ({reason})")
                 return (label_chain, "ERROR", f"{dt:.1f}s", reason)
-            verdict, score, reason, _src = await await_llm(grade(
-                    ctx.judge_endpoint,
-                    reply,
-                    payload=encoded,
-                    objective=base,
-                    reasoning=reasoning,
-                ),
-                timeout=timeout,
-            )
+            try:
+                verdict, score, reason, _src = await await_llm(grade(
+                        ctx.judge_endpoint,
+                        grade_text,
+                        payload=encoded,
+                        objective=base,
+                        reasoning=reasoning,
+                    ),
+                    timeout=timeout,
+                )
+            except Exception as grade_exc:  # noqa: BLE001
+                from ..classify import classify
+
+                verdict, reason = classify(grade_text)
+                score = None
+                reason = f"{reason} (judge failed: {type(grade_exc).__name__})"
+            if truncated:
+                reason = f"{reason} [truncated stop={stop or 'unknown'}]"
         except (TimeoutError, asyncio.TimeoutError):
             ctx.emit(f"  {label_chain}: ERROR (timeout)")
             return (label_chain, "ERROR", "-", "timeout")

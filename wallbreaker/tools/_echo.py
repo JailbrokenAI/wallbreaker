@@ -117,8 +117,9 @@ async def run_echo_chamber(provider, judge_endpoint, plan, *, convo=None, system
 
     Phase A plants the benign terms; phase B harvests, referencing only the target's prior
     sentences. Threads everything into a shared Conversation so crescendo/goat can hand in
-    their live convo and keep going. Each target call is wrapped in asyncio.wait_for and the
-    whole run is bounded by a max_calls budget; progress is emitted per turn.
+    their live convo and keep going. Each target call uses ``await_llm`` (provider HTTP
+    timeout + ≥120s outer floor; no short mid-stream cancel) and the whole run is bounded
+    by a max_calls budget; progress is emitted per turn.
     """
     if not isinstance(plan, EchoPlan):
         plan = plan_echo_chamber(str(plan))

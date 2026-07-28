@@ -121,34 +121,84 @@ async def _probe(ctx, name, prompt, prefill, objective, system, max_tokens, time
             "truncated": False,
             "error_detail": f"{type(exc).__name__}: {exc}"[:240],
         }
-    # Truncated answers are not reliable for framing profile — keep ERROR so callers
-# raise max_tokens. (Partial non-empty text is still retained in reply for logs.)
-    if truncated:
-        return {"name": name, "error": True, "label": "ERROR", "score": None,
-                "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": True}
-    if name == "benign":
-        return {"name": name, "error": False, "label": "CONTROL", "score": None,
-                "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": False}
-    try:
-        label, score, _reason, _src = await await_llm(grade(judge, reply, payload=prompt, objective=objective, reasoning=reasoning),
-            timeout=max(float(timeout), 60.0),
-        )
-    except (TimeoutError, asyncio.TimeoutError):
-        label, score = "ERROR", None
-    except Exception as exc:  # noqa: BLE001
+
+    usable = bool((reply or "").strip() or (reasoning or "").strip())
+
+    # Hard empty after fire: no answer and no CoT — real failure.
+    if not usable:
         return {
             "name": name,
-            "error": False,
+            "error": True,
             "label": "ERROR",
             "score": None,
             "reply": reply,
             "reasoning": reasoning,
             "stop": stop,
             "truncated": truncated,
+            "error_detail": "empty response (no text and no reasoning)",
+        }
+
+    # Token-budget truncation with usable content: still grade the partial so
+    # operators get REFUSED/COMPLIED signal instead of a false ERROR/network.
+    # Soft partial stops (BUG-001) are already non-truncated via complete_untruncated.
+    if name == "benign":
+        return {
+            "name": name,
+            "error": False,
+            "label": "CONTROL",
+            "score": None,
+            "reply": reply,
+            "reasoning": reasoning,
+            "stop": stop,
+            "truncated": truncated,
+        }
+
+    # Prefer answer text for grading; if only CoT leaked, grade that so
+    # reasoning-channel targets still produce a framing verdict.
+    grade_text = (reply or "").strip() or (reasoning or "").strip()
+    try:
+        label, score, _reason, _src = await await_llm(
+            grade(
+                judge,
+                grade_text,
+                payload=prompt,
+                objective=objective,
+                reasoning=reasoning,
+            ),
+            timeout=max(float(timeout), 60.0),
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        # Judge timed out but target content exists — local classify fallback.
+        from ..classify import classify
+
+        label, _r = classify(grade_text)
+        score = None
+    except Exception as exc:  # noqa: BLE001
+        from ..classify import classify
+
+        label, _r = classify(grade_text)
+        score = None
+        return {
+            "name": name,
+            "error": False,
+            "label": label,
+            "score": score,
+            "reply": reply,
+            "reasoning": reasoning,
+            "stop": stop,
+            "truncated": truncated,
             "error_detail": f"judge failed: {type(exc).__name__}: {exc}"[:240],
         }
-    return {"name": name, "error": False, "label": label, "score": score,
-            "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": truncated}
+    return {
+        "name": name,
+        "error": False,
+        "label": label,
+        "score": score,
+        "reply": reply,
+        "reasoning": reasoning,
+        "stop": stop,
+        "truncated": truncated,
+    }
 
 
 def _aggregate(name: str, shots: list[dict]) -> dict:

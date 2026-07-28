@@ -99,7 +99,7 @@ def register(registry: ToolRegistry) -> None:
                     "description": "Profile names to compare (default every configured profile)",
                 },
                 "category": {"type": "string", "description": "Dataset category for the battery"},
-                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench). Default harmbench."},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, sorrybench, xstest). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},
