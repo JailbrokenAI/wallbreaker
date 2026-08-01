@@ -5,12 +5,12 @@ import { ProviderManager } from "../components/ProviderManager";
 import { TargetOptions } from "../components/TargetOptions";
 import { EmptyState, ErrorBanner, JsonBlock, LoadingState, Panel, StatusBadge, VerdictBadge } from "./components";
 import { WorkflowStudio } from "./WorkflowStudio";
+import { RunsExplorer } from "./RunsExplorer";
 import type {
   ArsenalItem,
   Capability,
   ComposeResult,
   FindingRecord,
-  HistoryEvent,
   ProviderRecord,
   RunSummary,
   SettingsRecord,
@@ -125,39 +125,7 @@ export function FindingsView() {
 }
 
 export function RunsView() {
-  const [runs, setRuns] = useState<RunSummary[] | null>(null);
-  const [selected, setSelected] = useState<string>("");
-  const [query, setQuery] = useState("");
-  const [actor, setActor] = useState("");
-  const [eventType, setEventType] = useState("");
-  const [verdict, setVerdict] = useState("");
-  const [technique, setTechnique] = useState("");
-  const [events, setEvents] = useState<HistoryEvent[]>([]);
-  const [eventTotal, setEventTotal] = useState(0);
-  const [selectedEvent, setSelectedEvent] = useState<HistoryEvent | null>(null);
-  const [loadingEvents, setLoadingEvents] = useState(false);
-  const [message, setMessage] = useState("");
-  useEffect(() => {
-    v2Api.historyRuns().then((payload) => setRuns(payload.items.map((row) => ({
-      name: String(row.run_name || ""), time: String(row.last_timestamp || row.first_timestamp || ""),
-      records: Number(row.event_count || 0), hits: Object.values((row.verdicts || {}) as Record<string, number>).reduce((sum, count) => sum + Number(count || 0), 0),
-    })).filter((run) => run.name))).catch(() => v2Api.runs().then(setRuns).catch(() => setRuns([])));
-  }, []);
-  const searchEvents = async (offset = 0) => {
-    setLoadingEvents(true); setMessage("");
-    try {
-      const result = await v2Api.historyEvents({ q: query, run_name: selected, actor, event_type: eventType, verdict, technique, limit: 200, offset });
-      setEvents(result.items); setEventTotal(result.total); setSelectedEvent(result.items[0] || null);
-    } catch (reason) { setMessage(errorMessage(reason)); setEvents([]); setEventTotal(0); }
-    finally { setLoadingEvents(false); }
-  };
-  useEffect(() => { searchEvents(); }, [selected]);
-  if (!runs) return <LoadingState label="Loading runs" />;
-  const filtered = runs.filter((run) => !query || run.name.toLowerCase().includes(query.toLowerCase()));
-  return <div className="v2-page v2-runs-grid">
-    <Panel title="Runs and logs" meta={`${runs.length} retained`}><div className="v2-filterbar"><input aria-label="Search runs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search runs or full history" /><button type="button" className="v2-button v2-button-small" onClick={() => searchEvents()}>Search all events</button><button type="button" className="v2-button v2-button-small" onClick={async () => { setMessage("Rebuilding index..."); try { await v2Api.rebuildHistory(); setMessage("History index rebuilt from canonical JSONL."); await searchEvents(); } catch (reason) { setMessage(errorMessage(reason)); } }}>Rebuild index</button></div><div className="v2-run-list">{filtered.map((run) => <button type="button" key={run.name} className={selected === run.name ? "active" : ""} onClick={() => setSelected(run.name)}><strong>{run.name}</strong><span>{run.records ?? 0} records / {run.hits ?? 0} verdicts</span><small>{run.time || "Timestamp unavailable"}</small></button>)}</div>{!filtered.length && <EmptyState title="No run logs found" />}</Panel>
-    <Panel title={selected || "Historical event search"} meta={`${eventTotal} matching events`}><div className="v2-history-filters"><input aria-label="Actor filter" value={actor} onChange={(event) => setActor(event.target.value)} placeholder="Actor" /><input aria-label="Event type filter" value={eventType} onChange={(event) => setEventType(event.target.value)} placeholder="Event type" /><input aria-label="Verdict filter" value={verdict} onChange={(event) => setVerdict(event.target.value)} placeholder="Verdict" /><input aria-label="Technique filter" value={technique} onChange={(event) => setTechnique(event.target.value)} placeholder="Technique" /><button type="button" className="v2-button v2-button-primary v2-button-small" disabled={loadingEvents} onClick={() => searchEvents()}>{loadingEvents ? "Searching" : "Apply filters"}</button></div>{message && <p className="v2-inline-status" role="status">{message}</p>}<div className="v2-history-browser"><div className="v2-history-events">{events.map((event) => <button type="button" key={event.id} className={selectedEvent?.id === event.id ? "active" : ""} onClick={() => setSelectedEvent(event)}><span><strong>{event.event_type}</strong>{event.verdict && <VerdictBadge verdict={event.verdict} />}</span><span>{event.actor || "system"} / {event.technique || "unclassified"}</span><small>{event.run_name} / {event.timestamp}</small></button>)}{!events.length && <EmptyState title="No indexed events match" detail="Choose a run, broaden the filters, or rebuild the disposable index." />}</div><div className="v2-history-inspector">{selectedEvent ? <><dl className="v2-kv"><div><dt>Run</dt><dd>{selectedEvent.run_name}</dd></div><div><dt>Sequence</dt><dd>{selectedEvent.sequence}</dd></div><div><dt>Actor</dt><dd>{selectedEvent.actor || "--"}</dd></div><div><dt>Latency</dt><dd>{selectedEvent.latency_ms ?? "--"} ms</dd></div><div><dt>Tokens</dt><dd>{selectedEvent.input_tokens ?? 0} / {selectedEvent.output_tokens ?? 0}</dd></div><div><dt>Inference</dt><dd>{selectedEvent.inference_id || "--"}</dd></div></dl><JsonBlock value={JSON.parse(selectedEvent.structured_json)} /></> : <EmptyState title="Select an indexed event" />}</div></div></Panel>
-  </div>;
+  return <RunsExplorer />;
 }
 
 function downloadJson(filename: string, value: unknown) {
