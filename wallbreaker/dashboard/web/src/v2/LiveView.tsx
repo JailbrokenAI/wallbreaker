@@ -281,10 +281,20 @@ function RunLauncher({ execution, onRefresh }: { execution: ExecutionSummary | n
   const [concurrency, setConcurrency] = useState(4);
   const [requestDelay, setRequestDelay] = useState(0);
   const [techniques, setTechniques] = useState<TechniqueChoice[]>([]);
-  const [selected, setSelected] = useState<string[] | null>(null);
+  const [selected, setSelected] = useState<string[] | null>(() => {
+    try { return JSON.parse(localStorage.getItem("wallbreaker:v2:techniques") || "null") as string[] | null; }
+    catch { return null; }
+  });
+  const [techniqueSearch, setTechniqueSearch] = useState("");
+  const [techniquePickerOpen, setTechniquePickerOpen] = useState(false);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
   useEffect(() => { v2Api.tools().then((items) => setTechniques(items.filter((item) => !item.control).map((item) => ({ name: String(item.name || ""), description: typeof item.description === "string" ? item.description : undefined, control: Boolean(item.control) })).filter((item) => item.name))).catch(() => setTechniques([])); }, []);
+  useEffect(() => { localStorage.setItem("wallbreaker:v2:techniques", JSON.stringify(selected)); }, [selected]);
+  const visibleTechniques = useMemo(() => {
+    const query = techniqueSearch.trim().toLowerCase();
+    return techniques.filter((item) => !query || `${item.name} ${item.description || ""}`.toLowerCase().includes(query));
+  }, [techniques, techniqueSearch]);
   const active = execution && ["queued", "running", "pausing", "paused"].includes(execution.status);
   const start = async () => {
     if (!objective.trim() || active) return;
@@ -310,7 +320,18 @@ function RunLauncher({ execution, onRefresh }: { execution: ExecutionSummary | n
         <label className="v2-field"><span>Concurrency</span><input type="number" min={1} max={32} value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))} /></label>
         <label className="v2-field"><span>Request delay (ms)</span><input type="number" min={0} max={60000} value={requestDelay} onChange={(event) => setRequestDelay(Number(event.target.value))} /></label>
       </div>
-      <details className="v2-techniques"><summary>Technique access <span>{selected == null ? "All available" : `${selected.length} selected`}</span></summary><div><button type="button" className="v2-button v2-button-small" onClick={() => setSelected(null)}>Use all</button><button type="button" className="v2-button v2-button-small" onClick={() => setSelected([])}>Clear</button>{techniques.map((item) => <label key={item.name}><input type="checkbox" checked={selected == null || selected.includes(item.name)} onChange={(event) => setSelected((current) => { const base = current == null ? techniques.map((entry) => entry.name) : current; return event.target.checked ? [...new Set([...base, item.name])] : base.filter((name) => name !== item.name); })} /><span><strong>{item.name}</strong><small>{item.description || "Registered capability"}</small></span></label>)}</div></details>
+      <div className="v2-technique-picker">
+        <button type="button" className={`v2-technique-trigger ${techniquePickerOpen ? "open" : ""}`} aria-haspopup="dialog" aria-expanded={techniquePickerOpen} onClick={() => setTechniquePickerOpen((open) => !open)}>
+          <span>Technique access</span><strong>{selected == null ? `All ${techniques.length}` : `${selected.length} of ${techniques.length}`}</strong><i aria-hidden="true">⌄</i>
+        </button>
+        {selected != null && <div className="v2-technique-chips" aria-label="Selected techniques">{selected.slice(0, 5).map((name) => <button type="button" key={name} title={`Remove ${name}`} onClick={() => setSelected((current) => current?.filter((item) => item !== name) || [])}>{name}<span aria-hidden="true">×</span></button>)}{selected.length > 5 && <span>+{selected.length - 5}</span>}</div>}
+        {techniquePickerOpen && <div className="v2-technique-popover" role="dialog" aria-label="Choose technique access" onKeyDown={(event) => { if (event.key === "Escape") setTechniquePickerOpen(false); }}>
+          <header><div><strong>Technique access</strong><span>{selected == null ? "All capabilities enabled" : `${selected.length} selected`}</span></div><button type="button" aria-label="Close technique picker" onClick={() => setTechniquePickerOpen(false)}>×</button></header>
+          <div className="v2-technique-search"><input autoFocus aria-label="Search techniques" value={techniqueSearch} onChange={(event) => setTechniqueSearch(event.target.value)} placeholder="Search tools and techniques" /><button type="button" onClick={() => setSelected(null)}>All</button><button type="button" onClick={() => setSelected([])}>None</button></div>
+          <div className="v2-technique-list">{visibleTechniques.map((item) => <label key={item.name} title={item.description || "Registered capability"}><input type="checkbox" checked={selected == null || selected.includes(item.name)} onChange={(event) => setSelected((current) => { const base = current == null ? techniques.map((entry) => entry.name) : current; return event.target.checked ? [...new Set([...base, item.name])] : base.filter((name) => name !== item.name); })} /><span><strong>{item.name}</strong><small>{item.description || "Registered capability"}</small></span></label>)}</div>
+          <footer><span>{visibleTechniques.length} shown</span><button type="button" className="v2-button v2-button-small" onClick={() => setTechniquePickerOpen(false)}>Done</button></footer>
+        </div>}
+      </div>
       <div className="v2-actions"><button type="button" className="v2-button v2-button-primary" disabled={working || !objective.trim() || Boolean(active)} onClick={start}>{working ? "Starting" : "Start engagement"}</button>{message && <span className="v2-inline-status" role="status">{message}</span>}</div>
     </div>
   </details>;

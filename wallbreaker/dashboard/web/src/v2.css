@@ -599,30 +599,28 @@
   .v2-studio-grid, .v2-history-workflow { display: grid; grid-template-columns: 1fr; overflow: visible; }
   .v2-studio-grid > .v2-panel, .v2-history-workflow > .v2-panel { min-height: 420px; }
 }
-.v2-techniques {
-  border: 1px solid var(--v2-line-soft);
-  border-radius: 6px;
-  background: var(--v2-surface);
-}
-.v2-techniques > summary { padding: 9px 10px; cursor: pointer; font-weight: 600; }
-.v2-techniques > summary span { margin-left: 8px; color: var(--v2-muted); font: 11px var(--v2-mono); }
-.v2-techniques > div {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 6px;
-  max-height: 260px;
-  overflow: auto;
-  padding: 8px;
-  border-top: 1px solid var(--v2-line-soft);
-}
-.v2-techniques label {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 7px;
-  border-radius: 5px;
-  background: var(--v2-surface-raised);
-}
-.v2-techniques label > span { display: grid; gap: 2px; min-width: 0; }
-.v2-techniques label strong { overflow: hidden; text-overflow: ellipsis; }
-.v2-techniques label small { color: var(--v2-muted); line-height: 1.3; }
+.v2-technique-picker { position: relative; display: flex; min-height: 38px; align-items: center; gap: 8px; }
+.v2-technique-trigger { display: grid; min-width: 210px; min-height: 36px; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 0 10px; border: 1px solid var(--v2-line); border-radius: 5px; background: #0b0d0f; color: var(--v2-muted); text-align: left; }
+.v2-technique-trigger:hover, .v2-technique-trigger.open { border-color: var(--v2-teal); background: #101716; }
+.v2-technique-trigger strong { color: var(--v2-text); font: 9px var(--v2-mono); text-align: right; }
+.v2-technique-trigger i { color: var(--v2-teal); font-style: normal; }
+.v2-technique-chips { display: flex; min-width: 0; align-items: center; gap: 5px; overflow: hidden; }
+.v2-technique-chips button, .v2-technique-chips > span { flex: 0 0 auto; max-width: 145px; padding: 4px 6px; overflow: hidden; border: 1px solid #315c57; border-radius: 3px; background: #0e1b1a; color: var(--v2-teal); font: 8px var(--v2-mono); text-overflow: ellipsis; white-space: nowrap; }
+.v2-technique-chips button span { margin-left: 5px; color: var(--v2-muted); }
+.v2-technique-popover { position: absolute; z-index: 40; top: calc(100% + 5px); left: 0; display: grid; width: min(720px, calc(100vw - 285px)); max-height: 420px; grid-template-rows: auto auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid #315c57; border-radius: 7px; background: #0c0f11; box-shadow: 0 20px 55px rgba(0, 0, 0, .62); }
+.v2-technique-popover > header, .v2-technique-popover > footer { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-bottom: 1px solid var(--v2-line-soft); }
+.v2-technique-popover > header > div { display: grid; gap: 2px; }
+.v2-technique-popover > header strong { font-size: 11px; }
+.v2-technique-popover > header span, .v2-technique-popover > footer span { color: var(--v2-muted); font: 8px var(--v2-mono); }
+.v2-technique-popover > header > button { border: 0; background: transparent; color: var(--v2-muted); font-size: 18px; }
+.v2-technique-search { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--v2-line-soft); }
+.v2-technique-search input { min-height: 32px; padding: 0 9px; border: 1px solid var(--v2-line); border-radius: 4px; background: #090b0d; color: var(--v2-text); }
+.v2-technique-search button { min-width: 52px; border: 1px solid var(--v2-line); border-radius: 4px; background: #151719; color: var(--v2-muted); }
+.v2-technique-list { display: grid; min-height: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; overflow: auto; padding: 5px; }
+.v2-technique-list label { display: grid; min-width: 0; min-height: 42px; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px; }
+.v2-technique-list label:hover { background: #15191b; }
+.v2-technique-list label > span { display: grid; min-width: 0; gap: 2px; }
+.v2-technique-list strong, .v2-technique-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v2-technique-list strong { color: var(--v2-text); font: 9px var(--v2-mono); }
+.v2-technique-list small { color: var(--v2-muted); font-size: 8px; }
+.v2-technique-popover > footer { min-height: 36px; border-top: 1px solid var(--v2-line-soft); border-bottom: 0; }
