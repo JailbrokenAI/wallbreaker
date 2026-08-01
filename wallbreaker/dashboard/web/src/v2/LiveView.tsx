@@ -19,6 +19,13 @@ interface TechniqueChoice { name: string; description?: string; control?: boolea
 
 type InspectorTab = "overview" | "conversation" | "payload" | "evaluation" | "raw";
 
+interface HistoricalRunOption {
+  run_name: string;
+  first_timestamp?: string;
+  last_timestamp?: string;
+  event_count?: number;
+}
+
 const INSPECTOR_TABS: Array<{ id: InspectorTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "conversation", label: "Conversation" },
@@ -79,6 +86,41 @@ function useExecutionEvents(
   }, [execution?.id, execution?.source, execution?.status, enabled]);
 
   return { events, streamState };
+}
+
+function historicalExecution(run: HistoricalRunOption): ExecutionSummary {
+  return {
+    id: `legacy:${run.run_name}`,
+    run_id: run.run_name,
+    title: run.run_name,
+    status: "succeeded",
+    source: "legacy",
+    created_at: run.first_timestamp,
+    finished_at: run.last_timestamp,
+  };
+}
+
+function LiveRunSelector({
+  execution,
+  runs,
+  selectedRun,
+  onSelect,
+}: {
+  execution: ExecutionSummary | null;
+  runs: HistoricalRunOption[];
+  selectedRun: string;
+  onSelect: (runName: string) => void;
+}) {
+  const currentValue = selectedRun || (execution ? "__current__" : "");
+  return <section className="v2-live-selector" aria-label="Live run selection">
+    <div><strong>Run to observe</strong><span>{selectedRun ? "Historical evidence" : execution ? "Current execution" : "Choose a retained run"}</span></div>
+    <label><span className="v2-sr-only">Select current or historical run</span><select value={currentValue} onChange={(event) => onSelect(event.target.value === "__current__" ? "" : event.target.value)}>
+      {!execution && <option value="">Select a historical run</option>}
+      {execution && <option value="__current__">Current execution · {execution.title || execution.id}</option>}
+      {runs.map((run) => <option key={run.run_name} value={run.run_name}>{run.run_name} · {run.event_count || 0} events</option>)}
+    </select></label>
+    <span className="v2-live-selector-meta">{runs.length} retained runs</span>
+  </section>;
 }
 
 function eventStatus(event: EventEnvelope): "pass" | "fail" | "bypass" | "inconclusive" {
@@ -578,27 +620,49 @@ export function AgentView({ execution, enabled = true, onRefresh }: { execution:
 }
 
 export function LiveView({ execution, enabled = true }: { execution: ExecutionSummary | null; enabled?: boolean }) {
+  const [historicalRuns, setHistoricalRuns] = useState<HistoricalRunOption[]>([]);
+  const [historicalRun, setHistoricalRun] = useState("");
+  const selectedExecution = historicalRun
+    ? historicalExecution(historicalRuns.find((run) => run.run_name === historicalRun) || { run_name: historicalRun })
+    : execution;
   const [selected, setSelected] = useState<EventEnvelope | null>(null);
   const [liveTail, setLiveTail] = useState(true);
   const liveTailRef = useRef(true);
   const [unread, setUnread] = useState(0);
-  const { events, streamState } = useExecutionEvents(execution, enabled, () => {
+  const { events, streamState } = useExecutionEvents(selectedExecution, enabled, () => {
     if (!liveTailRef.current) setUnread((current) => current + 1);
   });
   const activityEvents = useMemo(
-    () => projectActivityEvents(events, execution?.objective || ""),
-    [events, execution?.objective],
+    () => projectActivityEvents(events, selectedExecution?.objective || ""),
+    [events, selectedExecution?.objective],
   );
   const rawEvents = useMemo(
-    () => correlateRawEvents(events, execution?.objective || ""),
-    [events, execution?.objective],
+    () => correlateRawEvents(events, selectedExecution?.objective || ""),
+    [events, selectedExecution?.objective],
   );
 
+  useEffect(() => {
+    if (!enabled) return;
+    v2Api.historyRuns(1000).then((payload) => {
+      const runs = payload.items.map((row) => ({
+        run_name: String(row.run_name || ""),
+        first_timestamp: String(row.first_timestamp || ""),
+        last_timestamp: String(row.last_timestamp || ""),
+        event_count: Number(row.event_count || 0),
+      })).filter((run) => run.run_name);
+      setHistoricalRuns(runs);
+      setHistoricalRun((current) => current || (!execution ? runs[0]?.run_name || "" : ""));
+    }).catch(() => setHistoricalRuns([]));
+  }, [enabled, execution?.id]);
+  useEffect(() => {
+    if (execution?.source === "legacy") setHistoricalRun(execution.run_id || execution.id);
+    else if (execution) setHistoricalRun("");
+  }, [execution?.id, execution?.source, execution?.run_id]);
   useEffect(() => { liveTailRef.current = liveTail; if (liveTail) setUnread(0); }, [liveTail]);
   useEffect(() => {
     setSelected(null);
     setUnread(0);
-  }, [execution?.id]);
+  }, [selectedExecution?.id]);
 
   useEffect(() => {
     setSelected((current) => {
@@ -611,9 +675,10 @@ export function LiveView({ execution, enabled = true }: { execution: ExecutionSu
 
   return (
     <div className="v2-live v2-live-dashboard">
+      <LiveRunSelector execution={execution} runs={historicalRuns} selectedRun={historicalRun} onSelect={setHistoricalRun} />
       <div className="v2-live-grid">
         <main className="v2-observatory">
-          <RunOverview events={activityEvents} selected={selected} onSelect={setSelected} execution={execution} streamState={streamState} />
+          <RunOverview events={activityEvents} selected={selected} onSelect={setSelected} execution={selectedExecution} streamState={streamState} />
           <Timeline events={activityEvents} rawEvents={rawEvents} selected={selected} onSelect={setSelected} liveTail={liveTail} setLiveTail={setLiveTail} unread={unread} markRead={() => { setUnread(0); setLiveTail(true); }} />
         </main>
         <Inspector event={selected} />
