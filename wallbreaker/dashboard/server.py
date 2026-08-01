@@ -755,6 +755,14 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         except Exception:
             pass
     app = FastAPI(title="Wallbreaker", version="0.1.0")
+    from ..executions import ExecutionManager, TERMINAL_STATES
+    from ..history_index import HistoryIndex
+
+    execution_manager = ExecutionManager()
+    history_index = HistoryIndex(sessions / ".wallbreaker_history.sqlite3")
+    history_index.update(sessions)
+    app.state.execution_manager = execution_manager
+    app.state.history_index = history_index
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[],
@@ -1564,6 +1572,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
         agent_active = True
         task = asyncio.create_task(runner())
+        agent_control["task"] = task
 
         async def gen():
             nonlocal stream_attached
@@ -1587,8 +1596,459 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+    def _execution_or_404(execution_id: str):
+        execution = execution_manager.get(execution_id)
+        if execution is None:
+            raise HTTPException(status_code=404, detail=f"unknown execution '{execution_id}'")
+        return execution
+
+    async def _tool_execution(ctx, capability_id: str, args: dict):
+        if config is None:
+            raise RuntimeError("no config loaded")
+        from ..agent_profiles import resolved_config
+        from ..state import load_state, state_path_for
+        from ..tools import build_registry
+        from ..session import RunLog, inference_logging, run_models_meta
+
+        run_config, role_meta = resolved_config(config)
+        run_config = _apply_target_settings(
+            run_config, load_state(state_path_for(config)), config
+        )
+        registry = build_registry(run_config)
+        tool_name = capability_id.removeprefix("tool.")
+        if tool_name not in registry.tools:
+            raise ValueError(f"unknown tool capability '{tool_name}'")
+        runlog = RunLog(directory=str(sessions))
+        runlog.set_run_meta(
+            source="dashboard_v2_capability",
+            capability_id=capability_id,
+            models=run_models_meta(run_config, attacker=run_config.profile()),
+            agent_roles=role_meta,
+        )
+        ctx.execution.run_id = runlog.path.name
+
+        def progress(message) -> None:
+            text = str(message)
+            runlog.event("progress", execution_id=ctx.execution.id, text=text)
+            ctx.emit("progress", actor="tool", text=text, run_id=runlog.path.name)
+
+        def run_event(event) -> None:
+            data = event if isinstance(event, dict) else {"value": str(event)}
+            runlog.event("tool_run_event", execution_id=ctx.execution.id, event=data)
+            ctx.emit("tool_event", actor="tool", event=data, run_id=runlog.path.name)
+
+        registry.ctx.progress = progress
+        registry.ctx.run_events = run_event
+        runlog.event(
+            "capability_started", execution_id=ctx.execution.id,
+            capability_id=capability_id, args=args,
+        )
+        await ctx.checkpoint()
+        with inference_logging(runlog):
+            result = await registry.execute(tool_name, args)
+        runlog.event(
+            "capability_finished", execution_id=ctx.execution.id,
+            capability_id=capability_id, error=bool(result.is_error),
+        )
+        history_index.index_file(runlog.path, force=True)
+        ctx.emit(
+            "result", actor="tool", tool=tool_name, content=result.content,
+            error=bool(result.is_error), run_id=runlog.path.name,
+        )
+        if result.is_error:
+            raise RuntimeError(result.content)
+        return {"content": result.content, "run_log": runlog.path.name}
+
+    async def _tui_execution(ctx, capability_id: str, args: dict):
+        """Headless adapters for canonical TUI capabilities.
+
+        High-frequency commands delegate to the same registered tools used by
+        the TUI. Read-only/operator-state commands return their canonical data
+        so V2 can render it in a tailored surface without importing Textual.
+        """
+        from ..capabilities import TUI_SOURCE, lookup_capability
+
+        capability = lookup_capability(capability_id)
+        if capability is None:
+            raise ValueError(f"unknown TUI capability '{capability_id}'")
+        command = capability.command.removeprefix("/")
+        raw = str(args.get("arguments") or "").strip()
+        provided = {key: value for key, value in args.items() if key != "arguments"}
+
+        tool_map = {
+            "validate": "validate", "diff": "diff_fire", "harmbench": "harmbench",
+            "campaign": "campaign", "leaderboard": "leaderboard", "swarm": "swarm",
+            "seedsweep": "seed_sweep", "pairsweep": "pair_sweep", "narrate": "narrate",
+            "fire": "query_target", "push": "continue_target", "adapt": "adapt_seed",
+            "firefile": "fire_file", "leakscan": "leak_scan",
+        }
+        if command in tool_map:
+            tool_args = dict(provided)
+            if command == "validate":
+                tool_args.setdefault("task", raw)
+            elif command == "diff":
+                left, separator, right = raw.partition(";;")
+                if not separator:
+                    raise ValueError("diff arguments must use: first payload ;; second payload")
+                tool_args.setdefault("a", left.strip())
+                tool_args.setdefault("b", right.strip())
+            elif command in {"seedsweep", "narrate"}:
+                tool_args.setdefault("request", raw)
+            elif command in {"fire", "push"}:
+                tool_args.setdefault("prompt", raw)
+            elif command in {"adapt", "firefile"}:
+                left, separator, right = raw.partition(";;")
+                if command == "adapt":
+                    tool_args.setdefault("seed", left.strip())
+                    tool_args.setdefault("request", right.strip() if separator else "")
+                else:
+                    tool_args.setdefault("file", left.strip())
+                    if separator:
+                        tool_args.setdefault("request", right.strip())
+            elif command == "leakscan":
+                tool_args.setdefault("text", raw)
+            elif command == "harmbench":
+                tool_args.setdefault("action", "sample")
+                if raw:
+                    tool_args.setdefault("category", raw)
+            elif command in {"campaign", "pairsweep"} and raw:
+                pieces = raw.split()
+                tool_args.setdefault("category", pieces[0])
+                if len(pieces) > 1 and pieces[1].isdigit():
+                    tool_args.setdefault("n", int(pieces[1]))
+            elif command == "leaderboard" and raw:
+                tool_args.setdefault("targets", raw.split())
+            elif command == "swarm":
+                tool_args.setdefault("objective", raw)
+            return await _tool_execution(ctx, f"tool.{tool_map[command]}", tool_args)
+
+        if command == "help":
+            needle = raw.lower()
+            lines = [line for line in TUI_SOURCE.help_text.splitlines() if not needle or needle in line.lower()]
+            return {"content": "\n".join(lines), "kind": "help"}
+        if command == "transforms":
+            needle = raw.lower()
+            items = [
+                dataclasses.asdict(item) for item in list_transforms()
+                if not needle or needle in item.name.lower() or needle in item.description.lower()
+            ]
+            return {"items": items, "kind": "transforms"}
+        if command == "encode":
+            chain, separator, text = raw.partition(" ")
+            if not separator:
+                raise ValueError("encode arguments must use: transform[,transform] text")
+            names = _split_chain(chain)
+            return {"content": apply_chain(text, names), "transforms": names, "source": text}
+        if command == "preset":
+            items = list_presets()
+            if raw and raw != "list":
+                items = [item for item in items if item.name.lower() == raw.lower()]
+            return {"items": [dataclasses.asdict(item) for item in items], "kind": "presets"}
+        if command == "tools":
+            if config is None:
+                return {"items": [], "kind": "tools"}
+            from ..tools import build_registry
+
+            specs = build_registry(config).specs()
+            if raw:
+                specs = [item for item in specs if raw.lower() in json.dumps(item).lower()]
+            return {"items": specs, "kind": "tools"}
+        if command in {"asr", "stats", "findings", "export", "report"}:
+            path = report_mod.resolve_log_path(raw or None, sessions)
+            if path is None:
+                raise ValueError("no run log found")
+            if command in {"asr", "stats"}:
+                return {"scorecard": report_mod.build_scorecard(path), "run_log": path.name}
+            if command == "findings":
+                return {"items": report_mod.extract_findings(path), "run_log": path.name}
+            if command == "export":
+                return {"export": report_mod.build_findings_export(path), "run_log": path.name}
+            return {"content": report_mod.build_report(path), "run_log": path.name, "format": "markdown"}
+
+        route_by_category = {
+            "conversation": "compose", "configuration": "settings", "arsenal": "arsenal",
+            "operations": "workflows", "evidence": "findings", "session": "runs",
+        }
+        return {
+            "kind": "tailored_surface", "capability_id": capability_id,
+            "route": route_by_category.get(capability.category, "workflows"),
+            "message": "This capability is available through its stateful V2 workspace.",
+        }
+
+    async def _agent_execution(ctx, args: dict):
+        response = await agent_run(args)
+        if agent_control is not None:
+            agent_control["execution_id"] = ctx.execution.id
+        buffer = ""
+        final: dict = {}
+        async for chunk in response.body_iterator:
+            buffer += chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+            while "\n\n" in buffer:
+                frame, buffer = buffer.split("\n\n", 1)
+                line = frame[5:].strip() if frame.startswith("data:") else frame.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                event_type = str(event.pop("type", "event"))
+                run_id = str(event.get("run_log") or ctx.execution.run_id or "")
+                if run_id:
+                    ctx.execution.run_id = run_id
+                    event.setdefault("run_id", run_id)
+                if event_type == "start":
+                    ctx.execution.metadata.update({
+                        "title": objective if (objective := str(event.get("objective") or "")) else "Agent run",
+                        "attacker": event.get("brain", ""),
+                        "provider": event.get("provider", ""),
+                        "target": event.get("target", ""),
+                        "max_rounds": event.get("max_rounds", 0),
+                        "max_tokens": event.get("max_tokens", 0),
+                    })
+                elif event_type == "round":
+                    ctx.execution.metadata["current_round"] = event.get("round", 0)
+                    ctx.execution.metadata["max_rounds"] = event.get("max", 0)
+                elif event_type == "usage":
+                    ctx.execution.metadata["input_tokens"] = event.get("input", 0)
+                    ctx.execution.metadata["output_tokens"] = event.get("output", 0)
+                elif event_type == "tool_result":
+                    verdict = event.get("verdict")
+                    if verdict:
+                        ctx.execution.metadata["verdict"] = verdict
+                    ctx.execution.metadata["technique"] = event.get("name", "")
+                if event_type == "control":
+                    state = str(event.get("state") or "")
+                    if state in {"paused", "pausing", "running"}:
+                        ctx.execution.status = state
+                if event_type == "done":
+                    final = dict(event)
+                ctx.emit(event_type, **event)
+        if ctx.execution.run_id:
+            path = _safe_run_path(sessions, ctx.execution.run_id)
+            if path is not None and path.exists():
+                history_index.index_file(path, force=True)
+        return final
+
+    @app.get("/api/v2/capabilities")
+    def capabilities_get():
+        try:
+            from ..capabilities import merge_tool_capabilities, serialize_capabilities
+            from ..tools import build_registry
+
+            capabilities = (
+                merge_tool_capabilities(build_registry(config))
+                if config is not None else None
+            )
+            return serialize_capabilities(capabilities) if capabilities is not None else serialize_capabilities()
+        except ImportError:
+            # The endpoint remains useful during source-only installations where
+            # the optional TUI dependency is unavailable.
+            from ..tools import build_registry
+
+            if config is None:
+                return []
+            return [
+                {
+                    "id": f"tool.{name}", "title": name.replace("_", " ").title(),
+                    "category": "tools", "execution_mode": "background",
+                    "cancellable": True,
+                }
+                for name in build_registry(config).names()
+            ]
+
+    @app.post("/api/v2/executions")
+    async def execution_create(body: dict):
+        capability_id = str(body.get("capability_id") or "").strip()
+        if not capability_id:
+            raise HTTPException(status_code=400, detail="capability_id is required")
+        args = body.get("args") or {}
+        if not isinstance(args, dict):
+            raise HTTPException(status_code=400, detail="args must be an object")
+        mode = str(body.get("mode") or ("interactive" if capability_id == "agent.run" else "background"))
+
+        if capability_id == "agent.run":
+            runner = lambda ctx: _agent_execution(ctx, args)
+        elif capability_id.startswith("tool."):
+            runner = lambda ctx: _tool_execution(ctx, capability_id, args)
+        elif capability_id.startswith("tui."):
+            runner = lambda ctx: _tui_execution(ctx, capability_id, args)
+        else:
+            raise HTTPException(status_code=400, detail=f"capability '{capability_id}' is not executable")
+        try:
+            execution = execution_manager.create(capability_id, args, runner, mode=mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return execution.as_dict()
+
+    @app.get("/api/v2/executions")
+    def executions_get(status: str | None = None, limit: int = 100):
+        return execution_manager.list(status=status, limit=limit)
+
+    @app.get("/api/v2/executions/{execution_id}")
+    def execution_get(execution_id: str):
+        return _execution_or_404(execution_id).as_dict()
+
+    @app.get("/api/v2/executions/{execution_id}/events")
+    async def execution_events(
+        execution_id: str, after: int = 0, stream: bool = True,
+    ):
+        from fastapi.responses import StreamingResponse
+
+        execution = _execution_or_404(execution_id)
+        if not stream:
+            events, terminal = await execution_manager.events_after(execution_id, after)
+            return {
+                "events": [event.as_dict() for event in events],
+                "terminal": terminal,
+                "next": events[-1].sequence if events else after,
+            }
+
+        async def event_stream():
+            cursor = max(0, after)
+            while True:
+                events, terminal = await execution_manager.events_after(
+                    execution_id, cursor, wait=True, timeout=15,
+                )
+                if not events:
+                    yield ": keepalive\n\n"
+                for event in events:
+                    cursor = event.sequence
+                    yield (
+                        f"id: {event.sequence}\n"
+                        f"data: {json.dumps(event.as_dict(), ensure_ascii=False)}\n\n"
+                    )
+                if terminal and not events:
+                    break
+
+        return StreamingResponse(
+            event_stream(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post("/api/v2/executions/{execution_id}/pause")
+    async def execution_pause(execution_id: str):
+        execution = _execution_or_404(execution_id)
+        if (
+            execution.capability_id == "agent.run" and agent_control is not None
+            and agent_control.get("execution_id") == execution_id
+        ):
+            await agent_pause()
+        try:
+            execution_manager.pause(execution_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return execution.as_dict()
+
+    @app.post("/api/v2/executions/{execution_id}/resume")
+    async def execution_resume(execution_id: str):
+        execution = _execution_or_404(execution_id)
+        if (
+            execution.capability_id == "agent.run" and agent_control is not None
+            and agent_control.get("execution_id") == execution_id
+        ):
+            await agent_resume()
+        try:
+            execution_manager.resume(execution_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return execution.as_dict()
+
+    @app.post("/api/v2/executions/{execution_id}/steer")
+    async def execution_steer(execution_id: str, body: dict):
+        execution = _execution_or_404(execution_id)
+        message = str(body.get("message") or "")
+        if (
+            execution.capability_id == "agent.run" and agent_control is not None
+            and agent_control.get("execution_id") == execution_id
+        ):
+            await agent_steer({"message": message})
+        try:
+            execution_manager.steer(execution_id, message)
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(status_code=409 if isinstance(exc, RuntimeError) else 400, detail=str(exc)) from exc
+        return execution.as_dict()
+
+    @app.post("/api/v2/executions/{execution_id}/attacker")
+    async def execution_attacker_switch(execution_id: str, body: dict):
+        execution = _execution_or_404(execution_id)
+        if execution.capability_id != "agent.run":
+            raise HTTPException(status_code=409, detail="attacker switching applies only to agent runs")
+        if agent_control is None or agent_control.get("execution_id") != execution_id:
+            raise HTTPException(status_code=409, detail="this agent execution is not active")
+        result = await agent_attacker_switch(body)
+        execution.metadata["attacker"] = result.get("attacker", "")
+        execution.metadata["provider"] = result.get("provider", "")
+        execution.emit(
+            "control", state="attacker_switched",
+            attacker=result.get("attacker", ""), provider=result.get("provider", ""),
+        )
+        return execution.as_dict()
+
+    @app.post("/api/v2/executions/{execution_id}/cancel")
+    async def execution_cancel(execution_id: str):
+        execution = _execution_or_404(execution_id)
+        if (
+            execution.capability_id == "agent.run" and agent_control is not None
+            and agent_control.get("execution_id") == execution_id
+        ):
+            task = agent_control.get("task")
+            if task is not None and not task.done():
+                task.cancel()
+        try:
+            execution_manager.cancel(execution_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return execution.as_dict()
+
+    @app.get("/api/v2/history/status")
+    async def history_status():
+        return history_index.status()
+
+    @app.post("/api/v2/history/rebuild")
+    async def history_rebuild():
+        return history_index.rebuild(sessions)
+
+    @app.get("/api/v2/history/runs")
+    async def history_runs(limit: int = 50, offset: int = 0):
+        history_index.update(sessions)
+        return history_index.run_summaries(limit=limit, offset=offset)
+
+    @app.get("/api/v2/history/events")
+    async def history_events(
+        q: str = "", run_name: str | None = None, event_type: str | None = None,
+        actor: str | None = None, technique: str | None = None,
+        verdict: str | None = None, execution_id: str | None = None,
+        round_id: str | None = None, inference_id: str | None = None,
+        tool_id: str | None = None, timestamp_from: str | None = None,
+        timestamp_to: str | None = None, limit: int = 100, offset: int = 0,
+        order: str = "desc",
+    ):
+        history_index.update(sessions)
+        return history_index.query_events(
+            q, run_name=run_name, event_type=event_type, actor=actor,
+            technique=technique, verdict=verdict, execution_id=execution_id,
+            round_id=round_id, inference_id=inference_id, tool_id=tool_id,
+            timestamp_from=timestamp_from, timestamp_to=timestamp_to,
+            limit=limit, offset=offset, order=order,
+        )
+
+    @app.on_event("shutdown")
+    def close_history_index():
+        history_index.close()
+
     dist = _web_dist(web_dir)
     if dist is not None:
+        from fastapi.responses import FileResponse
+
+        @app.get("/v2", include_in_schema=False)
+        def v2_shell():
+            return FileResponse(dist / "index.html")
+
+        @app.get("/legacy", include_in_schema=False)
+        def legacy_shell():
+            return FileResponse(dist / "index.html")
+
         app.mount("/", StaticFiles(directory=str(dist), html=True), name="web")
     else:
         @app.get("/")
@@ -1602,7 +2062,14 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     return app
 
 
-def serve(host: str = "127.0.0.1", port: int = 8787, config=None, sessions_dir="sessions"):
+def serve(
+    host: str = "127.0.0.1", port: int = 8787, config=None,
+    sessions_dir="sessions", *, allow_network: bool = False,
+):
+    if host not in {"127.0.0.1", "localhost", "::1"} and not allow_network:
+        raise ValueError(
+            "refusing to expose the unauthenticated dashboard; pass allow_network=True explicitly"
+        )
     import uvicorn
 
     app = create_app(config=config, sessions_dir=sessions_dir)
