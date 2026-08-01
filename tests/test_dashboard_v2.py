@@ -73,6 +73,67 @@ def test_v2_runs_headless_tui_catalog_capability(tmp_path):
         assert "/session" in execution["result"]["content"]
 
 
+def test_v2_runs_ordered_workflow_and_emits_step_events(tmp_path):
+    with TestClient(create_app(config=None, sessions_dir=tmp_path)) as client:
+        created = client.post(
+            "/api/v2/executions",
+            json={
+                "capability_id": "workflow.run",
+                "args": {
+                    "alias": "Session help sequence",
+                    "steps": [
+                        {"capability_id": "tui.help", "args": {"arguments": "session"}},
+                        {"capability_id": "tui.help", "args": {"arguments": "report"}},
+                    ],
+                },
+                "mode": "background",
+            },
+        )
+        assert created.status_code == 200
+        execution_id = created.json()["id"]
+        for _ in range(50):
+            execution = client.get(f"/api/v2/executions/{execution_id}").json()
+            if execution["status"] in {"succeeded", "failed", "cancelled"}:
+                break
+            time.sleep(0.01)
+        assert execution["status"] == "succeeded"
+        assert [item["capability_id"] for item in execution["result"]["steps"]] == [
+            "tui.help", "tui.help",
+        ]
+        events = client.get(
+            f"/api/v2/executions/{execution_id}/events",
+            params={"stream": "false"},
+        ).json()["events"]
+        kinds = [event["type"] for event in events]
+        assert kinds.count("workflow_step_started") == 2
+        assert kinds.count("workflow_step_succeeded") == 2
+
+
+def test_v2_rejects_empty_and_recursive_workflows(tmp_path):
+    with TestClient(create_app(config=None, sessions_dir=tmp_path)) as client:
+        empty = client.post(
+            "/api/v2/executions",
+            json={"capability_id": "workflow.run", "args": {"steps": []}},
+        )
+        assert empty.status_code == 200
+        execution_id = empty.json()["id"]
+        for _ in range(50):
+            execution = client.get(f"/api/v2/executions/{execution_id}").json()
+            if execution["status"] in {"succeeded", "failed", "cancelled"}:
+                break
+            time.sleep(0.01)
+        assert execution["status"] == "failed"
+
+        recursive = client.post(
+            "/api/v2/executions",
+            json={
+                "capability_id": "workflow.run",
+                "args": {"steps": [{"capability_id": "workflow.run", "args": {}}]},
+            },
+        )
+        assert recursive.status_code == 200
+
+
 def test_parallel_v2_and_legacy_shell_routes(tmp_path):
     web = tmp_path / "web"
     dist = web / "dist"

@@ -4,14 +4,13 @@ import { Profiles } from "../components/Profiles";
 import { ProviderManager } from "../components/ProviderManager";
 import { TargetOptions } from "../components/TargetOptions";
 import { EmptyState, ErrorBanner, JsonBlock, LoadingState, Panel, StatusBadge, VerdictBadge } from "./components";
+import { WorkflowStudio } from "./WorkflowStudio";
 import type {
   ArsenalItem,
   Capability,
-  CapabilityProperty,
   ComposeResult,
   FindingRecord,
   HistoryEvent,
-  ExecutionMode,
   ProviderRecord,
   RunSummary,
   SettingsRecord,
@@ -82,92 +81,12 @@ export function ComposeView() {
   </div>;
 }
 
-function defaultArguments(capability: Capability): Record<string, unknown> {
-  const defaults = { ...(capability.defaults || {}) };
-  Object.entries(capability.input_schema?.properties || {}).forEach(([name, property]) => {
-    if (!(name in defaults) && property.default !== undefined) defaults[name] = property.default;
-  });
-  return defaults;
-}
-
-function inputValue(value: unknown): string | number {
-  return typeof value === "number" ? value : typeof value === "string" ? value : "";
-}
-
-function CapabilityField({ name, property, value, required, onChange }: {
-  name: string;
-  property: CapabilityProperty;
-  value: unknown;
-  required: boolean;
-  onChange: (value: unknown) => void;
-}) {
-  const label = property.title || name.replace(/_/g, " ");
-  if (property.type === "boolean") return <label className="v2-checkbox-field"><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} /><span>{label}{required ? " (required)" : ""}</span></label>;
-  if (property.enum) return <label className="v2-field"><span>{label}</span><select value={String(value ?? "")} required={required} onChange={(event) => onChange(event.target.value)}><option value="">Select</option>{property.enum.map((option) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select>{property.description && <small>{property.description}</small>}</label>;
-  if (property.type === "array" || property.type === "object") return <label className="v2-field"><span>{label}</span><textarea value={value == null ? "" : JSON.stringify(value, null, 2)} onChange={(event) => {
-    try { onChange(JSON.parse(event.target.value)); } catch { onChange(event.target.value); }
-  }} placeholder={property.type === "array" ? "[]" : "{}"} />{property.description && <small>{property.description}</small>}</label>;
-  return <label className="v2-field"><span>{label}</span><input type={property.type === "number" || property.type === "integer" ? "number" : "text"} value={inputValue(value)} required={required} onChange={(event) => onChange(property.type === "number" || property.type === "integer" ? Number(event.target.value) : event.target.value)} />{property.description && <small>{property.description}</small>}</label>;
-}
-
 export function WorkflowsView({ capabilities, initialCapability, onConsumed }: {
   capabilities: Capability[];
   initialCapability?: string;
   onConsumed: () => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("All");
-  const [selectedId, setSelectedId] = useState("");
-  const selected = capabilities.find((item) => item.id === selectedId) || null;
-  const [args, setArgs] = useState<Record<string, unknown>>({});
-  const [mode, setMode] = useState<ExecutionMode>("background");
-  const [result, setResult] = useState<unknown>(null);
-  const [error, setError] = useState("");
-  const [running, setRunning] = useState(false);
-  const categories = ["All", ...new Set(capabilities.map((item) => item.category))];
-  const filtered = capabilities.filter((item) => (category === "All" || item.category === category) && (!query || `${item.title} ${item.description || ""}`.toLowerCase().includes(query.toLowerCase())));
-
-  useEffect(() => {
-    if (!initialCapability) return;
-    setSelectedId(initialCapability);
-    const capability = capabilities.find((item) => item.id === initialCapability);
-    if (capability) setArgs(defaultArguments(capability));
-    onConsumed();
-  }, [initialCapability, capabilities, onConsumed]);
-
-  const choose = (capability: Capability) => { setSelectedId(capability.id); setArgs(defaultArguments(capability)); setResult(null); setError(""); };
-  const run = async () => {
-    if (!selected) return;
-    setRunning(true); setError(""); setResult(null);
-    try {
-      if (selected.legacy_only) throw new Error("This capability is visible through the legacy catalog, but generic execution requires the V2 capability service.");
-      setResult(await v2Api.createExecution(selected.id, args, mode));
-    } catch (reason) { setError(errorMessage(reason)); }
-    finally { setRunning(false); }
-  };
-
-  return <div className="v2-page v2-workflow-grid">
-    <Panel title="Capability catalog" meta={`${filtered.length} available`}>
-      <div className="v2-filterbar"><input aria-label="Search capabilities" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search capabilities" /><select aria-label="Capability category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((value) => <option key={value}>{value}</option>)}</select></div>
-      <div className="v2-capability-list">
-        {!filtered.length && <EmptyState title="No capabilities found" />}
-        {filtered.map((item) => <button type="button" className={selectedId === item.id ? "active" : ""} key={item.id} onClick={() => choose(item)}><strong>{item.title}</strong><span>{item.description || "No description provided."}</span><small>{item.category} / {item.execution_mode || "immediate"}{item.legacy_only ? " / legacy catalog" : ""}</small></button>)}
-      </div>
-    </Panel>
-    <Panel title={selected?.title || "Generic runner"} meta={selected?.id || "Choose a capability to configure it"}>
-      {!selected && <EmptyState title="Select a capability" detail="Every capability registered by V2 can be configured and queued here." />}
-      {selected && <>
-        {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
-        <div className="v2-form-grid">
-          {Object.entries(selected.input_schema?.properties || {}).map(([name, property]) => <CapabilityField key={name} name={name} property={property} value={args[name]} required={selected.input_schema?.required?.includes(name) || false} onChange={(value) => setArgs((current) => ({ ...current, [name]: value }))} />)}
-          {!Object.keys(selected.input_schema?.properties || {}).length && <label className="v2-field v2-field-wide"><span>Arguments JSON</span><textarea value={JSON.stringify(args, null, 2)} onChange={(event) => { try { setArgs(JSON.parse(event.target.value)); } catch { /* retain last valid object */ } }} /></label>}
-          <label className="v2-field"><span>Execution mode</span><select value={mode} onChange={(event) => setMode(event.target.value as ExecutionMode)}><option value="background">Background</option><option value="interactive">Interactive</option></select></label>
-        </div>
-        <div className="v2-actions"><button type="button" className="v2-button v2-button-primary" disabled={running} onClick={run}>{running ? "Starting" : "Start execution"}</button></div>
-        {result != null && <div className="v2-result-stack"><h3>Execution accepted</h3><JsonBlock value={result} /></div>}
-      </>}
-    </Panel>
-  </div>;
+  return <WorkflowStudio capabilities={capabilities} initialCapability={initialCapability} onConsumed={onConsumed} />;
 }
 
 export function ArsenalView() {

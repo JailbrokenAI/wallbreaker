@@ -1830,6 +1830,63 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 history_index.index_file(path, force=True)
         return final
 
+    async def _workflow_execution(ctx, args: dict):
+        """Execute an operator-authored sequence through the shared capability layer."""
+
+        steps = args.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise ValueError("workflow steps must be a non-empty list")
+        if len(steps) > 100:
+            raise ValueError("workflow steps are limited to 100")
+        alias = str(args.get("alias") or "Untitled workflow").strip()
+        results = []
+        ctx.execution.metadata.update({"title": alias, "workflow_steps": len(steps)})
+        for index, raw_step in enumerate(steps, start=1):
+            if not isinstance(raw_step, dict):
+                raise ValueError(f"workflow step {index} must be an object")
+            capability_id = str(raw_step.get("capability_id") or "").strip()
+            step_args = raw_step.get("args") or {}
+            if not capability_id or capability_id == "workflow.run":
+                raise ValueError(f"workflow step {index} has an invalid capability")
+            if not isinstance(step_args, dict):
+                raise ValueError(f"workflow step {index} args must be an object")
+            if capability_id == "agent.run":
+                raise ValueError("interactive agent runs cannot be nested inside a workflow")
+            await ctx.checkpoint()
+            ctx.emit(
+                "workflow_step_started", actor="system", step=index,
+                total=len(steps), capability_id=capability_id,
+                label=str(raw_step.get("label") or ""),
+            )
+            try:
+                if capability_id.startswith("tool."):
+                    result = await _tool_execution(ctx, capability_id, step_args)
+                elif capability_id.startswith("tui."):
+                    result = await _tui_execution(ctx, capability_id, step_args)
+                else:
+                    raise ValueError(f"capability '{capability_id}' is not workflow-executable")
+                results.append({"step": index, "capability_id": capability_id, "result": result})
+                ctx.emit(
+                    "workflow_step_succeeded", actor="system", step=index,
+                    total=len(steps), capability_id=capability_id,
+                )
+            except Exception as exc:
+                failure = {
+                    "step": index, "capability_id": capability_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                results.append(failure)
+                ctx.emit(
+                    "workflow_step_failed", actor="system", step=index,
+                    total=len(steps), capability_id=capability_id,
+                    error=failure["error"],
+                )
+                if not bool(raw_step.get("continue_on_error", False)):
+                    raise RuntimeError(
+                        f"workflow stopped at step {index} ({capability_id}): {exc}"
+                    ) from exc
+        return {"alias": alias, "steps": results}
+
     @app.get("/api/v2/capabilities")
     def capabilities_get():
         try:
@@ -1869,6 +1926,8 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
         if capability_id == "agent.run":
             runner = lambda ctx: _agent_execution(ctx, args)
+        elif capability_id == "workflow.run":
+            runner = lambda ctx: _workflow_execution(ctx, args)
         elif capability_id.startswith("tool."):
             runner = lambda ctx: _tool_execution(ctx, capability_id, args)
         elif capability_id.startswith("tui."):
