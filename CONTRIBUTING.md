@@ -14,6 +14,10 @@ wallbreaker check              # validate config (profiles, keys, target, judge)
 pytest -q                      # full suite must stay green
 ```
 
+Dashboard contributors should install `.[dev,dashboard]`, run `npm install` in
+`wallbreaker/dashboard/web`, and verify `npm run build`. See [docs/SETUP.md](docs/SETUP.md)
+for the complete cross-platform setup and local development workflow.
+
 ## Architecture (where things live)
 
 - `wallbreaker/providers/` normalize OpenAI + Anthropic wire formats to one event stream
@@ -25,7 +29,11 @@ pytest -q                      # full suite must stay green
 - `wallbreaker/presets.py` — curated single-shot jailbreak templates.
 - `wallbreaker/tui/` — the Textual terminal UI (theme in `theme.py`, chrome in
   `header.py`/`sidebar.py`/`widgets.py`, layout in `app.tcss`).
-- `dashboard/` — FastAPI backend + React/Svelte web dashboard.
+- `wallbreaker/capabilities.py` — typed capability manifest shared by the TUI and WebUI V2.
+- `wallbreaker/executions.py` — server-owned execution lifecycle and resumable events.
+- `wallbreaker/history_index.py` — rebuildable SQLite index over canonical JSONL history.
+- `wallbreaker/dashboard/` — FastAPI backend + React/Vite dashboards; V2 lives under
+  `web/src/v2/`, while the original interface remains available during rollout.
 
 ## House rules
 
