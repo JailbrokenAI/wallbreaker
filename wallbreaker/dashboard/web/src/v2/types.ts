@@ -1,4 +1,5 @@
 export type V2Route =
+  | "agent"
   | "live"
   | "compose"
   | "workflows"

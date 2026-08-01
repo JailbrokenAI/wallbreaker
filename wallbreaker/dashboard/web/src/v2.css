@@ -129,6 +129,8 @@
 .v2-verdict-partial, .v2-verdict-inconclusive { border-color: #624b21; background: #261e0d; color: var(--v2-amber); }
 
 .v2-live { display: grid; width: 100%; height: 100%; min-width: 0; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr) auto; background: var(--v2-bg); }
+.v2-live-dashboard { grid-template-rows: minmax(0, 1fr); }
+.v2-agent { display: grid; min-height: 100%; align-content: start; background: var(--v2-bg); }
 .v2-live:has(> .v2-launcher[open]) { overflow-y: auto; grid-template-rows: auto auto minmax(440px, 1fr) auto; }
 .v2-run-strip { display: grid; min-width: 0; min-height: 71px; grid-template-columns: minmax(125px, 1.1fr) minmax(110px, .85fr) minmax(110px, 1fr) minmax(125px, .9fr) 82px minmax(118px, .85fr) 95px auto; align-items: stretch; border-bottom: 1px solid var(--v2-line); background: #0b0d0f; }
 .v2-strip-field, .v2-strip-progress, .v2-strip-state { display: flex; min-width: 0; flex-direction: column; justify-content: center; gap: 4px; padding: 0 12px; border-right: 1px solid var(--v2-line-soft); }

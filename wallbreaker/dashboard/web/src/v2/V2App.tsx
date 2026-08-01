@@ -4,7 +4,7 @@ import { RoleChooser } from "../components/RoleChooser";
 import { v2Api } from "./api";
 import { CommandPalette, ROUTES } from "./CommandPalette";
 import { formatTime, StatusBadge } from "./components";
-import { LiveView } from "./LiveView";
+import { AgentView, LiveView } from "./LiveView";
 import {
   ArsenalView,
   ComposeView,
@@ -20,7 +20,7 @@ import type { Capability, ExecutionSummary, V2Route } from "./types";
 function routeFromLocation(): V2Route {
   const hash = window.location.hash.replace(/^#\/?/, "");
   const candidate = hash.startsWith("v2/") ? hash.slice(3).split("/")[0] : hash.split("/")[0];
-  return ROUTES.some((item) => item.id === candidate) ? candidate as V2Route : "live";
+  return ROUTES.some((item) => item.id === candidate) ? candidate as V2Route : "agent";
 }
 
 function isActive(execution: ExecutionSummary) {
@@ -103,6 +103,7 @@ export function V2App() {
 
   const selectedExecution = executions.find((item) => item.id === selectedExecutionId) || null;
   const activeExecutions = executions.filter(isActive);
+  const agentExecution = activeExecutions.find((item) => item.capability_id === "agent.run") || activeExecutions[0] || null;
   const recentExecutions = executions.filter((item) => !isActive(item)).slice(0, 5);
   const routeInfo = ROUTES.find((item) => item.id === route) || ROUTES[0];
 
@@ -115,7 +116,7 @@ export function V2App() {
         <section className="v2-rail-section" aria-label="Active executions">
           <header><span>Active run</span><span>{activeExecutions.length}</span></header>
           {!activeExecutions.length && <p>No active execution</p>}
-          {activeExecutions.map((execution) => <button type="button" key={execution.id} className={selectedExecutionId === execution.id ? "selected" : ""} onClick={() => { setSelectedExecutionId(execution.id); navigate("live"); }}><strong>{execution.title || execution.id}</strong><StatusBadge status={execution.status} /><small>{execution.current_round ? `Round ${execution.current_round}${execution.max_rounds ? ` of ${execution.max_rounds}` : ""}` : "Waiting for round data"}</small></button>)}
+          {activeExecutions.map((execution) => <button type="button" key={execution.id} className={agentExecution?.id === execution.id ? "selected" : ""} onClick={() => { setSelectedExecutionId(execution.id); navigate("agent"); }}><strong>{execution.title || execution.id}</strong><StatusBadge status={execution.status} /><small>{execution.current_round ? `Round ${execution.current_round}${execution.max_rounds ? ` of ${execution.max_rounds}` : ""}` : "Waiting for round data"}</small></button>)}
         </section>
         <section className="v2-rail-section v2-run-queue" aria-label="Run queue and history">
           <header><span>Run queue</span><span>{executions.length}</span></header>
@@ -137,14 +138,15 @@ export function V2App() {
             {selectedExecution && <button
               type="button"
               className="v2-active-run"
-              onClick={() => navigate("live")}
-              title="Open the active run in Live"
+              onClick={() => navigate(isActive(selectedExecution) ? "agent" : "live")}
+              title={isActive(selectedExecution) ? "Open the active run in Agent" : "Inspect this run in Live"}
             ><StatusBadge status={selectedExecution.status} /><strong>{selectedExecution.title || selectedExecution.id}</strong></button>}
             <button type="button" className="v2-command-button" onClick={() => setPaletteOpen(true)}>Commands <kbd>Ctrl K</kbd></button>
           </div>
         </header>
         <main ref={mainRef} id="v2-main" className={route === "live" ? "v2-main v2-main-live" : "v2-main"}>
-          <div className={`v2-route-state ${route === "live" ? "active" : ""}`}><LiveView execution={selectedExecution} onRefresh={refreshExecutions} /></div>
+          <div className={`v2-route-state ${route === "agent" ? "active" : ""}`}><AgentView execution={agentExecution} onRefresh={refreshExecutions} /></div>
+          <div className={`v2-route-state ${route === "live" ? "active" : ""}`}><LiveView execution={selectedExecution} enabled={route === "live"} /></div>
           <div className={`v2-route-state ${route === "compose" ? "active" : ""}`}><ComposeView /></div>
           <div className={`v2-route-state ${route === "workflows" ? "active" : ""}`}><WorkflowsView capabilities={capabilities} initialCapability={initialCapability} onConsumed={() => setInitialCapability("")} /></div>
           <div className={`v2-route-state ${route === "arsenal" ? "active" : ""}`}><ArsenalView /></div>

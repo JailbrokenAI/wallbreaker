@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Capability, V2Route } from "./types";
 
 const ROUTES: Array<{ id: V2Route; label: string; description: string }> = [
-  { id: "live", label: "Live", description: "Monitor and steer active engagements" },
+  { id: "agent", label: "Agent", description: "Run and steer the attack-target-judge loop" },
+  { id: "live", label: "Live", description: "Observe current and historical engagements" },
   { id: "compose", label: "Compose", description: "Build and inspect a payload" },
   { id: "workflows", label: "Workflows", description: "Run any registered capability" },
   { id: "arsenal", label: "Arsenal", description: "Browse presets, transforms, and tools" },

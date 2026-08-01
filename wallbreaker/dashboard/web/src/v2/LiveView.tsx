@@ -447,14 +447,22 @@ function SteeringBar({ execution }: { execution: ExecutionSummary | null }) {
   );
 }
 
-export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary | null; onRefresh: () => void }) {
+export function AgentView({ execution, onRefresh }: { execution: ExecutionSummary | null; onRefresh: () => void }) {
+  const steerable = Boolean(execution && ["queued", "running", "pausing", "paused"].includes(execution.status));
+  return <div className="v2-agent">
+    <RunStrip execution={execution} onRefresh={onRefresh} />
+    <RunLauncher execution={execution} onRefresh={onRefresh} />
+    {steerable && <SteeringBar execution={execution} />}
+  </div>;
+}
+
+export function LiveView({ execution, enabled = true }: { execution: ExecutionSummary | null; enabled?: boolean }) {
   const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [selected, setSelected] = useState<EventEnvelope | null>(null);
   const [liveTail, setLiveTail] = useState(true);
   const liveTailRef = useRef(true);
   const [unread, setUnread] = useState(0);
   const [streamState, setStreamState] = useState("idle");
-  const steerable = Boolean(execution && ["queued", "running", "pausing", "paused"].includes(execution.status));
   const activityEvents = useMemo(
     () => projectActivityEvents(events, execution?.objective || ""),
     [events, execution?.objective],
@@ -466,6 +474,7 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
 
   useEffect(() => { liveTailRef.current = liveTail; if (liveTail) setUnread(0); }, [liveTail]);
   useEffect(() => {
+    if (!enabled) return;
     setEvents([]);
     setSelected(null);
     setUnread(0);
@@ -501,7 +510,7 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
     };
     connect();
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [execution?.id, execution?.source, execution?.status]);
+  }, [execution?.id, execution?.source, execution?.status, enabled]);
 
   useEffect(() => {
     setSelected((current) => {
@@ -513,9 +522,7 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
   }, [activityEvents, liveTail]);
 
   return (
-    <div className="v2-live">
-      <RunStrip execution={execution} onRefresh={onRefresh} />
-      <RunLauncher execution={execution} onRefresh={onRefresh} />
+    <div className="v2-live v2-live-dashboard">
       <div className="v2-live-grid">
         <main className="v2-observatory">
           <RunOverview events={activityEvents} selected={selected} onSelect={setSelected} execution={execution} streamState={streamState} />
@@ -523,7 +530,6 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
         </main>
         <Inspector event={selected} />
       </div>
-      {steerable && <SteeringBar execution={execution} />}
     </div>
   );
 }
