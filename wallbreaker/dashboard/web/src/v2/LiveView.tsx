@@ -27,6 +27,60 @@ const INSPECTOR_TABS: Array<{ id: InspectorTab; label: string }> = [
   { id: "raw", label: "Raw" },
 ];
 
+function useExecutionEvents(
+  execution: ExecutionSummary | null,
+  enabled: boolean,
+  onIncoming?: () => void,
+) {
+  const [events, setEvents] = useState<EventEnvelope[]>([]);
+  const [streamState, setStreamState] = useState("idle");
+  const incomingRef = useRef(onIncoming);
+  incomingRef.current = onIncoming;
+
+  useEffect(() => {
+    if (!enabled) return;
+    setEvents([]);
+    setStreamState("idle");
+    if (!execution) return;
+    if (execution.source === "legacy" && execution.id !== "legacy-active") {
+      setStreamState("loading");
+      v2Api.legacyEvents(execution.run_id || execution.id).then((loaded) => {
+        setEvents(loaded);
+        setStreamState("complete");
+      }).catch(() => setStreamState("unavailable"));
+      return;
+    }
+    if (execution.source === "legacy") { setStreamState("legacy-live"); return; }
+    const controller = new AbortController();
+    let reconnect = 0;
+    let timer = 0;
+    const connect = async () => {
+      setStreamState("connected");
+      try {
+        await v2Api.streamEvents(execution.id, reconnect, (event) => {
+          reconnect = Math.max(reconnect, event.sequence);
+          setEvents((current) => current.some((item) => item.id === event.id)
+            ? current
+            : [...current, event].sort((left, right) => left.sequence - right.sequence));
+          incomingRef.current?.();
+        }, controller.signal);
+        if (!controller.signal.aborted && ["running", "pausing", "paused"].includes(execution.status)) {
+          timer = window.setTimeout(connect, 1400);
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setStreamState("reconnecting");
+          timer = window.setTimeout(connect, 1800);
+        }
+      }
+    };
+    connect();
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [execution?.id, execution?.source, execution?.status, enabled]);
+
+  return { events, streamState };
+}
+
 function eventStatus(event: EventEnvelope): "pass" | "fail" | "bypass" | "inconclusive" {
   const value = `${event.verdict || ""} ${event.kind}`.toLowerCase();
   if (value.includes("bypass") || value.includes("complied")) return "bypass";
@@ -391,17 +445,24 @@ function RunLauncher({ execution, onRefresh }: { execution: ExecutionSummary | n
     } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Unable to start execution"); }
     finally { setWorking(false); }
   };
-  return <details className="v2-launcher" open={!execution}>
-    <summary><span><strong>New interactive engagement</strong><small>{active ? "One foreground engagement is already active" : "Configure and start without leaving Live"}</small></span><span>{active ? "Occupied" : "Ready"}</span></summary>
-    <div className="v2-launcher-body">
-      <label className="v2-field v2-field-wide"><span>Objective</span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="Describe the authorized evaluation objective" /></label>
-      <div className="v2-form-grid">
-        <label className="v2-field"><span>Maximum rounds</span><input type="number" min={1} max={50} value={maxRounds} onChange={(event) => setMaxRounds(Number(event.target.value))} /></label>
-        <label className="v2-field"><span>Maximum tokens</span><input type="number" min={1} max={32000} value={maxTokens} onChange={(event) => setMaxTokens(Number(event.target.value))} /></label>
-        <label className="v2-field"><span>Concurrency</span><input type="number" min={1} max={32} value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))} /></label>
-        <label className="v2-field"><span>Request delay (ms)</span><input type="number" min={0} max={60000} value={requestDelay} onChange={(event) => setRequestDelay(Number(event.target.value))} /></label>
+  const techniqueSummary = selected == null ? `All ${techniques.length || ""} techniques`.trim() : `${selected.length} techniques`;
+  return <details className="v2-agent-launch" open={!active}>
+    <summary><span><strong>{active ? "Current engagement" : "New engagement"}</strong><small>{active ? "Launch controls are available when this run ends" : "Set the objective, then start the agent loop"}</small></span><span>{active ? "In progress" : "Ready"}</span></summary>
+    <div className="v2-agent-launch-body">
+      <div className="v2-agent-launch-primary">
+        <label className="v2-field"><span>Objective</span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="Describe the authorized evaluation objective" /></label>
+        <button type="button" className="v2-button v2-button-primary" disabled={working || !objective.trim() || Boolean(active)} onClick={start}>{working ? "Starting" : "Start loop"}</button>
       </div>
-      <div className="v2-technique-picker">
+      <details className="v2-agent-advanced">
+        <summary><span>Run settings</span><span>{maxRounds} rounds · {maxTokens.toLocaleString()} tokens · {concurrency} concurrent · {requestDelay} ms · {techniqueSummary}</span></summary>
+        <div className="v2-agent-advanced-body">
+          <div className="v2-form-grid">
+            <label className="v2-field"><span>Maximum rounds</span><input type="number" min={1} max={50} value={maxRounds} onChange={(event) => setMaxRounds(Number(event.target.value))} /></label>
+            <label className="v2-field"><span>Maximum tokens</span><input type="number" min={1} max={32000} value={maxTokens} onChange={(event) => setMaxTokens(Number(event.target.value))} /></label>
+            <label className="v2-field"><span>Concurrency</span><input type="number" min={1} max={32} value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))} /></label>
+            <label className="v2-field"><span>Request delay (ms)</span><input type="number" min={0} max={60000} value={requestDelay} onChange={(event) => setRequestDelay(Number(event.target.value))} /></label>
+          </div>
+          <div className="v2-technique-picker">
         <button type="button" className={`v2-technique-trigger ${techniquePickerOpen ? "open" : ""}`} aria-haspopup="dialog" aria-expanded={techniquePickerOpen} onClick={() => setTechniquePickerOpen((open) => !open)}>
           <span>Technique access</span><strong>{selected == null ? `All ${techniques.length}` : `${selected.length} of ${techniques.length}`}</strong><i aria-hidden="true">⌄</i>
         </button>
@@ -412,8 +473,10 @@ function RunLauncher({ execution, onRefresh }: { execution: ExecutionSummary | n
           <div className="v2-technique-list">{visibleTechniques.map((item) => <label key={item.name} title={item.description || "Registered capability"}><input type="checkbox" checked={selected == null || selected.includes(item.name)} onChange={(event) => setSelected((current) => { const base = current == null ? techniques.map((entry) => entry.name) : current; return event.target.checked ? [...new Set([...base, item.name])] : base.filter((name) => name !== item.name); })} /><span><strong>{item.name}</strong><small>{item.description || "Registered capability"}</small></span></label>)}</div>
           <footer><span>{visibleTechniques.length} shown</span><button type="button" className="v2-button v2-button-small" onClick={() => setTechniquePickerOpen(false)}>Done</button></footer>
         </div>}
-      </div>
-      <div className="v2-actions"><button type="button" className="v2-button v2-button-primary" disabled={working || !objective.trim() || Boolean(active)} onClick={start}>{working ? "Starting" : "Start engagement"}</button>{message && <span className="v2-inline-status" role="status">{message}</span>}</div>
+          </div>
+        </div>
+      </details>
+      {message && <span className="v2-inline-status" role="status">{message}</span>}
     </div>
   </details>;
 }
@@ -436,33 +499,92 @@ function SteeringBar({ execution }: { execution: ExecutionSummary | null }) {
   };
   return (
     <section className="v2-steer" aria-label="Steer the attacker">
-      <div className="v2-steer-head"><strong>Steer the attacker</strong><span>{execution?.current_round ? `Round ${execution.current_round}` : "No active round"}</span>{status && <span role="status">{status}</span>}</div>
+      <div className="v2-steer-head"><strong>Steer the attacker</strong><span>{execution?.current_round ? `Round ${execution.current_round}` : execution ? "Waiting for the first round" : "Available when the loop starts"}</span>{status && <span role="status">{status}</span>}</div>
       <div className="v2-steer-row">
         <label><span className="v2-sr-only">Steering message</span><textarea value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); submit(); }
-        }} placeholder="Steer or command the attacker. Ctrl Enter sends." /></label>
+        }} placeholder={execution ? "Steer or command the attacker. Ctrl Enter sends." : "Draft steering guidance here; it can be sent after the loop starts."} /></label>
         <button type="button" className="v2-button v2-button-primary" disabled={!execution || !message.trim() || sending} onClick={submit}>{sending ? "Sending" : "Send"}</button>
       </div>
     </section>
   );
 }
 
-export function AgentView({ execution, onRefresh }: { execution: ExecutionSummary | null; onRefresh: () => void }) {
-  const steerable = Boolean(execution && ["queued", "running", "pausing", "paused"].includes(execution.status));
+const LOOP_KINDS = new Set(["start", "round", "message", "tool_call", "tool_result", "result", "verdict", "feedback", "operator", "error", "control", "done"]);
+
+function AgentLoop({ execution, events, streamState }: { execution: ExecutionSummary | null; events: EventEnvelope[]; streamState: string }) {
+  const activity = useMemo(() => projectActivityEvents(events, execution?.objective || ""), [events, execution?.objective]);
+  const loopEvents = useMemo(() => activity.filter((event) => LOOP_KINDS.has(event.kind)), [activity]);
+  const active = Boolean(execution && ["queued", "running", "pausing", "paused"].includes(execution.status));
+  const latest = loopEvents[loopEvents.length - 1];
+  const roles = [
+    { id: "attacker", label: "Attack", model: execution?.attacker || "Not selected", detail: "Plans and adapts the next attempt" },
+    { id: "target", label: "Target", model: execution?.target || "Not selected", detail: "Receives the attack and responds" },
+    { id: "judge", label: "Judge", model: execution?.judge || "Not selected", detail: "Evaluates evidence and guides the loop" },
+  ];
+  const latestFor = (role: string) => [...loopEvents].reverse().find((event) => actorLabel(event).toLowerCase() === role);
+
+  return <section className="v2-agent-loop" aria-label="Attack target judge loop">
+    <header className="v2-agent-loop-head">
+      <div><span>Agent loop</span><h2>Attack <i>→</i> Target <i>→</i> Judge</h2></div>
+      <div>{execution ? <StatusBadge status={execution.status} /> : <span className="v2-status">● Idle</span>}<span className="v2-mono">{execution ? `stream ${streamState}` : "awaiting objective"}</span></div>
+    </header>
+    <div className="v2-loop-roles">
+      {roles.map((role, index) => {
+        const roleEvent = latestFor(role.id);
+        const isCurrent = active && latest && actorLabel(latest).toLowerCase() === role.id;
+        return <article key={role.id} className={`v2-loop-role v2-loop-role-${role.id} ${isCurrent ? "active" : ""}`}>
+          <header><span>{String(index + 1).padStart(2, "0")}</span><strong>{role.label}</strong><i>{isCurrent ? "Active" : roleEvent ? formatTime(roleEvent.timestamp) : "Waiting"}</i></header>
+          <b title={role.model}>{role.model}</b>
+          <p>{roleEvent ? eventTitle(roleEvent) : role.detail}</p>
+        </article>;
+      })}
+    </div>
+    <div className="v2-loop-exchange-head"><strong>Conversation stream</strong><span>{loopEvents.length} exchanges{execution?.current_round ? ` · round ${execution.current_round}` : ""}</span></div>
+    <ol className="v2-loop-feed" aria-label="Agent conversation stream">
+      {!execution && <li className="v2-loop-empty"><EmptyState title="No active agent loop" detail="Enter an objective above to begin an attack → target → judge engagement." /></li>}
+      {execution && !loopEvents.length && <li className="v2-loop-empty"><EmptyState title="Waiting for the first exchange" detail="Messages, target responses, tool actions, and judge verdicts will appear here in order." /></li>}
+      {loopEvents.map((event) => {
+        const actor = actorLabel(event);
+        const copy = event.text || eventTitle(event);
+        return <li key={event.id} className={`v2-loop-event v2-loop-event-${actor.toLowerCase()}`}>
+          <details>
+            <summary>
+              <span className="v2-loop-event-marker" aria-hidden="true">●</span>
+              <span className="v2-loop-event-who"><strong>{actor}</strong><small>{event.round ? `Round ${event.round}` : formatTime(event.timestamp)}</small></span>
+              <span className="v2-loop-event-copy"><strong>{event.kind.replace(/_/g, " ")}</strong><span title={copy}>{copy}</span></span>
+              {event.verdict ? <VerdictBadge verdict={event.verdict} /> : <span className="v2-loop-event-time">{formatTime(event.timestamp)}</span>}
+            </summary>
+            <div className="v2-loop-event-detail">
+              <p>{copy}</p>
+              <span>{eventMeta(event) || `Event #${event.sequence}`}</span>
+              {hasValue(event.data) && <details><summary>Structured detail</summary><JsonBlock value={event.data} /></details>}
+            </div>
+          </details>
+        </li>;
+      })}
+    </ol>
+  </section>;
+}
+
+export function AgentView({ execution, enabled = true, onRefresh }: { execution: ExecutionSummary | null; enabled?: boolean; onRefresh: () => void }) {
+  const { events, streamState } = useExecutionEvents(execution, enabled);
   return <div className="v2-agent">
     <RunStrip execution={execution} onRefresh={onRefresh} />
     <RunLauncher execution={execution} onRefresh={onRefresh} />
-    {steerable && <SteeringBar execution={execution} />}
+    <AgentLoop execution={execution} events={events} streamState={streamState} />
+    <SteeringBar execution={execution} />
   </div>;
 }
 
 export function LiveView({ execution, enabled = true }: { execution: ExecutionSummary | null; enabled?: boolean }) {
-  const [events, setEvents] = useState<EventEnvelope[]>([]);
   const [selected, setSelected] = useState<EventEnvelope | null>(null);
   const [liveTail, setLiveTail] = useState(true);
   const liveTailRef = useRef(true);
   const [unread, setUnread] = useState(0);
-  const [streamState, setStreamState] = useState("idle");
+  const { events, streamState } = useExecutionEvents(execution, enabled, () => {
+    if (!liveTailRef.current) setUnread((current) => current + 1);
+  });
   const activityEvents = useMemo(
     () => projectActivityEvents(events, execution?.objective || ""),
     [events, execution?.objective],
@@ -474,43 +596,9 @@ export function LiveView({ execution, enabled = true }: { execution: ExecutionSu
 
   useEffect(() => { liveTailRef.current = liveTail; if (liveTail) setUnread(0); }, [liveTail]);
   useEffect(() => {
-    if (!enabled) return;
-    setEvents([]);
     setSelected(null);
     setUnread(0);
-    if (!execution) return;
-    if (execution.source === "legacy" && execution.id !== "legacy-active") {
-      setStreamState("loading");
-      v2Api.legacyEvents(execution.run_id || execution.id).then((loaded) => {
-        setEvents(loaded);
-        setSelected(loaded.length ? loaded[loaded.length - 1] : null);
-        setStreamState("complete");
-      }).catch(() => setStreamState("unavailable"));
-      return;
-    }
-    if (execution.source === "legacy") { setStreamState("legacy-live"); return; }
-    const controller = new AbortController();
-    let reconnect = 0;
-    let timer = 0;
-    const connect = async () => {
-      setStreamState("connected");
-      try {
-        await v2Api.streamEvents(execution.id, reconnect, (event) => {
-          reconnect = Math.max(reconnect, event.sequence);
-          setEvents((current) => current.some((item) => item.id === event.id) ? current : [...current, event].sort((a, b) => a.sequence - b.sequence));
-          if (!liveTailRef.current) setUnread((current) => current + 1);
-        }, controller.signal);
-        if (!controller.signal.aborted && ["running", "pausing", "paused"].includes(execution.status)) timer = window.setTimeout(connect, 1400);
-      } catch {
-        if (!controller.signal.aborted) {
-          setStreamState("reconnecting");
-          timer = window.setTimeout(connect, 1800);
-        }
-      }
-    };
-    connect();
-    return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [execution?.id, execution?.source, execution?.status, enabled]);
+  }, [execution?.id]);
 
   useEffect(() => {
     setSelected((current) => {

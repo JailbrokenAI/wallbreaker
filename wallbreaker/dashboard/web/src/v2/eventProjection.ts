@@ -67,49 +67,53 @@ function conversationEntry(event: EventEnvelope): ConversationEntry | null {
 export function projectActivityEvents(events: EventEnvelope[], objective = ""): EventEnvelope[] {
   const projected: EventEnvelope[] = [];
   const ordered = [...events].sort((left, right) => left.sequence - right.sequence);
+  let currentRound: number | undefined;
 
   for (const source of ordered) {
-    const actor = inferEventActor(source);
-    if (source.kind === "text") {
+    const sourceRound = source.round ?? (typeof source.data?.round === "number" ? source.data.round : undefined);
+    if (source.kind === "round" && sourceRound) currentRound = sourceRound;
+    const correlatedSource = sourceRound || !currentRound ? source : { ...source, round: currentRound };
+    const actor = inferEventActor(correlatedSource);
+    if (correlatedSource.kind === "text") {
       const previous = projected[projected.length - 1];
-      if (previous?.kind === "message" && previous.actor === actor && previous.round === source.round) {
-        previous.text = `${previous.text || ""}${source.text || source.summary || ""}`;
-        previous.raw = [...(Array.isArray(previous.raw) ? previous.raw : [previous.raw]), source.raw];
+      if (previous?.kind === "message" && previous.actor === actor && previous.round === correlatedSource.round) {
+        previous.text = `${previous.text || ""}${correlatedSource.text || correlatedSource.summary || ""}`;
+        previous.raw = [...(Array.isArray(previous.raw) ? previous.raw : [previous.raw]), correlatedSource.raw];
       } else {
         projected.push({
-          ...source,
+          ...correlatedSource,
           kind: "message",
           actor,
           summary: actor === "attacker" ? "Attacker response" : `${actor} message`,
-          text: source.text || source.summary,
-          raw: [source.raw],
+          text: correlatedSource.text || correlatedSource.summary,
+          raw: [correlatedSource.raw],
         });
       }
       continue;
     }
 
-    if (source.kind === "usage") {
-      const usage = record(source.data);
+    if (correlatedSource.kind === "usage") {
+      const usage = record(correlatedSource.data);
       const prior = [...projected].reverse().find((item) => item.kind === "message" && inferEventActor(item) === "attacker");
       if (prior) {
-        const inputTokens = source.input_tokens ?? Number(usage.input_tokens ?? usage.input);
-        const outputTokens = source.output_tokens ?? Number(usage.output_tokens ?? usage.output);
+        const inputTokens = correlatedSource.input_tokens ?? Number(usage.input_tokens ?? usage.input);
+        const outputTokens = correlatedSource.output_tokens ?? Number(usage.output_tokens ?? usage.output);
         prior.input_tokens = Number.isFinite(inputTokens) ? inputTokens : undefined;
         prior.output_tokens = Number.isFinite(outputTokens) ? outputTokens : undefined;
-        prior.data = { ...(prior.data || {}), usage: source.raw };
+        prior.data = { ...(prior.data || {}), usage: correlatedSource.raw };
       }
       continue;
     }
 
-    if (TELEMETRY_KINDS.has(source.kind)) continue;
+    if (TELEMETRY_KINDS.has(correlatedSource.kind)) continue;
 
-    let kind = source.kind;
-    let summary = source.summary;
-    if (kind === "tool_start") { kind = "tool_call"; summary ||= String(source.data?.name || "Tool call"); }
+    let kind = correlatedSource.kind;
+    let summary = correlatedSource.summary;
+    if (kind === "tool_start") { kind = "tool_call"; summary ||= String(correlatedSource.data?.name || "Tool call"); }
     if (kind === "start") summary ||= "Run started";
-    if (kind === "round") summary ||= `Round ${source.round || source.data?.round || ""}`.trim();
+    if (kind === "round") summary ||= `Round ${correlatedSource.round || correlatedSource.data?.round || ""}`.trim();
     if (kind === "done") summary ||= "Run completed";
-    projected.push({ ...source, kind, actor, summary });
+    projected.push({ ...correlatedSource, kind, actor, summary });
   }
 
   const conversation: ConversationEntry[] = objective.trim()

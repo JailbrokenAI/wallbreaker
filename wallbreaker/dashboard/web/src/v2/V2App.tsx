@@ -145,7 +145,7 @@ export function V2App() {
           </div>
         </header>
         <main ref={mainRef} id="v2-main" className={route === "live" ? "v2-main v2-main-live" : "v2-main"}>
-          <div className={`v2-route-state ${route === "agent" ? "active" : ""}`}><AgentView execution={agentExecution} onRefresh={refreshExecutions} /></div>
+          <div className={`v2-route-state ${route === "agent" ? "active" : ""}`}><AgentView execution={agentExecution} enabled={route === "agent"} onRefresh={refreshExecutions} /></div>
           <div className={`v2-route-state ${route === "live" ? "active" : ""}`}><LiveView execution={selectedExecution} enabled={route === "live"} /></div>
           <div className={`v2-route-state ${route === "compose" ? "active" : ""}`}><ComposeView /></div>
           <div className={`v2-route-state ${route === "workflows" ? "active" : ""}`}><WorkflowsView capabilities={capabilities} initialCapability={initialCapability} onConsumed={() => setInitialCapability("")} /></div>
