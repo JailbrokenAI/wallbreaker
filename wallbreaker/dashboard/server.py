@@ -120,7 +120,13 @@ def _safe_run_path(sessions: Path, name: str) -> Path | None:
     if ".." in name or "/" in name or "\\" in name:
         return None
     path = sessions / name
-    return path if path.is_file() else None
+    if path.is_file():
+        return path
+    if not Path(name).suffix:
+        jsonl_path = sessions / f"{name}.jsonl"
+        if jsonl_path.is_file():
+            return jsonl_path
+    return None
 
 
 def _load_records_with_lines(path: Path) -> tuple[list[dict], list[str], list[int]]:

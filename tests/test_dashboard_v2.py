@@ -127,13 +127,14 @@ def test_v2_report_uses_canonical_run_log(tmp_path):
         encoding="utf-8",
     )
     with TestClient(create_app(config=None, sessions_dir=tmp_path)) as client:
-        response = client.get("/api/v2/reports/run-20260801-120000.jsonl")
+        response = client.get("/api/v2/reports/run-20260801-120000")
         assert response.status_code == 200
         payload = response.json()
         assert payload["scorecard"]["strict_hits"] == 1
         assert payload["scorecard"]["graded_fires"] == 1
         assert "Evaluate target" in payload["markdown"]
         assert payload["findings"][0]["technique"] == "pair"
+        assert client.get("/api/v2/reports/run-20260801-120000.jsonl").status_code == 200
 
 
 def test_v2_runs_headless_tui_catalog_capability(tmp_path):
