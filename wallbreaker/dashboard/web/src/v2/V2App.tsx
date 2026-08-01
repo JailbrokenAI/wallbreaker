@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api as legacyApi, type RoleAssignments } from "../api";
 import { RoleChooser } from "../components/RoleChooser";
 import { v2Api } from "./api";
@@ -37,6 +37,8 @@ export function V2App() {
   const [selectedExecutionId, setSelectedExecutionId] = useState("");
   const [initialCapability, setInitialCapability] = useState("");
   const [roles, setRoles] = useState<RoleAssignments | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const scrollPositions = useRef<Partial<Record<V2Route, number>>>({});
 
   const refreshExecutions = useCallback(() => {
     v2Api.executions().then((result) => {
@@ -77,6 +79,16 @@ export function V2App() {
     return () => window.removeEventListener("keydown", open);
   }, []);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (mainRef.current) mainRef.current.scrollTop = scrollPositions.current[route] || 0;
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (mainRef.current) scrollPositions.current[route] = mainRef.current.scrollTop;
+    };
+  }, [route]);
+
   const navigate = useCallback((next: V2Route) => {
     setRouteState(next);
     setRailOpen(false);
@@ -93,17 +105,6 @@ export function V2App() {
   const activeExecutions = executions.filter(isActive);
   const recentExecutions = executions.filter((item) => !isActive(item)).slice(0, 5);
   const routeInfo = ROUTES.find((item) => item.id === route) || ROUTES[0];
-  const view = useMemo(() => {
-    if (route === "live") return <LiveView execution={selectedExecution} onRefresh={refreshExecutions} />;
-    if (route === "compose") return <ComposeView />;
-    if (route === "workflows") return <WorkflowsView capabilities={capabilities} initialCapability={initialCapability} onConsumed={() => setInitialCapability("")} />;
-    if (route === "arsenal") return <ArsenalView />;
-    if (route === "findings") return <FindingsView />;
-    if (route === "runs") return <RunsView />;
-    if (route === "reports") return <ReportsView />;
-    if (route === "models") return <ModelsView />;
-    return <SettingsView />;
-  }, [route, selectedExecution, refreshExecutions, capabilities, initialCapability]);
 
   return (
     <div className="v2-root">
@@ -142,7 +143,17 @@ export function V2App() {
             <button type="button" className="v2-command-button" onClick={() => setPaletteOpen(true)}>Commands <kbd>Ctrl K</kbd></button>
           </div>
         </header>
-        <main id="v2-main" className={route === "live" ? "v2-main v2-main-live" : "v2-main"}>{view}</main>
+        <main ref={mainRef} id="v2-main" className={route === "live" ? "v2-main v2-main-live" : "v2-main"}>
+          <div className={`v2-route-state ${route === "live" ? "active" : ""}`}><LiveView execution={selectedExecution} onRefresh={refreshExecutions} /></div>
+          <div className={`v2-route-state ${route === "compose" ? "active" : ""}`}><ComposeView /></div>
+          <div className={`v2-route-state ${route === "workflows" ? "active" : ""}`}><WorkflowsView capabilities={capabilities} initialCapability={initialCapability} onConsumed={() => setInitialCapability("")} /></div>
+          <div className={`v2-route-state ${route === "arsenal" ? "active" : ""}`}><ArsenalView /></div>
+          <div className={`v2-route-state ${route === "findings" ? "active" : ""}`}><FindingsView /></div>
+          <div className={`v2-route-state ${route === "runs" ? "active" : ""}`}><RunsView /></div>
+          <div className={`v2-route-state ${route === "reports" ? "active" : ""}`}><ReportsView /></div>
+          <div className={`v2-route-state ${route === "models" ? "active" : ""}`}><ModelsView /></div>
+          <div className={`v2-route-state ${route === "settings" ? "active" : ""}`}><SettingsView /></div>
+        </main>
       </div>
       <CommandPalette open={paletteOpen} capabilities={capabilities} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onCapability={chooseCapability} />
     </div>

@@ -85,6 +85,8 @@
 .v2-mobile-header { display: none; }
 .v2-main { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
 .v2-main-live { overflow: hidden; }
+.v2-route-state { display: none; }
+.v2-route-state.active { display: contents; }
 .v2-page-header { display: flex; align-items: center; justify-content: space-between; min-height: 92px; padding: 18px 24px; border-bottom: 1px solid var(--v2-line); background: #0c0e10; }
 .v2-page-header span { color: var(--v2-red); font-family: var(--v2-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
 .v2-page-header h1 { margin: 2px 0 0; font-size: 21px; font-weight: 650; }
