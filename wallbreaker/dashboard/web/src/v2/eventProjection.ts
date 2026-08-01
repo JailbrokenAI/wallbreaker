@@ -124,3 +124,21 @@ export function projectActivityEvents(events: EventEnvelope[], objective = ""): 
     };
   });
 }
+
+/** Attach the best conversation snapshot to each untouched raw event. */
+export function correlateRawEvents(events: EventEnvelope[], objective = ""): EventEnvelope[] {
+  const activity = projectActivityEvents(events, objective);
+  return [...events]
+    .sort((left, right) => left.sequence - right.sequence)
+    .map((event) => {
+      const correlated = [...activity].reverse().find((item) => item.sequence <= event.sequence);
+      return {
+        ...event,
+        actor: inferEventActor(event),
+        data: {
+          ...(event.data || {}),
+          conversation: correlated?.data?.conversation || [],
+        },
+      };
+    });
+}

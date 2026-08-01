@@ -13,20 +13,18 @@ import {
   VerdictBadge,
 } from "./components";
 import type { EventEnvelope, ExecutionSummary } from "./types";
-import { projectActivityEvents } from "./eventProjection";
+import { correlateRawEvents, projectActivityEvents } from "./eventProjection";
 
 interface TechniqueChoice { name: string; description?: string; control?: boolean }
 
-type InspectorTab = "summary" | "conversation" | "evidence" | "judge" | "request" | "raw" | "artifacts";
+type InspectorTab = "overview" | "conversation" | "payload" | "evaluation" | "raw";
 
 const INSPECTOR_TABS: Array<{ id: InspectorTab; label: string }> = [
-  { id: "summary", label: "Summary" },
+  { id: "overview", label: "Overview" },
   { id: "conversation", label: "Conversation" },
-  { id: "evidence", label: "Evidence" },
-  { id: "judge", label: "Judge" },
-  { id: "request", label: "Request" },
+  { id: "payload", label: "Payload" },
+  { id: "evaluation", label: "Evaluation" },
   { id: "raw", label: "Raw" },
-  { id: "artifacts", label: "Artifacts" },
 ];
 
 function eventStatus(event: EventEnvelope): "pass" | "fail" | "bypass" | "inconclusive" {
@@ -41,21 +39,63 @@ function eventTitle(event: EventEnvelope): string {
   return event.summary || event.text || event.kind.replace(/_/g, " ");
 }
 
+function eventMeta(event: EventEnvelope): string {
+  const values = [];
+  if (event.round) values.push(`Round ${event.round}`);
+  if (event.input_tokens != null || event.output_tokens != null) values.push(`${formatTokens(event.input_tokens, event.output_tokens)} tokens`);
+  if (event.latency_ms != null) values.push(formatDuration(event.latency_ms));
+  return values.join(" · ");
+}
+
 function valueAt(event: EventEnvelope, key: string): unknown {
   return event.data?.[key] ?? (event.raw && typeof event.raw === "object" ? (event.raw as Record<string, unknown>)[key] : undefined);
 }
 
+function hasValue(value: unknown): boolean {
+  if (value == null || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value as object).length > 0;
+  return true;
+}
+
+function Conversation({ value }: { value: unknown }) {
+  if (!Array.isArray(value) || !value.length) return <EmptyState title="No conversation yet" detail="Conversation context appears as the run exchanges messages and tool results." />;
+  return <ol className="v2-event-conversation">{value.map((raw, index) => {
+    const item = raw && typeof raw === "object" ? raw as Record<string, unknown> : { content: String(raw) };
+    const role = String(item.role || "system");
+    const type = String(item.type || "message");
+    return <li key={`${index}-${role}-${type}`} className={`v2-conversation-${role.toLowerCase()}`}>
+      <header><strong>{role}</strong><span>{type.replace(/_/g, " ")}{item.name ? ` · ${String(item.name)}` : ""}</span></header>
+      {hasValue(item.content) && <p>{String(item.content)}</p>}
+      {hasValue(item.arguments) && <details><summary>Arguments</summary><JsonBlock value={item.arguments} /></details>}
+    </li>;
+  })}</ol>;
+}
+
 function Inspector({ event }: { event: EventEnvelope | null }) {
-  const [tab, setTab] = useState<InspectorTab>("summary");
+  const [tab, setTab] = useState<InspectorTab>("overview");
 
   if (!event) return <aside className="v2-inspector"><EmptyState title="Select an event" detail="Matrix cells and timeline rows open synchronized evidence here." /></aside>;
   const content = (() => {
     if (tab === "raw") return <JsonBlock value={event.raw ?? event} />;
-    if (tab === "conversation") return <JsonBlock value={valueAt(event, "conversation") || valueAt(event, "messages")} empty="No conversation was attached to this event." />;
-    if (tab === "evidence") return <JsonBlock value={valueAt(event, "evidence") || valueAt(event, "key_evidence")} empty="No structured evidence was attached." />;
-    if (tab === "judge") return <JsonBlock value={valueAt(event, "judging") || valueAt(event, "judge")} empty="No judge record was attached." />;
-    if (tab === "request") return <JsonBlock value={valueAt(event, "request")} empty="No normalized request was attached." />;
-    if (tab === "artifacts") return <JsonBlock value={valueAt(event, "artifacts") || valueAt(event, "artifact")} empty="No artifacts were attached." />;
+    if (tab === "conversation") return <Conversation value={valueAt(event, "conversation") || valueAt(event, "messages")} />;
+    if (tab === "payload") {
+      const payload = {
+        request: valueAt(event, "request"),
+        arguments: valueAt(event, "args") || valueAt(event, "arguments"),
+        response: event.text,
+        artifacts: valueAt(event, "artifacts") || valueAt(event, "artifact"),
+      };
+      return <JsonBlock value={Object.fromEntries(Object.entries(payload).filter(([, value]) => hasValue(value)))} empty="No request, response, or artifact payload was recorded." />;
+    }
+    if (tab === "evaluation") {
+      const evaluation = {
+        verdict: event.verdict,
+        evidence: valueAt(event, "evidence") || valueAt(event, "key_evidence"),
+        judge: valueAt(event, "judging") || valueAt(event, "judge"),
+      };
+      return <JsonBlock value={Object.fromEntries(Object.entries(evaluation).filter(([, value]) => hasValue(value)))} empty="This activity has not been evaluated." />;
+    }
     return (
       <div className="v2-inspector-summary">
         <div className="v2-inspector-heading">
@@ -78,7 +118,7 @@ function Inspector({ event }: { event: EventEnvelope | null }) {
 
   return (
     <aside className="v2-inspector" aria-label="Evidence inspector">
-      <header><div><h2>Evidence inspector</h2><span className="v2-mono">ID {event.id}</span></div></header>
+      <header><div><h2>Event detail</h2><span className="v2-mono">#{event.sequence} · {event.id}</span></div></header>
       <div className="v2-inspector-tabs" role="tablist" aria-label="Evidence detail">
         {INSPECTOR_TABS.map((item) => <button
           type="button"
@@ -144,8 +184,42 @@ function StrategyMatrix({ events, selected, onSelect, maxRounds }: {
   );
 }
 
-function Timeline({ events, selected, onSelect, liveTail, setLiveTail, unread, markRead }: {
+function RunOverview({ events, selected, onSelect, execution, streamState }: {
   events: EventEnvelope[];
+  selected: EventEnvelope | null;
+  onSelect: (event: EventEnvelope) => void;
+  execution: ExecutionSummary | null;
+  streamState: string;
+}) {
+  const observedRound = Math.max(0, ...events.map((event) => event.round || 0));
+  const messages = events.filter((event) => event.kind === "message").length;
+  const actions = events.filter((event) => event.kind === "tool_call").length;
+  const outcomes = events.filter((event) => ["tool_result", "result"].includes(event.kind)).length;
+  const usage = [...events].reverse().find((event) => event.input_tokens != null || event.output_tokens != null);
+  const hasStrategies = events.some((event) => event.strategy && event.round);
+  return <Panel
+    title="Run overview"
+    meta={`Holistic status · stream ${streamState}`}
+    className="v2-overview-panel"
+    actions={execution ? <StatusBadge status={execution.status} /> : undefined}
+  >
+    <div className="v2-live-metrics">
+      <article><span>Round</span><strong>{observedRound || execution?.current_round || 0}<small> / {execution?.max_rounds || "—"}</small></strong></article>
+      <article><span>Messages</span><strong>{messages}</strong></article>
+      <article><span>Actions</span><strong>{actions}</strong></article>
+      <article><span>Results</span><strong>{outcomes}</strong></article>
+      <article><span>Tokens in / out</span><strong>{formatTokens(usage?.input_tokens ?? execution?.input_tokens, usage?.output_tokens ?? execution?.output_tokens)}</strong></article>
+    </div>
+    {hasStrategies ? <details className="v2-overview-matrix" open>
+      <summary><span>Strategy by round</span><span className="v2-legend"><i className="pass">P Pass</i><i className="fail">F Fail</i><i className="bypass">B Bypass</i><i className="inconclusive">I Inconclusive</i></span></summary>
+      <StrategyMatrix events={events} selected={selected} onSelect={onSelect} maxRounds={execution?.max_rounds} />
+    </details> : <p className="v2-overview-note">Strategy evidence will appear here when a run records classified techniques and rounds.</p>}
+  </Panel>;
+}
+
+function Timeline({ events, rawEvents, selected, onSelect, liveTail, setLiveTail, unread, markRead }: {
+  events: EventEnvelope[];
+  rawEvents: EventEnvelope[];
   selected: EventEnvelope | null;
   onSelect: (event: EventEnvelope) => void;
   liveTail: boolean;
@@ -157,19 +231,21 @@ function Timeline({ events, selected, onSelect, liveTail, setLiveTail, unread, m
   const [actor, setActor] = useState("all");
   const [kind, setKind] = useState("all");
   const [verdict, setVerdict] = useState("all");
+  const [view, setView] = useState<"activity" | "raw">("activity");
   const bodyRef = useRef<HTMLDivElement>(null);
-  const actors = useMemo(() => [...new Set(events.map(actorLabel))].sort(), [events]);
-  const kinds = useMemo(() => [...new Set(events.map((event) => event.kind))].sort(), [events]);
-  const verdicts = useMemo(() => [...new Set(events.map((event) => event.verdict).filter(Boolean) as string[])].sort(), [events]);
+  const source = view === "activity" ? events : rawEvents;
+  const actors = useMemo(() => [...new Set(source.map(actorLabel))].sort(), [source]);
+  const kinds = useMemo(() => [...new Set(source.map((event) => event.kind))].sort(), [source]);
+  const verdicts = useMemo(() => [...new Set(source.map((event) => event.verdict).filter(Boolean) as string[])].sort(), [source]);
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return events.filter((event) => {
+    return source.filter((event) => {
       if (actor !== "all" && actorLabel(event) !== actor) return false;
       if (kind !== "all" && event.kind !== kind) return false;
       if (verdict !== "all" && event.verdict !== verdict) return false;
-      return !query || `${eventTitle(event)} ${event.strategy || ""} ${actorLabel(event)} ${event.verdict || ""}`.toLowerCase().includes(query);
+      return !query || `${eventTitle(event)} ${event.text || ""} ${event.strategy || ""} ${actorLabel(event)} ${event.verdict || ""}`.toLowerCase().includes(query);
     });
-  }, [events, search, actor, kind, verdict]);
+  }, [source, search, actor, kind, verdict]);
 
   useEffect(() => {
     if (liveTail) bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
@@ -178,37 +254,42 @@ function Timeline({ events, selected, onSelect, liveTail, setLiveTail, unread, m
   return (
     <Panel
       title="Event timeline"
-      meta={`${filtered.length} of ${events.length} events`}
+      meta={`${filtered.length} shown · ${events.length} activities · ${rawEvents.length} raw events`}
       className="v2-timeline-panel"
       actions={<>
+        <div className="v2-view-toggle" role="group" aria-label="Timeline detail level">
+          <button type="button" aria-pressed={view === "activity"} onClick={() => { setView("activity"); setActor("all"); setKind("all"); setVerdict("all"); }}>Activity</button>
+          <button type="button" aria-pressed={view === "raw"} onClick={() => { setView("raw"); setActor("all"); setKind("all"); setVerdict("all"); }}>Raw</button>
+        </div>
         <label className="v2-switch"><input type="checkbox" checked={liveTail} onChange={(event) => setLiveTail(event.target.checked)} /><span>Live tail</span></label>
         {unread > 0 && <button type="button" className="v2-button v2-button-small" onClick={markRead}>{unread} unread / mark read</button>}
       </>}
     >
       <div className="v2-filterbar">
-        <label className="v2-search"><span className="v2-sr-only">Search events</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search events, strategies, actors" /></label>
-        <label><span className="v2-sr-only">Actor</span><select value={actor} onChange={(event) => setActor(event.target.value)}><option value="all">Actor: All</option>{actors.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label><span className="v2-sr-only">Event type</span><select value={kind} onChange={(event) => setKind(event.target.value)}><option value="all">Event: All</option>{kinds.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label><span className="v2-sr-only">Verdict</span><select value={verdict} onChange={(event) => setVerdict(event.target.value)}><option value="all">Verdict: All</option>{verdicts.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label className="v2-search"><span className="v2-sr-only">Search events</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${view === "activity" ? "activity" : "raw events"}`} /></label>
+        {actors.length > 1 && <label><span className="v2-sr-only">Actor</span><select value={actor} onChange={(event) => setActor(event.target.value)}><option value="all">All actors</option>{actors.map((value) => <option key={value}>{value}</option>)}</select></label>}
+        {kinds.length > 1 && <label><span className="v2-sr-only">Event type</span><select value={kind} onChange={(event) => setKind(event.target.value)}><option value="all">All event types</option>{kinds.map((value) => <option key={value}>{value.replace(/_/g, " ")}</option>)}</select></label>}
+        {!!verdicts.length && <label><span className="v2-sr-only">Verdict</span><select value={verdict} onChange={(event) => setVerdict(event.target.value)}><option value="all">All verdicts</option>{verdicts.map((value) => <option key={value}>{value}</option>)}</select></label>}
+        {(search || actor !== "all" || kind !== "all" || verdict !== "all") && <button type="button" className="v2-text-button" onClick={() => { setSearch(""); setActor("all"); setKind("all"); setVerdict("all"); }}>Clear</button>}
       </div>
       <div className="v2-timeline" ref={bodyRef} onScroll={(event) => {
         const node = event.currentTarget;
         if (node.scrollHeight - node.scrollTop - node.clientHeight > 24 && liveTail) setLiveTail(false);
       }}>
-        <div className="v2-timeline-head"><span>Time</span><span>Actor</span><span>Event</span><span>Details</span><span>Tokens</span><span>Latency</span></div>
-        {!filtered.length && <EmptyState title="No events match these filters" detail={events.length ? "Clear a filter to reveal recorded events." : "Events will appear here when a run starts or a historical run is selected."} />}
+        {!filtered.length && <EmptyState title="No events match these filters" detail={source.length ? "Clear a filter to reveal recorded events." : "Events will appear here when a run starts or a historical run is selected."} />}
         {filtered.map((event) => <button
           type="button"
           key={event.id}
           className={`v2-event-row v2-actor-${actorLabel(event).toLowerCase()} ${selected?.id === event.id ? "selected" : ""}`}
           onClick={() => onSelect(event)}
         >
-          <span className="v2-mono">{formatTime(event.timestamp)}</span>
+          <time className="v2-mono" dateTime={event.timestamp}>{formatTime(event.timestamp)}</time>
           <span className="v2-event-actor"><i aria-hidden="true">●</i>{actorLabel(event)}</span>
-          <span>{event.kind.replace(/_/g, " ")}{event.verdict && <VerdictBadge verdict={event.verdict} />}</span>
-          <span title={eventTitle(event)}>{eventTitle(event)}</span>
-          <span className="v2-mono">{formatTokens(event.input_tokens, event.output_tokens)}</span>
-          <span className="v2-mono">{formatDuration(event.latency_ms)}</span>
+          <span className="v2-event-copy">
+            <span><strong>{event.kind.replace(/_/g, " ")}</strong>{event.verdict && <VerdictBadge verdict={event.verdict} />}</span>
+            <span title={event.text || eventTitle(event)}>{event.text || eventTitle(event)}</span>
+            <small>{eventMeta(event)}<i>#{event.sequence}</i></small>
+          </span>
         </button>)}
       </div>
     </Panel>
@@ -310,7 +391,7 @@ function RunLauncher({ execution, onRefresh }: { execution: ExecutionSummary | n
     } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Unable to start execution"); }
     finally { setWorking(false); }
   };
-  return <details className="v2-launcher" open={!execution || !active}>
+  return <details className="v2-launcher" open={!execution}>
     <summary><span><strong>New interactive engagement</strong><small>{active ? "One foreground engagement is already active" : "Configure and start without leaving Live"}</small></span><span>{active ? "Occupied" : "Ready"}</span></summary>
     <div className="v2-launcher-body">
       <label className="v2-field v2-field-wide"><span>Objective</span><textarea value={objective} onChange={(event) => setObjective(event.target.value)} placeholder="Describe the authorized evaluation objective" /></label>
@@ -373,8 +454,13 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
   const liveTailRef = useRef(true);
   const [unread, setUnread] = useState(0);
   const [streamState, setStreamState] = useState("idle");
+  const steerable = Boolean(execution && ["queued", "running", "pausing", "paused"].includes(execution.status));
   const activityEvents = useMemo(
     () => projectActivityEvents(events, execution?.objective || ""),
+    [events, execution?.objective],
+  );
+  const rawEvents = useMemo(
+    () => correlateRawEvents(events, execution?.objective || ""),
     [events, execution?.objective],
   );
 
@@ -432,14 +518,12 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
       <RunLauncher execution={execution} onRefresh={onRefresh} />
       <div className="v2-live-grid">
         <main className="v2-observatory">
-          <Panel title="Strategy by round" meta={`Overview / stream ${streamState}`} className="v2-matrix-panel" actions={<div className="v2-legend"><span className="pass">P Pass</span><span className="fail">F Fail</span><span className="bypass">B Bypass</span><span className="inconclusive">I Inconclusive</span></div>}>
-            <StrategyMatrix events={activityEvents} selected={selected} onSelect={setSelected} maxRounds={execution?.max_rounds} />
-          </Panel>
-          <Timeline events={activityEvents} selected={selected} onSelect={setSelected} liveTail={liveTail} setLiveTail={setLiveTail} unread={unread} markRead={() => { setUnread(0); setLiveTail(true); }} />
+          <RunOverview events={activityEvents} selected={selected} onSelect={setSelected} execution={execution} streamState={streamState} />
+          <Timeline events={activityEvents} rawEvents={rawEvents} selected={selected} onSelect={setSelected} liveTail={liveTail} setLiveTail={setLiveTail} unread={unread} markRead={() => { setUnread(0); setLiveTail(true); }} />
         </main>
         <Inspector event={selected} />
       </div>
-      <SteeringBar execution={execution} />
+      {steerable && <SteeringBar execution={execution} />}
     </div>
   );
 }
