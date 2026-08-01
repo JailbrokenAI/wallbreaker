@@ -142,15 +142,26 @@ export function ArsenalView() {
 
 export function FindingsView() {
   const [findings, setFindings] = useState<FindingRecord[] | null>(null);
+  const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [verdict, setVerdict] = useState("all");
   const [selected, setSelected] = useState<FindingRecord | null>(null);
-  useEffect(() => { v2Api.findings().then(setFindings).catch(() => setFindings([])); }, []);
+  useEffect(() => {
+    setError("");
+    v2Api.findingRuns().then((runs) => {
+      const names = runs.filter((run) => Number(run.findings || 0) > 0).map((run) => run.name);
+      return names.length ? v2Api.findings(names) : [];
+    }).then(setFindings).catch((reason) => {
+      setError(errorMessage(reason));
+      setFindings([]);
+    });
+  }, []);
   if (!findings) return <LoadingState label="Loading findings" />;
   const verdicts = [...new Set(findings.map((item) => item.label).filter(Boolean) as string[])];
   const filtered = findings.filter((item) => (verdict === "all" || item.label === verdict) && (!query || `${item.technique || ""} ${item.reason || ""} ${item.response || ""} ${item.run || ""}`.toLowerCase().includes(query.toLowerCase())));
   return <div className="v2-page v2-library-grid">
     <Panel title="Findings" meta={`${filtered.length} evidence records`}>
+      {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
       <div className="v2-filterbar"><input aria-label="Search findings" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search evidence, technique, run" /><select aria-label="Finding verdict" value={verdict} onChange={(event) => setVerdict(event.target.value)}><option value="all">All verdicts</option>{verdicts.map((value) => <option key={value}>{value}</option>)}</select></div>
       {!filtered.length && <EmptyState title="No findings match" detail={findings.length ? "Clear filters to see other evidence." : "No findings have been recorded yet."} />}
       <div className="v2-finding-list">{filtered.map((item, index) => <button type="button" className={selected === item ? "active" : ""} key={item.id || `${item.run}-${index}`} onClick={() => setSelected(item)}><div><VerdictBadge verdict={item.label} /><span>{item.technique || "Unclassified"}</span></div><strong>{item.reason || item.response || "Recorded finding"}</strong><small>{item.run || "Unknown run"}{item.ts ? ` / ${item.ts}` : ""}</small></button>)}</div>
