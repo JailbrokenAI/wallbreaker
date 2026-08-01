@@ -15,6 +15,7 @@ import type {
   RunSummary,
   SettingsRecord,
 } from "./types";
+import { inferEventActor } from "./eventProjection";
 
 class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -94,7 +95,7 @@ function normalizeEvent(value: unknown, executionId: string, index: number): Eve
   const request = object(row.request);
   const endpoint = object(request.endpoint);
   const kind = text(row.kind || row.type || row.event || "system").toLowerCase();
-  const actor = text(row.actor || data.actor || row.role || row.source || endpoint.provider) || undefined;
+  const explicitActor = text(row.actor || data.actor || row.role || row.source || endpoint.provider) || undefined;
   const label = text(row.verdict || row.label || data.verdict) || undefined;
   const strategy = text(row.strategy || row.technique || data.strategy || data.technique) || undefined;
   const summary = text(row.summary || row.message || data.summary || data.message || row.detail || row.operation || row.tool || row.name || data.tool || data.state) || undefined;
@@ -108,15 +109,15 @@ function normalizeEvent(value: unknown, executionId: string, index: number): Eve
     run_id: text(row.run_id) || undefined,
     timestamp: text(row.timestamp || row.ts || row.time) || new Date(0).toISOString(),
     kind,
-    actor,
+    actor: inferEventActor({ actor: explicitActor, kind, data, summary }),
     strategy,
     round: number(row.round || data.round || data.current_round),
     verdict: label,
     summary,
     text: response,
     latency_ms: number(row.latency_ms || row.duration_ms || data.latency_ms),
-    input_tokens: number(row.input_tokens || data.input_tokens),
-    output_tokens: number(row.output_tokens || data.output_tokens),
+    input_tokens: number(row.input_tokens ?? data.input_tokens ?? data.input),
+    output_tokens: number(row.output_tokens ?? data.output_tokens ?? data.output),
     data: Object.keys(data).length ? data : undefined,
     raw: value,
   };

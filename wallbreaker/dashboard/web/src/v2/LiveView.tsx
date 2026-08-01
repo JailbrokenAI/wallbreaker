@@ -13,6 +13,7 @@ import {
   VerdictBadge,
 } from "./components";
 import type { EventEnvelope, ExecutionSummary } from "./types";
+import { projectActivityEvents } from "./eventProjection";
 
 interface TechniqueChoice { name: string; description?: string; control?: boolean }
 
@@ -46,7 +47,6 @@ function valueAt(event: EventEnvelope, key: string): unknown {
 
 function Inspector({ event }: { event: EventEnvelope | null }) {
   const [tab, setTab] = useState<InspectorTab>("summary");
-  useEffect(() => setTab("summary"), [event?.id]);
 
   if (!event) return <aside className="v2-inspector"><EmptyState title="Select an event" detail="Matrix cells and timeline rows open synchronized evidence here." /></aside>;
   const content = (() => {
@@ -373,6 +373,10 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
   const liveTailRef = useRef(true);
   const [unread, setUnread] = useState(0);
   const [streamState, setStreamState] = useState("idle");
+  const activityEvents = useMemo(
+    () => projectActivityEvents(events, execution?.objective || ""),
+    [events, execution?.objective],
+  );
 
   useEffect(() => { liveTailRef.current = liveTail; if (liveTail) setUnread(0); }, [liveTail]);
   useEffect(() => {
@@ -414,8 +418,13 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
   }, [execution?.id, execution?.source, execution?.status]);
 
   useEffect(() => {
-    if (liveTail && events.length && !selected) setSelected(events[events.length - 1]);
-  }, [events, liveTail, selected]);
+    setSelected((current) => {
+      if (!activityEvents.length) return null;
+      const refreshed = current && activityEvents.find((event) => event.id === current.id);
+      if (refreshed) return refreshed;
+      return liveTail ? activityEvents[activityEvents.length - 1] : current;
+    });
+  }, [activityEvents, liveTail]);
 
   return (
     <div className="v2-live">
@@ -424,9 +433,9 @@ export function LiveView({ execution, onRefresh }: { execution: ExecutionSummary
       <div className="v2-live-grid">
         <main className="v2-observatory">
           <Panel title="Strategy by round" meta={`Overview / stream ${streamState}`} className="v2-matrix-panel" actions={<div className="v2-legend"><span className="pass">P Pass</span><span className="fail">F Fail</span><span className="bypass">B Bypass</span><span className="inconclusive">I Inconclusive</span></div>}>
-            <StrategyMatrix events={events} selected={selected} onSelect={setSelected} maxRounds={execution?.max_rounds} />
+            <StrategyMatrix events={activityEvents} selected={selected} onSelect={setSelected} maxRounds={execution?.max_rounds} />
           </Panel>
-          <Timeline events={events} selected={selected} onSelect={setSelected} liveTail={liveTail} setLiveTail={setLiveTail} unread={unread} markRead={() => { setUnread(0); setLiveTail(true); }} />
+          <Timeline events={activityEvents} selected={selected} onSelect={setSelected} liveTail={liveTail} setLiveTail={setLiveTail} unread={unread} markRead={() => { setUnread(0); setLiveTail(true); }} />
         </main>
         <Inspector event={selected} />
       </div>
