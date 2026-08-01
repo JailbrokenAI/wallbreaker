@@ -75,11 +75,10 @@ function StepField({ name, property, value, onChange }: {
 function capabilityFromEvent(event: HistoryEvent, capabilities: Capability[]): Capability | null {
   let structured: Record<string, unknown> = {};
   try { structured = JSON.parse(event.structured_json) as Record<string, unknown>; } catch { /* malformed legacy row */ }
+  const nested = [structured, structured.data, structured.request, structured.composed]
+    .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value)));
   const candidates = [
-    structured.capability_id,
-    structured.tool,
-    structured.name,
-    structured.source_tool,
+    ...nested.flatMap((record) => [record.capability_id, record.tool, record.name, record.source_tool, record.command]),
     event.tool_id,
     event.technique,
   ].filter(Boolean).map(String);
@@ -94,6 +93,40 @@ function capabilityFromEvent(event: HistoryEvent, capabilities: Capability[]): C
     if (match) return match;
   }
   return null;
+}
+
+function structuredEvent(event: HistoryEvent): Record<string, unknown> {
+  try { return JSON.parse(event.structured_json) as Record<string, unknown>; }
+  catch { return {}; }
+}
+
+function argsFromEvent(event: HistoryEvent, capability: Capability): Record<string, unknown> {
+  const structured = structuredEvent(event);
+  const records = [structured, structured.data, structured.request, structured.composed]
+    .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value)));
+  const source = records.flatMap((record) => [record.tool_args, record.args, record.input, record.arguments, record.request_body])
+    .find((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value))) || {};
+  const properties = capability.input_schema?.properties || {};
+  if (!Object.keys(properties).length) return { ...defaultsFor(capability), ...source };
+  const inferred: Record<string, unknown> = {};
+  Object.keys(properties).forEach((name) => {
+    if (name in source) inferred[name] = source[name];
+    else {
+      const record = records.find((item) => name in item);
+      if (record) inferred[name] = record[name];
+    }
+  });
+  if ("arguments" in properties && inferred.arguments == null) {
+    inferred.arguments = String(structured.raw_arg || structured.arguments || "");
+  }
+  return { ...defaultsFor(capability), ...inferred };
+}
+
+function eventPreview(event: HistoryEvent): string {
+  const row = structuredEvent(event);
+  const value = row.text || row.message || row.summary || row.response || row.content || row.prompt || row.request;
+  if (typeof value === "string") return value.slice(0, 420);
+  return event.structured_json.slice(0, 420);
 }
 
 export function WorkflowStudio({ capabilities, initialCapability, onConsumed }: {
@@ -117,6 +150,10 @@ export function WorkflowStudio({ capabilities, initialCapability, onConsumed }: 
   const [historyRun, setHistoryRun] = useState("");
   const [historyEvents, setHistoryEvents] = useState<HistoryEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [selectedHistory, setSelectedHistory] = useState<number[]>([]);
+  const [historyMappings, setHistoryMappings] = useState<Record<number, string>>({});
+  const [expandedHistory, setExpandedHistory] = useState<number[]>([]);
+  const [hoveredHistory, setHoveredHistory] = useState<number | null>(null);
 
   useEffect(() => { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); }, [draft]);
   useEffect(() => { localStorage.setItem(WORKFLOW_KEY, JSON.stringify(saved)); }, [saved]);
@@ -142,6 +179,12 @@ export function WorkflowStudio({ capabilities, initialCapability, onConsumed }: 
       .catch(() => setHistoryEvents([]))
       .finally(() => setHistoryLoading(false));
   }, [historyRun]);
+  useEffect(() => {
+    setHistoryMappings({});
+    setExpandedHistory([]);
+    setHoveredHistory(null);
+    setSelectedHistory(historyEvents.filter((event) => capabilityFromEvent(event, executable)).map((event) => event.id));
+  }, [historyEvents, executable]);
 
   const categories = ["All", ...new Set(executable.map((item) => item.category))];
   const filtered = executable.filter((item) =>
@@ -150,8 +193,15 @@ export function WorkflowStudio({ capabilities, initialCapability, onConsumed }: 
   );
   const activeStep = draft.steps.find((step) => step.id === selectedStep) || null;
   const activeCapability = activeStep ? executable.find((item) => item.id === activeStep.capability_id) || null : null;
-  const recognizedHistory = historyEvents.map((event) => ({ event, capability: capabilityFromEvent(event, executable) }));
-  const recognizedCount = recognizedHistory.filter((item) => item.capability).length;
+  const applicableHistory = historyEvents.map((event) => {
+    const inferred = capabilityFromEvent(event, executable);
+    const mapping = historyMappings[event.id];
+    const mapped = mapping && mapping !== "__context__" ? executable.find((item) => item.id === mapping) || null : null;
+    return { event, inferred, capability: mapping === "__context__" ? null : mapped || inferred };
+  });
+  const applicableCount = applicableHistory.filter((item) => item.capability).length;
+  const selectedApplicableCount = applicableHistory.filter((item) => item.capability && selectedHistory.includes(item.event.id)).length;
+  const hoveredEvent = hoveredHistory == null ? null : historyEvents.find((event) => event.id === hoveredHistory) || null;
 
   const addStep = (capability: Capability) => {
     const step: WorkflowStep = { id: uid(), capability_id: capability.id, label: capability.title, args: defaultsFor(capability), continue_on_error: false };
@@ -188,9 +238,9 @@ export function WorkflowStudio({ capabilities, initialCapability, onConsumed }: 
   };
   const cloneHistory = () => {
     const steps: WorkflowStep[] = [];
-    recognizedHistory.forEach(({ capability }) => {
-      if (!capability) return;
-      steps.push({ id: uid(), capability_id: capability.id, label: capability.title, args: defaultsFor(capability), continue_on_error: false });
+    applicableHistory.forEach(({ event, capability }) => {
+      if (!capability || !selectedHistory.includes(event.id)) return;
+      steps.push({ id: uid(), capability_id: capability.id, label: capability.title, args: argsFromEvent(event, capability), continue_on_error: false });
     });
     setDraft({ alias: historyRun ? `${historyRun}-workflow` : "Cloned workflow", description: `Reconstructed from ${historyRun}`, steps });
     setSelectedStep(steps[0]?.id || "");
@@ -225,10 +275,23 @@ export function WorkflowStudio({ capabilities, initialCapability, onConsumed }: 
         {!runs && <LoadingState label="Loading run history" />}
         <div className="v2-run-list">{(runs || []).map((run) => { const name = String(run.run_name || ""); return <button type="button" key={name} className={historyRun === name ? "active" : ""} onClick={() => setHistoryRun(name)}><strong>{name}</strong><span>{Number(run.event_count || 0)} events</span><small>{String(run.last_timestamp || run.first_timestamp || "")}</small></button>; })}</div>
       </Panel>
-      <Panel title={historyRun || "Workflow reconstruction"} meta={historyRun ? `${recognizedCount} reusable steps recognized` : "Choose a run"}>
+      <Panel title={historyRun || "Workflow reconstruction"} meta={historyRun ? `${applicableCount} applicable · ${selectedApplicableCount} selected` : "Choose a run"}>
         {!historyRun && <EmptyState title="Select a historical run" detail="Its chronological event sequence will be reconstructed here." />}
         {historyLoading && <LoadingState label="Reconstructing sequence" />}
-        {!historyLoading && historyRun && <><div className="v2-history-sequence-actions"><p>The trace keeps the complete causal order. Recognized capabilities can be cloned into an editable workflow; unmatched system and evidence events remain visible for analysis.</p><button type="button" className="v2-button v2-button-primary" disabled={!recognizedCount} onClick={cloneHistory}>Clone {recognizedCount} recognized steps</button></div><ol className="v2-history-sequence">{recognizedHistory.map(({ event, capability }, index) => <li key={event.id}><span>{String(index + 1).padStart(2, "0")}</span><i className={capability ? "recognized" : "context"}>{capability ? "STEP" : "EVENT"}</i><div><strong>{capability?.title || event.event_type}</strong><small>{event.actor || "system"} / {event.technique || "unclassified"} / {event.timestamp}</small></div></li>)}</ol></>}
+        {!historyLoading && historyRun && <><div className="v2-history-sequence-actions"><div><p>Applicable events are preselected. Hover previews any record; click expands it. Unmatched events can be mapped to an executable capability and cloned too.</p>{hoveredEvent && <aside className="v2-history-hover-preview"><strong>{hoveredEvent.event_type}</strong><span>{hoveredEvent.actor || "system"} · {hoveredEvent.timestamp}</span><p>{eventPreview(hoveredEvent)}</p></aside>}</div><div><button type="button" className="v2-text-button" onClick={() => setSelectedHistory(applicableHistory.filter((item) => item.capability).map((item) => item.event.id))}>Select applicable</button><button type="button" className="v2-text-button" onClick={() => setSelectedHistory([])}>Select none</button><button type="button" className="v2-button v2-button-primary" disabled={!selectedApplicableCount} onClick={cloneHistory}>Clone {selectedApplicableCount} selected step{selectedApplicableCount === 1 ? "" : "s"}</button></div></div><ol className="v2-history-sequence">{applicableHistory.map(({ event, inferred, capability }, index) => {
+          const expanded = expandedHistory.includes(event.id);
+          const checked = Boolean(capability && selectedHistory.includes(event.id));
+          return <li key={event.id} className={`${expanded ? "expanded" : ""} ${checked ? "selected" : ""}`} onMouseEnter={() => setHoveredHistory(event.id)} onMouseLeave={() => setHoveredHistory(null)}>
+            <input type="checkbox" aria-label={`Include event ${index + 1} in cloned workflow`} disabled={!capability} checked={checked} onChange={(change) => setSelectedHistory((current) => change.target.checked ? [...new Set([...current, event.id])] : current.filter((id) => id !== event.id))} />
+            <span>{String(index + 1).padStart(2, "0")}</span><i className={capability ? "recognized" : "context"}>{capability ? "STEP" : "EVENT"}</i>
+            <button type="button" className="v2-history-event-summary" aria-expanded={expanded} onClick={() => setExpandedHistory((current) => current.includes(event.id) ? current.filter((id) => id !== event.id) : [...current, event.id])}><strong>{capability?.title || event.event_type}</strong><small>{event.actor || "system"} / {event.technique || "unclassified"} / {event.timestamp}</small><span aria-hidden="true">{expanded ? "−" : "+"}</span></button>
+            {expanded && <div className="v2-history-event-detail"><label className="v2-field"><span>Executable step mapping</span><select value={historyMappings[event.id] || capability?.id || "__context__"} onChange={(change) => {
+              const capabilityId = change.target.value;
+              setHistoryMappings((current) => ({ ...current, [event.id]: capabilityId }));
+              setSelectedHistory((current) => capabilityId !== "__context__" ? [...new Set([...current, event.id])] : current.filter((id) => id !== event.id));
+            }}><option value="__context__">Context only — do not execute</option>{executable.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.id}</option>)}</select><small>{inferred ? "Automatically matched; choose another capability to override it." : "Map this event when it represents an applicable executable action."}</small></label><pre>{JSON.stringify(structuredEvent(event), null, 2)}</pre></div>}
+          </li>;
+        })}</ol></>}
       </Panel>
     </div>}
   </div>;
