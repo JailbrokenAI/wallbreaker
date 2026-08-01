@@ -317,6 +317,8 @@ engine as the TUI. For frontend hot-reload, run `npm run dev` in
 
 See the [setup guide](docs/SETUP.md) for Windows instructions, provider configuration,
 history storage, development workflow, network-exposure safeguards, and troubleshooting.
+See the [WebUI V2 showcase](docs/WEBUI_V2_SHOWCASE.md) for a visual tour of the unified
+operator surface.
 
 ## Responsible use
 
