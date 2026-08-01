@@ -301,6 +301,9 @@
 .v2-provider-grid article > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .v2-provider-grid h3 { margin: 0; font-size: 12px; }
 .v2-provider-grid .v2-button { width: 100%; margin-top: 8px; }
+.v2-provider-test-state { min-height: 28px; margin: 8px 0 0; padding: 7px 8px; border-left: 2px solid var(--v2-dim); background: #101215; color: var(--v2-muted); font: 9px/1.45 var(--v2-mono); }
+.v2-provider-test-state.verified { border-left-color: var(--v2-green); color: var(--v2-green); }
+.v2-provider-test-state.failed { border-left-color: var(--v2-red); color: #ff8d96; }
 .v2-inline-status { margin: 12px 14px; color: var(--v2-green); font-size: 10px; }
 .v2-settings-page { grid-template-columns: minmax(480px, 1.2fr) minmax(300px, .8fr); }
 .v2-safeguards { display: grid; gap: 0; }

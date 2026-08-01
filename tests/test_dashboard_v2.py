@@ -7,6 +7,8 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
+from wallbreaker.config import Config, Endpoint  # noqa: E402
+from wallbreaker.dashboard import server as dashboard_server  # noqa: E402
 from wallbreaker.dashboard.server import create_app, serve  # noqa: E402
 
 
@@ -21,6 +23,69 @@ def test_v2_capabilities_include_every_tui_command(tmp_path):
         for token in (item["command"], *item["aliases"])
     }
     assert represented == set(TUI_SOURCE.known_commands)
+
+
+def test_provider_test_requires_authenticated_inference(tmp_path, monkeypatch):
+    endpoint = Endpoint(
+        name="strict-test", protocol="openai", base_url="https://example.test/v1",
+        model="test-model", api_key="super-secret-invalid-key",
+    )
+    config = Config(default_profile="strict-test", profiles={"strict-test": endpoint})
+
+    async def fake_discover(name, discovered_endpoint):
+        return {
+            "profile": name, "protocol": discovered_endpoint.protocol,
+            "models": ["test-model"], "fetched": True, "error": "",
+        }
+
+    class RejectingProvider:
+        async def complete(self, messages, **kwargs):
+            raise RuntimeError("401 invalid key super-secret-invalid-key")
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(dashboard_server, "_discover_profile_models", fake_discover)
+    monkeypatch.setattr(dashboard_server, "build_provider", lambda endpoint, timeout=None: RejectingProvider())
+    response = TestClient(create_app(config=config, sessions_dir=tmp_path)).post(
+        "/api/providers/strict-test/test"
+    )
+    assert response.status_code == 502
+    assert "Authenticated inference failed" in response.json()["detail"]
+    assert "super-secret-invalid-key" not in response.text
+
+
+def test_provider_test_reports_verified_model_and_latency(tmp_path, monkeypatch):
+    endpoint = Endpoint(
+        name="strict-test", protocol="openai", base_url="https://example.test/v1",
+        model="test-model", api_key="valid-key",
+    )
+    config = Config(default_profile="strict-test", profiles={"strict-test": endpoint})
+
+    async def fake_discover(name, discovered_endpoint):
+        return {
+            "profile": name, "protocol": discovered_endpoint.protocol,
+            "models": ["test-model"], "fetched": True, "error": "",
+        }
+
+    class AcceptingProvider:
+        async def complete(self, messages, **kwargs):
+            return "OK"
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(dashboard_server, "_discover_profile_models", fake_discover)
+    monkeypatch.setattr(dashboard_server, "build_provider", lambda endpoint, timeout=None: AcceptingProvider())
+    response = TestClient(create_app(config=config, sessions_dir=tmp_path)).post(
+        "/api/providers/strict-test/test"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["model"] == "test-model"
+    assert payload["inference"]["ok"] is True
+    assert payload["inference"]["response_preview"] == "OK"
 
 
 def test_v2_execution_crud_and_validation(tmp_path):

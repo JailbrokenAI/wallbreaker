@@ -131,6 +131,17 @@ export interface ModelCatalog {
   error: string;
 }
 
+export interface ProviderTestResult extends ModelCatalog {
+  ok: boolean;
+  model: string;
+  inference: {
+    ok: boolean;
+    kind: "completion" | "image_generation";
+    latency_ms: number;
+    response_preview: string;
+  };
+}
+
 export interface ProviderRecord extends ProfileDetail {
   enabled: boolean;
   api_key_env: string;
@@ -249,7 +260,7 @@ export const api = {
   disableProvider: (name: string) => j<ProviderRecord>(`/api/providers/${encodeURIComponent(name)}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: false }),
   }),
-  testProvider: (name: string) => j<ModelCatalog & { ok: boolean }>(`/api/providers/${encodeURIComponent(name)}/test`, { method: "POST" }),
+  testProvider: (name: string) => j<ProviderTestResult>(`/api/providers/${encodeURIComponent(name)}/test`, { method: "POST" }),
   refreshModels: (name: string) => j<ModelCatalog>(`/api/providers/${encodeURIComponent(name)}/models/refresh`, { method: "POST" }),
   addModel: (name: string, model: string) => j(`/api/providers/${encodeURIComponent(name)}/models`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model }),
