@@ -223,6 +223,27 @@
 .v2-code { max-height: 420px; margin: 0; overflow: auto; padding: 11px; background: #090b0d; color: #c9c2bf; font-family: var(--v2-mono); font-size: 10px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .v2-compose-grid, .v2-workflow-grid, .v2-library-grid, .v2-runs-grid { grid-template-columns: minmax(360px, .9fr) minmax(440px, 1.1fr); }
+.v2-compose-session { display: flex; min-height: 62px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--v2-line-soft); background: #0c0e10; }
+.v2-compose-session > div { display: grid; min-width: 0; gap: 2px; }
+.v2-compose-session span { color: var(--v2-teal); font: 8px var(--v2-mono); letter-spacing: .1em; }
+.v2-compose-session.active span { color: var(--v2-green); }
+.v2-compose-session strong { overflow: hidden; color: var(--v2-text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.v2-compose-session small { overflow: hidden; color: var(--v2-dim); font: 8px var(--v2-mono); text-overflow: ellipsis; white-space: nowrap; }
+.v2-compose-session .v2-button { flex: 0 0 auto; }
+.v2-field :disabled { cursor: not-allowed; opacity: .55; }
+.v2-conversation-thread { max-height: calc(100vh - 210px); overflow: auto; padding: 12px; }
+.v2-conversation-turn { display: grid; gap: 8px; margin-bottom: 15px; }
+.v2-turn-user, .v2-turn-target { max-width: 90%; padding: 10px 12px; border: 1px solid var(--v2-line-soft); border-radius: 5px; background: #111316; }
+.v2-turn-user { margin-left: auto; border-color: #315c57; background: #0e1b1a; }
+.v2-turn-target { margin-right: auto; border-color: #593238; background: #171113; }
+.v2-conversation-turn header, .v2-turn-preview header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.v2-conversation-turn header > span { color: var(--v2-muted); font: 8px var(--v2-mono); letter-spacing: .08em; }
+.v2-conversation-turn header small { color: var(--v2-teal); font: 8px var(--v2-mono); }
+.v2-conversation-turn p { margin: 8px 0 0; color: var(--v2-text); font: 10px/1.55 var(--v2-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.v2-conversation-turn details { margin-top: 8px; color: var(--v2-muted); font-size: 9px; }
+.v2-conversation-turn details summary { cursor: pointer; }
+.v2-turn-preview { margin: 12px; padding: 11px; border: 1px dashed var(--v2-teal); background: #0d1515; }
+.v2-turn-preview header { margin-bottom: 8px; color: var(--v2-muted); font-size: 9px; }
 .v2-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; padding: 14px; }
 .v2-field { display: grid; min-width: 0; gap: 5px; color: var(--v2-muted); font-size: 10px; }
 .v2-field > span { color: var(--v2-text); font-size: 10px; }

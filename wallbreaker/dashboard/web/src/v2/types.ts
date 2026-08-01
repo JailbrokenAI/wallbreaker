@@ -177,6 +177,27 @@ export interface ComposePayload {
   max_tokens?: number;
 }
 
+export interface ConversationTurn {
+  index: number;
+  request: string;
+  prompt: string;
+  payload: string;
+  response: string;
+  verdict?: string;
+  is_error?: boolean;
+  preset?: string;
+  transforms?: string[];
+  continuation: boolean;
+}
+
+export interface ConsoleConversation {
+  active: boolean;
+  turn_count: number;
+  turns: ConversationTurn[];
+  run_log: string;
+  archived_run?: string;
+}
+
 export interface ComposeResult extends ComposePayload {
   prompt?: string;
   payload: string;
@@ -185,6 +206,8 @@ export interface ComposeResult extends ComposePayload {
   verdict?: string;
   is_error?: boolean;
   run_log?: string;
+  turn?: ConversationTurn;
+  conversation?: ConsoleConversation;
 }
 
 export interface SettingsRecord {

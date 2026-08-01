@@ -5,7 +5,7 @@ import dataclasses
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .. import report as report_mod
@@ -717,6 +717,13 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     from ..session import RunLog, run_models_meta
 
     console_runlog = RunLog(directory=str(sessions))
+    console_conversation = {
+        "runlog": console_runlog,
+        "registry": None,
+        "run_config": None,
+        "role_meta": {},
+        "turns": [],
+    }
     provider_registry = None
     model_catalog = None
     agent_profile_registry = None
@@ -1236,6 +1243,48 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    def _console_conversation_view() -> dict:
+        runlog = console_conversation["runlog"]
+        turns = list(console_conversation["turns"])
+        return {
+            "active": bool(turns),
+            "turn_count": len(turns),
+            "turns": turns,
+            "run_log": runlog.path.name if runlog._started else "",
+        }
+
+    def _new_console_runlog(previous) -> object:
+        fresh = RunLog(directory=str(sessions))
+        if fresh.path == previous.path or fresh.path.exists():
+            stamp = datetime.now()
+            while fresh.path == previous.path or fresh.path.exists():
+                stamp += timedelta(seconds=1)
+                fresh.path = sessions / f"run-{stamp.strftime('%Y%m%d-%H%M%S')}.jsonl"
+        return fresh
+
+    @app.get("/api/console/conversation")
+    def console_conversation_get():
+        return _console_conversation_view()
+
+    @app.post("/api/console/conversation/reset")
+    async def console_conversation_reset():
+        if dashboard_inference_lock.locked():
+            raise HTTPException(status_code=409, detail="wait for the current turn to finish before resetting")
+        runlog = console_conversation["runlog"]
+        turns = list(console_conversation["turns"])
+        archived = ""
+        if turns:
+            runlog.event("conversation_archived", turn_count=len(turns))
+            archived = runlog.path.name
+        console_conversation.update({
+            "runlog": _new_console_runlog(runlog),
+            "registry": None,
+            "run_config": None,
+            "role_meta": {},
+            "turns": [],
+        })
+        return {"ok": True, "archived_run": archived, **_console_conversation_view()}
+
     @app.post("/api/fire")
     async def fire(body: dict):
         if config is None:
@@ -1247,48 +1296,64 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         if dashboard_inference_lock.locked():
             raise HTTPException(status_code=409, detail="another dashboard inference is already in progress")
 
+        is_followup = bool(console_conversation["turns"])
         args = {
             "prompt": composed["payload"] if composed["source"] == "payload" else composed["prompt"],
             "max_tokens": composed["max_tokens"],
         }
         if composed["source"] != "payload" and composed["transforms"]:
             args["transforms"] = composed["transforms"]
-        if composed["system"]:
+        if composed["system"] and not is_followup:
             args["system"] = composed["system"]
 
         from ..tools import build_registry
         from ..agent_profiles import resolved_config
         from ..session import inference_logging
 
-        try:
-            from ..state import load_state, state_path_for
+        if console_conversation["registry"] is None:
+            try:
+                from ..state import load_state, state_path_for
 
-            prefs = load_state(state_path_for(config))
-            run_config, role_meta = resolved_config(config)
-            run_config = _apply_target_settings(run_config, prefs, config)
-        except Exception as exc:
-            from ..config import ConfigError
-            if isinstance(exc, ConfigError):
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            raise
-        reg = build_registry(run_config)
+                prefs = load_state(state_path_for(config))
+                run_config, role_meta = resolved_config(config)
+                run_config = _apply_target_settings(run_config, prefs, config)
+            except Exception as exc:
+                from ..config import ConfigError
+                if isinstance(exc, ConfigError):
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                raise
+            reg = build_registry(run_config)
+            console_conversation.update({
+                "registry": reg,
+                "run_config": run_config,
+                "role_meta": role_meta,
+            })
+        else:
+            reg = console_conversation["registry"]
+            run_config = console_conversation["run_config"]
+            role_meta = console_conversation["role_meta"]
+
+        console_runlog = console_conversation["runlog"]
         if not console_runlog._started:
             console_runlog.set_run_meta(
                 source="dashboard_console",
                 models=run_models_meta(run_config, attacker=run_config.profile()),
                 agent_roles=role_meta,
+                conversation_mode="multi_turn",
             )
+        tool_name = "continue_target" if is_followup else "query_target"
         console_runlog.event(
             "console_request",
             request_body=body,
             composed=composed,
             agent_roles=role_meta,
-            tool="query_target",
+            tool=tool_name,
             tool_args=args,
+            turn=len(console_conversation["turns"]) + 1,
         )
         async with dashboard_inference_lock:
             with inference_logging(console_runlog):
-                result = await reg.execute("query_target", args)
+                result = await reg.execute(tool_name, args)
         verdict = _extract_verdict(result.content)
         target = run_config.target
         console_runlog.event(
@@ -1307,7 +1372,22 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             target_model=getattr(target, "model", "") if target else "",
             target_base_url=getattr(target, "base_url", "") if target else "",
             agent_roles=role_meta,
+            turn=len(console_conversation["turns"]) + 1,
+            continuation=is_followup,
         )
+        turn = {
+            "index": len(console_conversation["turns"]) + 1,
+            "request": composed["request"],
+            "prompt": composed["prompt"],
+            "payload": composed["payload"],
+            "response": result.content,
+            "verdict": verdict,
+            "is_error": result.is_error,
+            "preset": composed["preset"],
+            "transforms": composed["transforms"],
+            "continuation": is_followup,
+        }
+        console_conversation["turns"].append(turn)
         return {
             **composed,
             "content": result.content,
@@ -1315,6 +1395,8 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             "is_error": result.is_error,
             "verdict": verdict,
             "run_log": console_runlog.path.name,
+            "turn": turn,
+            "conversation": _console_conversation_view(),
         }
 
     def _agent_status_view():

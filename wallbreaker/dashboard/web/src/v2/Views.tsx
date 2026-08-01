@@ -10,6 +10,7 @@ import { ReportsDashboard } from "./ReportsDashboard";
 import type {
   ArsenalItem,
   Capability,
+  ConsoleConversation,
   ComposeResult,
   FindingRecord,
   ProviderRecord,
@@ -40,43 +41,77 @@ export function ComposeView() {
   const [system, setSystem] = useState("");
   const [maxTokens, setMaxTokens] = useState(8192);
   const [result, setResult] = useState<ComposeResult | null>(null);
+  const [conversation, setConversation] = useState<ConsoleConversation>({ active: false, turn_count: 0, turns: [], run_log: "" });
   const [working, setWorking] = useState<"preview" | "fire" | "">("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    v2Api.consoleConversation().then(setConversation).catch(() => undefined);
+  }, []);
 
   const submit = async (action: "preview" | "fire") => {
     if (!request.trim()) return;
     setWorking(action);
     setError("");
-    const body = { request, preset: preset || undefined, transforms: selectedTransforms, system: system || undefined, max_tokens: maxTokens };
-    try { setResult(action === "preview" ? await v2Api.compose(body) : await v2Api.fire(body)); }
+    const body = {
+      request,
+      preset: conversation.active ? undefined : preset || undefined,
+      transforms: selectedTransforms,
+      system: conversation.active ? undefined : system || undefined,
+      max_tokens: maxTokens,
+    };
+    try {
+      const next = action === "preview" ? await v2Api.compose(body) : await v2Api.fire(body);
+      setResult(next);
+      if (action === "fire" && next.conversation) {
+        setConversation(next.conversation);
+        setRequest("");
+      }
+    }
     catch (reason) { setError(errorMessage(reason)); }
     finally { setWorking(""); }
   };
 
+  const resetConversation = async () => {
+    if (conversation.active && !window.confirm(`Reset and archive this ${conversation.turn_count}-turn conversation?`)) return;
+    setWorking("fire"); setError("");
+    try {
+      const next = await v2Api.resetConsoleConversation();
+      setConversation(next);
+      setResult(null); setRequest(""); setPreset(""); setSystem(""); setSelectedTransforms([]);
+    } catch (reason) { setError(errorMessage(reason)); }
+    finally { setWorking(""); }
+  };
+
   return <div className="v2-page v2-compose-grid">
-    <Panel title="Attack composer" meta="Exact payload preview before delivery">
+    <Panel title="Attack composer" meta="Persistent multi-turn target conversation">
       {error && <ErrorBanner message={error} onDismiss={() => setError("")} />}
-      <div className="v2-form-grid">
-        <label className="v2-field v2-field-wide"><span>Request</span><textarea value={request} onChange={(event) => setRequest(event.target.value)} placeholder="Enter the authorized evaluation objective or request" /></label>
-        <label className="v2-field"><span>Preset</span><select value={preset} onChange={(event) => setPreset(event.target.value)}><option value="">None</option>{presets.map((item) => <option key={item.name}>{item.name}</option>)}</select></label>
-        <label className="v2-field"><span>Maximum tokens</span><input type="number" min={1} max={64000} value={maxTokens} onChange={(event) => setMaxTokens(Number(event.target.value))} /></label>
-        <label className="v2-field v2-field-wide"><span>System prompt override</span><textarea value={system} onChange={(event) => setSystem(event.target.value)} placeholder="Optional system prompt" /></label>
+      <div className={`v2-compose-session ${conversation.active ? "active" : "fresh"}`}>
+        <div><span>{conversation.active ? "ACTIVE THREAD" : "NEW THREAD"}</span><strong>{conversation.active ? `${conversation.turn_count} turn${conversation.turn_count === 1 ? "" : "s"} · follow-ups retain target context` : "The first delivery opens a multi-turn conversation"}</strong><small>{conversation.run_log || "A run log is created on the first delivery"}</small></div>
+        <button type="button" className="v2-button" disabled={!conversation.active || !!working} onClick={resetConversation}>Reset &amp; archive</button>
       </div>
-      <fieldset className="v2-check-grid"><legend>Transforms</legend>
+      <div className="v2-form-grid">
+        <label className="v2-field v2-field-wide"><span>{conversation.active ? `Follow-up turn ${conversation.turn_count + 1}` : "First turn"}</span><textarea value={request} onChange={(event) => setRequest(event.target.value)} onKeyDown={(event) => { if (event.ctrlKey && event.key === "Enter") void submit("fire"); }} placeholder={conversation.active ? "Continue the same target conversation…  Ctrl Enter sends" : "Enter the authorized evaluation objective or request"} /></label>
+        <label className="v2-field"><span>Initial preset</span><select value={preset} disabled={conversation.active} onChange={(event) => setPreset(event.target.value)}><option value="">None</option>{presets.map((item) => <option key={item.name}>{item.name}</option>)}</select><small>{conversation.active ? "Locked until reset" : "Applied to the opening turn"}</small></label>
+        <label className="v2-field"><span>Maximum tokens</span><input type="number" min={1} max={64000} value={maxTokens} onChange={(event) => setMaxTokens(Number(event.target.value))} /></label>
+        <label className="v2-field v2-field-wide"><span>Initial system prompt override</span><textarea value={system} disabled={conversation.active} onChange={(event) => setSystem(event.target.value)} placeholder="Optional system prompt for the complete thread" /></label>
+      </div>
+      <fieldset className="v2-check-grid"><legend>Transforms for this turn</legend>
         {!transforms.length && <span className="v2-muted">No transforms loaded.</span>}
         {transforms.map((item) => <label key={item.name}><input type="checkbox" checked={selectedTransforms.includes(item.name)} onChange={(event) => setSelectedTransforms((current) => event.target.checked ? [...current, item.name] : current.filter((name) => name !== item.name))} /><span>{item.name}</span></label>)}
       </fieldset>
       <div className="v2-actions">
-        <button type="button" className="v2-button" disabled={!request.trim() || !!working} onClick={() => submit("preview")}>{working === "preview" ? "Composing" : "Preview payload"}</button>
-        <button type="button" className="v2-button v2-button-primary" disabled={!request.trim() || !!working} onClick={() => submit("fire")}>{working === "fire" ? "Delivering" : "Fire request"}</button>
+        <button type="button" className="v2-button" disabled={!request.trim() || !!working} onClick={() => submit("preview")}>{working === "preview" ? "Composing" : "Preview turn"}</button>
+        <button type="button" className="v2-button v2-button-primary" disabled={!request.trim() || !!working} onClick={() => submit("fire")}>{working === "fire" ? "Delivering" : conversation.active ? "Send follow-up" : "Open conversation"}</button>
       </div>
     </Panel>
-    <Panel title="Payload and response" meta={result?.run_log || "Nothing sent until you choose Fire request"}>
-      {!result && <EmptyState title="No composed payload yet" detail="Preview shows the exact transformed content without contacting the target." />}
-      {result && <div className="v2-result-stack">
-        <section><h3>Payload</h3><JsonBlock value={result.payload} /></section>
-        {result.response != null && <section><h3>Target response</h3>{result.verdict && <VerdictBadge verdict={result.verdict} />}<JsonBlock value={result.response} /></section>}
-      </div>}
+    <Panel title="Target conversation" meta={conversation.active ? `${conversation.turn_count} turns · reset to archive` : "No active conversation"}>
+      {!conversation.turns.length && !result && <EmptyState title="No conversation yet" detail="The first delivery opens a persistent target thread. Every later delivery is a contextual follow-up until you reset and archive it." />}
+      {!!conversation.turns.length && <div className="v2-conversation-thread">{conversation.turns.map((turn) => <article className="v2-conversation-turn" key={turn.index}>
+        <div className="v2-turn-user"><header><span>YOU · TURN {turn.index}</span>{turn.transforms?.length ? <small>{turn.transforms.join(" + ")}</small> : null}</header><p>{turn.request}</p>{turn.payload !== turn.request && <details><summary>Transformed payload</summary><JsonBlock value={turn.payload} /></details>}</div>
+        <div className="v2-turn-target"><header><span>TARGET</span>{turn.verdict && <VerdictBadge verdict={turn.verdict} />}</header><p>{turn.response}</p></div>
+      </article>)}</div>}
+      {result && !result.response && <div className="v2-turn-preview"><header><strong>TURN PREVIEW</strong><span>Not delivered</span></header><JsonBlock value={result.payload} /></div>}
     </Panel>
   </div>;
 }

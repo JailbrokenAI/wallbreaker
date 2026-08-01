@@ -4,6 +4,7 @@ import type {
   Capability,
   ComposePayload,
   ComposeResult,
+  ConsoleConversation,
   EventEnvelope,
   ExecutionStatus,
   ExecutionMode,
@@ -276,6 +277,8 @@ export const v2Api = {
 
   compose: (body: ComposePayload) => request<ComposeResult>("/api/compose", json(body)),
   fire: (body: ComposePayload & { source?: string }) => request<ComposeResult>("/api/fire", json(body)),
+  consoleConversation: () => request<ConsoleConversation>("/api/console/conversation"),
+  resetConsoleConversation: () => request<ConsoleConversation & { ok: boolean }>("/api/console/conversation/reset", { method: "POST" }),
   presets: () => request<Array<Record<string, unknown>>>("/api/presets"),
   transforms: () => request<Array<Record<string, unknown>>>("/api/transforms"),
   tools: () => request<Array<Record<string, unknown>>>("/api/tools"),
