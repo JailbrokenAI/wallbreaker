@@ -2092,6 +2092,20 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             limit=limit, offset=offset, order=order,
         )
 
+    @app.get("/api/v2/reports/{run_name}")
+    async def run_report(run_name: str):
+        path = _safe_run_path(sessions, run_name)
+        if path is None or not path.exists():
+            raise HTTPException(status_code=404, detail=f"unknown run '{run_name}'")
+        return {
+            "run_name": path.name,
+            "scorecard": report_mod.build_scorecard(path),
+            "coverage": report_mod.build_coverage_matrix(path),
+            "findings": report_mod.extract_findings(path),
+            "export": report_mod.build_findings_export(path),
+            "markdown": report_mod.build_report(path),
+        }
+
     @app.on_event("shutdown")
     def close_history_index():
         history_index.close()

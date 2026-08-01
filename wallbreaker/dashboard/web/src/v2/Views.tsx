@@ -6,13 +6,13 @@ import { TargetOptions } from "../components/TargetOptions";
 import { EmptyState, ErrorBanner, JsonBlock, LoadingState, Panel, StatusBadge, VerdictBadge } from "./components";
 import { WorkflowStudio } from "./WorkflowStudio";
 import { RunsExplorer } from "./RunsExplorer";
+import { ReportsDashboard } from "./ReportsDashboard";
 import type {
   ArsenalItem,
   Capability,
   ComposeResult,
   FindingRecord,
   ProviderRecord,
-  RunSummary,
   SettingsRecord,
 } from "./types";
 
@@ -128,25 +128,8 @@ export function RunsView() {
   return <RunsExplorer />;
 }
 
-function downloadJson(filename: string, value: unknown) {
-  const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
 export function ReportsView() {
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [findings, setFindings] = useState<FindingRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => { Promise.all([v2Api.runs(), v2Api.findings()]).then(([runRows, findingRows]) => { setRuns(runRows); setFindings(findingRows); }).finally(() => setLoading(false)); }, []);
-  if (loading) return <LoadingState label="Preparing report data" />;
-  const hits = runs.reduce((sum, run) => sum + (run.hits || 0), 0);
-  const records = runs.reduce((sum, run) => sum + (run.records || 0), 0);
-  return <div className="v2-page"><div className="v2-metric-grid"><article><span>Runs</span><strong>{runs.length}</strong></article><article><span>Records</span><strong>{records}</strong></article><article><span>Hits</span><strong>{hits}</strong></article><article><span>Findings</span><strong>{findings.length}</strong></article></div><Panel title="Evidence export" meta="Portable local JSON"><div className="v2-report-actions"><p>Export the currently available run summaries and finding records without altering canonical JSONL history.</p><button type="button" className="v2-button v2-button-primary" disabled={!runs.length && !findings.length} onClick={() => downloadJson(`wallbreaker-report-${new Date().toISOString().slice(0, 10)}.json`, { exported_at: new Date().toISOString(), runs, findings })}>Download report data</button></div></Panel></div>;
+  return <ReportsDashboard />;
 }
 
 export function ModelsView() {

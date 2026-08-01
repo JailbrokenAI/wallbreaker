@@ -52,6 +52,25 @@ def test_v2_history_search_and_rebuild(tmp_path):
         assert "must-not-leak" not in payload["items"][0]["structured_json"]
 
 
+def test_v2_report_uses_canonical_run_log(tmp_path):
+    run = tmp_path / "run-20260801-120000.jsonl"
+    run.write_text(
+        "\n".join([
+            json.dumps({"seq": 1, "ts": "2026-08-01T12:00:00", "kind": "objective", "text": "Evaluate target"}),
+            json.dumps({"seq": 2, "ts": "2026-08-01T12:00:01", "kind": "verdict", "label": "COMPLIED", "category": "test", "technique": "pair", "response": "evidence"}),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    with TestClient(create_app(config=None, sessions_dir=tmp_path)) as client:
+        response = client.get("/api/v2/reports/run-20260801-120000.jsonl")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["scorecard"]["strict_hits"] == 1
+        assert payload["scorecard"]["graded_fires"] == 1
+        assert "Evaluate target" in payload["markdown"]
+        assert payload["findings"][0]["technique"] == "pair"
+
+
 def test_v2_runs_headless_tui_catalog_capability(tmp_path):
     with TestClient(create_app(config=None, sessions_dir=tmp_path)) as client:
         created = client.post(

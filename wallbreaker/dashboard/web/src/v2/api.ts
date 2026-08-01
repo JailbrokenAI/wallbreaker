@@ -286,13 +286,14 @@ export const v2Api = {
   testProvider: (name: string) => request<Record<string, unknown>>(`/api/providers/${encodeURIComponent(name)}/test`, { method: "POST" }),
   settings: () => request<SettingsRecord>("/api/settings"),
   saveSettings: (body: SettingsRecord) => request<SettingsRecord>("/api/settings", json(body)),
-  historyRuns: () => request<{ items: Array<Record<string, unknown>>; total: number }>("/api/v2/history/runs"),
+  historyRuns: (limit = 100) => request<{ items: Array<Record<string, unknown>>; total: number }>(`/api/v2/history/runs?limit=${limit}`),
   historyEvents: (filters: Record<string, string | number | undefined>) => {
     const query = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== "") query.set(key, String(value)); });
     return request<{ items: HistoryEvent[]; total: number; limit: number; offset: number }>(`/api/v2/history/events?${query.toString()}`);
   },
   rebuildHistory: () => request<Record<string, unknown>>("/api/v2/history/rebuild", { method: "POST" }),
+  report: (runName: string) => request<Record<string, unknown>>(`/api/v2/reports/${encodeURIComponent(runName)}`),
 };
 
 export function arsenalItems(
