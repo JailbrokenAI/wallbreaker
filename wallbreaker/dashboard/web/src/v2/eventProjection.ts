@@ -23,15 +23,16 @@ function eventName(event: EventEnvelope): string {
 export function inferEventActor(event: Pick<EventEnvelope, "actor" | "kind" | "data" | "summary">): string {
   const explicit = String(event.actor || "").trim().toLowerCase();
   const kind = String(event.kind || "").toLowerCase();
-  if (explicit && explicit !== "system") return explicit;
-  if (["text", "message", "reasoning", "tool_start", "tool_call", "usage"].includes(kind)) return "attacker";
-  if (["feedback", "operator"].includes(kind)) return "operator";
   if (kind === "tool_result" || kind === "result") {
     const name = eventName(event as EventEnvelope);
     if (/query_(image_)?target|continue_target|chat_session/.test(name)) return "target";
     if (/judge|grade|score/.test(name)) return "judge";
+    if (explicit && explicit !== "system") return explicit;
     return "tool";
   }
+  if (explicit && explicit !== "system") return explicit;
+  if (["text", "message", "reasoning", "tool_start", "tool_call", "usage"].includes(kind)) return "attacker";
+  if (["feedback", "operator"].includes(kind)) return "operator";
   if (explicit) return explicit;
   return "system";
 }
