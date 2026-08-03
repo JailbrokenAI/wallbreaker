@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 
 import pytest
 
@@ -146,6 +147,54 @@ def test_system_prompt_file_leads_and_harness_appends(monkeypatch, tmp_path):
 def test_system_prompt_file_missing_falls_back_to_inline(tmp_path):
     p = build_provider(_ep(system_prompt_file=str(tmp_path / "nope.txt")))
     assert p._system_args("SYS") == ["--system-prompt", "SYS"]
+
+
+# ---- long prompts must not go through argv (Windows 32767-char cmdline cap) ---
+
+def test_long_system_prompt_spills_to_file():
+    p = build_provider(_ep())
+    big = "D" * 50_000
+    sink: list[str] = []
+    args = p._system_args(big, sink)
+    assert args[0] == "--system-prompt-file" and sink == [args[1]]
+    try:
+        with open(args[1], encoding="utf-8") as fh:
+            assert fh.read() == big
+    finally:
+        os.unlink(args[1])
+
+
+def test_long_appended_doctrine_spills_to_append_file(tmp_path):
+    spf = tmp_path / "system_prompt.txt"
+    spf.write_text("You are my operator.")
+    p = build_provider(_ep(system_prompt_file=str(spf)))
+    sink: list[str] = []
+    args = p._system_args("D" * 50_000, sink)
+    assert args[:2] == ["--system-prompt-file", str(spf)]
+    assert args[2] == "--append-system-prompt-file" and args[3] == sink[0]
+    os.unlink(sink[0])
+
+
+def test_run_cli_keeps_cmdline_small_and_cleans_up_temp_file(monkeypatch):
+    cap = _patch_cli(monkeypatch, {"is_error": False, "result": "ok", "stop_reason": "end_turn"})
+    p = build_provider(_ep())
+    asyncio.run(p.complete([user("go")], system="D" * 50_000))
+    args = list(cap["args"])
+    assert sum(len(a) for a in args) < 32767  # would raise WinError 206 otherwise
+    spilled = args[args.index("--system-prompt-file") + 1]
+    assert not os.path.exists(spilled)  # deleted once the call finished
+
+
+def test_cmdline_too_long_reports_length_not_missing_binary(monkeypatch):
+    async def _exec(*args, **kw):
+        exc = FileNotFoundError(2, "The filename or extension is too long")
+        exc.winerror = 206
+        raise exc
+
+    monkeypatch.setattr(cc.asyncio, "create_subprocess_exec", _exec)
+    p = build_provider(_ep())
+    with pytest.raises(ProviderError, match="command line too long"):
+        asyncio.run(p.complete([user("x")], system="S"))
 
 
 # ---- error handling ----------------------------------------------------------
