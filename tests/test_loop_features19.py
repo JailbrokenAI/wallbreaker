@@ -60,7 +60,7 @@ def test_campaign_records_cracking_technique(monkeypatch):
     ctx, captured = _ctx_with_sink(ep)
     reg = ToolRegistry(ctx)
     campaign.register(reg)
-    asyncio.run(reg.execute("campaign", {"behaviors": ["do it"], "n": 1}))
+    asyncio.run(reg.execute("campaign", {"behaviors": ["do it"], "n": 1, "bandit": False}))
     # complier cracks on the first ladder step (plain)
     assert len(captured) == 1
     assert captured[0][1] == "campaign:plain"

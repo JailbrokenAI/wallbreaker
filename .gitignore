@@ -72,7 +72,16 @@ wallbreaker/dashboard/web/vite.config.d.ts
 # (VALIDATION_PROTOCOL.md §09: specs/ travels with the operator, not the repo)
 specs/
 
+# desktop shell (Electron)
+desktop/node_modules/
+desktop/dist/
+desktop/release/
+desktop/out/
+
 .pytest_cache/
 .serena/
 *.log
 .DS_Store
+
+# local agent scratch
+work/

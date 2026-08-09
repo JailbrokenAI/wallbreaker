@@ -5,7 +5,7 @@ import asyncio
 from ..agent.messages import user
 from ..judging import grade
 from ._bandit import BanditStore, stats_path
-from ._util import complete_untruncated, gather_capped
+from ._util import complete_untruncated, gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 # ENI personas run ~35KB; truncating them mid-prompt cripples the jailbreak, so keep the
@@ -60,7 +60,7 @@ async def _seed_sweep(args: dict, ctx: ToolContext) -> str:
     as_system = bool(args.get("as_system", True))
     max_tokens = int(args.get("max_tokens", 1024))
     timeout = float(args.get("timeout", 75))
-    use_bandit = bool(args.get("bandit", False))
+    use_bandit = bool(args.get("bandit", True))
     category = args.get("category", "seed")
 
     store = None
@@ -90,15 +90,13 @@ async def _seed_sweep(args: dict, ctx: ToolContext) -> str:
                 msgs, sysp = [user(request)], seed
             else:
                 msgs, sysp = [user(seed + "\n\n" + request)], None
-            reply, reasoning, _stop, _trunc = await asyncio.wait_for(
-                complete_untruncated(target, msgs, system=sysp, max_tokens=max_tokens),
+            reply, reasoning, _stop, _trunc = await await_llm(complete_untruncated(target, msgs, system=sysp, max_tokens=max_tokens),
                 timeout=timeout,
             )
-            vl, score, reason, _s = await asyncio.wait_for(
-                grade(ctx.judge_endpoint, reply, payload=request, objective=request, reasoning=reasoning),
+            vl, score, reason, _s = await await_llm(grade(ctx.judge_endpoint, reply, payload=request, objective=request, reasoning=reasoning),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             return {"label": label, "verdict": "ERROR", "score": -1, "reason": "timeout"}
         except Exception as exc:  # noqa: BLE001
             return {"label": label, "verdict": "ERROR", "score": -1, "reason": str(exc)[:60]}
@@ -162,7 +160,7 @@ def register(registry: ToolRegistry) -> None:
                 "n": {"type": "integer", "description": "Max seeds to try (default 6)"},
                 "as_system": {"type": "boolean", "description": "Apply the seed as the target system prompt (default true)"},
                 "max_seed_chars": {"type": "integer", "description": "Per-seed char cap (default 40000; ENI personas run ~35KB - keep this high or they get crippled)"},
-                "bandit": {"type": "boolean", "description": "Order seeds by a UCB1 bandit warmed from wb_runs/technique_stats.json (per target+category) and update it from the verdicts, instead of pure round-robin (default false)"},
+                "bandit": {"type": "boolean", "description": "Order seeds by a UCB1 bandit warmed from wb_runs/technique_stats.json (per target+category) and update it from the verdicts, instead of pure round-robin (default true; cold-start = fixed order)"},
                 "category": {"type": "string", "description": "Bandit bucket key paired with the target model (default 'seed')"},
                 "max_tokens": {"type": "integer"},
             },

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Coroutine
+from typing import Any, TypeVar
+
+T = TypeVar("T")
 
 
 def _default_concurrency() -> int:
@@ -23,7 +26,67 @@ DEFAULT_CONCURRENCY = _default_concurrency()
 
 
 _TRUNC_REASONS = {"length", "max_tokens", "model_length"}
+# Soft end-of-stream markers from BUG-001 salvage paths — NOT token truncation.
+_SOFT_STOP_REASONS = {"partial", "cancelled", "cancel", "error"}
 _TRUNC_CEILING = 8000
+
+
+def _looks_token_truncated(stop: str | None, empty: bool, reasoning: str | None) -> bool:
+    """True only when the model hit a token ceiling, not a soft/partial stop.
+
+    Empty answer + populated CoT used to always count as truncated, which made
+    mid-stream cancel salvages (stop=partial, reasoning-only) look truncated and
+    forced ERROR labels in profile_target / multi_fire. Soft stops are usable
+    partials and must be graded, not retried as length truncations.
+    """
+    if stop in _TRUNC_REASONS:
+        return True
+    if stop in _SOFT_STOP_REASONS:
+        return False
+    return empty and bool((reasoning or "").strip())
+
+# Outer asyncio.wait_for floors (seconds). Short tool defaults used to cancel mid-stream
+# CoT/refusals and surface false ERROR/network labels (BUG-001). Provider HTTP timeouts
+# remain the real deadline via build_provider(..., timeout=...).
+_MIN_OUTER_LLM_TIMEOUT = 120.0
+
+
+async def await_llm(
+    coro: Awaitable[T] | Coroutine[Any, Any, T],
+    timeout: float | None = None,
+    *,
+    floor: bool = True,
+) -> T:
+    """Await an LLM completion without cancelling a healthy stream.
+
+    Historical tools wrapped ``complete*`` in ``asyncio.wait_for(..., 30|45)``. That
+    cancels the task mid-SSE even after hundreds of tokens, producing CancelledError
+    and false network/ERROR verdicts (see docs/BUGS.md BUG-001).
+
+    Policy:
+    - Prefer the provider's HTTP timeout (httpx) as the only hard stop.
+    - If a caller still passes ``timeout``, floor it to at least 120s so long CoT
+      refusals can finish; never use sub-minute outer cancels on streaming calls.
+    - ``timeout <= 0`` or ``None`` → plain await (provider timeout only).
+    """
+    if timeout is None:
+        return await coro
+    try:
+        t = float(timeout)
+    except (TypeError, ValueError):
+        return await coro
+    if t <= 0:
+        return await coro
+    # Tool defaults use the safety floor, but an explicitly operator-selected
+    # deadline must remain enforceable (and keeps bounded fan-out from hanging).
+    hard = max(t, _MIN_OUTER_LLM_TIMEOUT) if floor else t
+    try:
+        return await asyncio.wait_for(coro, timeout=hard)
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(
+            f"LLM call exceeded outer timeout {hard:g}s (not a network failure; "
+            f"raise tool timeout or provider timeout)"
+        ) from exc
 
 
 async def complete_with_reasoning(provider, messages, system=None, max_tokens=1024, temperature=None):
@@ -58,7 +121,10 @@ async def complete_untruncated(
     )
     stop = getattr(provider, "last_stop_reason", None)
     empty = not (reply or "").strip()
-    truncated = stop in _TRUNC_REASONS or (empty and bool((reasoning or "").strip()))
+    # Token-budget truncation deserves a higher-max_tokens retry. Soft "partial"/
+    # cancelled stops (BUG-001 salvage) are NOT truncated — retrying them just
+    # re-spends budget and re-surfaces false ERROR labels.
+    truncated = _looks_token_truncated(stop, empty, reasoning)
     if truncated and max_tokens < ceiling:
         bumped = min(max_tokens * 2, ceiling)
         reply, reasoning = await complete_with_reasoning(
@@ -66,7 +132,7 @@ async def complete_untruncated(
         )
         stop = getattr(provider, "last_stop_reason", None)
         empty = not (reply or "").strip()
-        truncated = stop in _TRUNC_REASONS or (empty and bool((reasoning or "").strip()))
+        truncated = _looks_token_truncated(stop, empty, reasoning)
     return reply, reasoning, stop, truncated
 
 

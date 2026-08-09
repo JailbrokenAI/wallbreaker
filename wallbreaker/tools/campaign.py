@@ -7,7 +7,7 @@ from ..agent.messages import assistant, user
 from ..judging import grade
 from ..transforms import apply_chain
 from ._bandit import BanditStore, best_technique_by_family, stats_path
-from ._util import gather_capped
+from ._util import gather_capped, await_llm
 from .many_shot import _build_shots
 from .narrate import DEFAULT_CHARACTER, DEFAULT_GENRE, build_frame, build_opener
 from .registry import ToolContext, ToolRegistry
@@ -127,7 +127,11 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
     # TG3: classify the target model into a family at engagement time (R-D1)
     target_family = classify_family(ctx.config.target.model)
 
-    use_bandit = bool(args.get("bandit", False))
+    use_bandit = bool(args.get("bandit", True))
+    # An explicitly supplied ladder is already an operator-selected order;
+    # preserve it unless bandit reordering is explicitly requested.
+    if "ladder" in args and "bandit" not in args:
+        use_bandit = False
     store = None
     bandit = None
     if use_bandit:
@@ -283,15 +287,13 @@ async def _grid_sweep(args: dict, ctx: ToolContext) -> str:
         nonlocal done
         try:
             msgs = builder(behavior)
-            reply = await asyncio.wait_for(
-                target.complete(msgs, system=system, max_tokens=max_tokens),
+            reply = await await_llm(target.complete(msgs, system=system, max_tokens=max_tokens),
                 timeout=timeout,
             )
-            label, _score, reason, _s = await asyncio.wait_for(
-                grade(ctx.judge_endpoint, reply, payload=behavior, objective=behavior),
+            label, _score, reason, _s = await await_llm(grade(ctx.judge_endpoint, reply, payload=behavior, objective=behavior),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             label, reply, reason = "ERROR", "", "timeout"
         except Exception as exc:  # noqa: BLE001
             label, reply, reason = "ERROR", "", str(exc)[:50]
@@ -371,7 +373,7 @@ def register(registry: ToolRegistry) -> None:
             "type": "object",
             "properties": {
                 "category": {"type": "string", "description": "Dataset semantic category to sample"},
-                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench). Default harmbench."},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, sorrybench, xstest). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -383,7 +385,7 @@ def register(registry: ToolRegistry) -> None:
                     "items": {"type": "string"},
                     "description": "Limit which techniques run (plain, enc:base64, enc:zero_width, prefill, many_shot:16)",
                 },
-                "bandit": {"type": "boolean", "description": "Order the technique ladder by a UCB1 bandit posterior from wb_runs/technique_stats.json (per target+category) when prior stats exist, so techniques that cracked this target before run first; updates the posterior from this run's verdicts (default false; falls back to the fixed escalation order)"},
+                "bandit": {"type": "boolean", "description": "Order the technique ladder by a UCB1 bandit posterior from wb_runs/technique_stats.json (per target+category) when prior stats exist, so techniques that cracked this target before run first; updates the posterior from this run's verdicts (default true; falls back to the fixed escalation order when no prior stats)"},
                 "seed": {"type": "integer"},
                 "system": {"type": "string"},
                 "max_tokens": {"type": "integer"},
@@ -411,7 +413,7 @@ def register(registry: ToolRegistry) -> None:
                     "items": {"type": "string"},
                     "description": "Sample 'n' behaviors per category and add a technique x category breakdown",
                 },
-                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench). Default harmbench."},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, sorrybench, xstest). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},

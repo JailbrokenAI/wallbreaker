@@ -18,6 +18,51 @@ class ProviderError(Exception):
 
 DEFAULT_TIMEOUT = 120.0
 
+
+def resolve_timeout(
+    endpoint_timeout: float | None = None,
+    override: float | None = None,
+    default: float = DEFAULT_TIMEOUT,
+) -> float:
+    """Effective HTTP timeout used by ``build_provider``.
+
+    Config often stores ``timeout = 0`` meaning "unset". Operators then see ``0.0``
+    in logs/UI while the real deadline is still 120s (audit P1-4). Always report
+    the resolved value.
+    """
+    for candidate in (endpoint_timeout, override, default):
+        try:
+            val = float(candidate) if candidate is not None else 0.0
+        except (TypeError, ValueError):
+            continue
+        if val > 0:
+            return val
+    return float(default)
+
+
+def classify_http_error(url: str, exc: BaseException) -> str:
+    """Map transport failures to precise ProviderError messages (BUG-001).
+
+    Avoid labeling every httpx failure as "network error" — timeouts, connect
+    failures, and mid-stream teardown are different operator actions.
+    """
+    name = type(exc).__name__
+    low = str(exc).lower()
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover
+        httpx = None  # type: ignore
+    if (httpx is not None and isinstance(exc, httpx.TimeoutException)) or "timeout" in low or "timed out" in low:
+        return f"timeout from {url}: {name}: {exc}"
+    if (httpx is not None and isinstance(exc, httpx.ConnectError)) or (
+        "connect" in low and "http" not in low[:8]
+    ):
+        return f"connect error from {url}: {name}: {exc}"
+    if "cancel" in low:
+        return f"cancelled from {url}: {name}: {exc}"
+    return f"http error from {url}: {name}: {exc}"
+
+
 # Keep-alive pool sizing for the persistent per-provider client. Big enough that a wide
 # battery fan-out (best_of_n, system_sweep) reuses warm connections instead of dialing a new
 # TLS session per fire, small enough to stay under provider connection ceilings.
@@ -222,6 +267,34 @@ class Provider(ABC):
             stream=True,
         )
         started = time.monotonic()
+
+        def _finalize_partial(status: str, error: str = "") -> tuple[str, str]:
+            text = "".join(text_chunks)
+            reasoning = "".join(reasoning_chunks)
+            if reasoning and text.startswith("[reasoning-only response]"):
+                text = ""
+            if not stop_reasons:
+                stop_reasons.append("partial" if status == "partial" else "error")
+            self.last_stop_reason = stop_reasons[-1] if stop_reasons else None
+            self.last_completion_empty = not bool(text.strip())
+            trace_inference_response(
+                inference_id,
+                status=status,
+                text=text,
+                reasoning=reasoning,
+                error=error,
+                duration_ms=round((time.monotonic() - started) * 1000, 3),
+                usage_events=usage_events,
+                stop_reasons=stop_reasons,
+                stream_event_counts=stream_counts,
+                stream_events=stream_events,
+            )
+            if text or reasoning:
+                from ..model_catalog import record_model_success
+
+                record_model_success(self.endpoint)
+            return text, reasoning
+
         try:
             async for event in self.stream(
                 messages, tools=None, system=system, max_tokens=max_tokens,
@@ -251,7 +324,26 @@ class Provider(ABC):
                     stream_counts["stop"] += 1
                     stream_events.append({"type": "stop", "stop_reason": event.stop_reason})
                     trace_inference_event(inference_id, stream_events[-1])
+        except asyncio.CancelledError as exc:
+            # Always re-raise CancelledError so operator stop / task.cancel() can end the run.
+            # Still finalize the inference trace so sessions keep any partial text/reasoning
+            # (BUG-001 observability) without swallowing the cancel (which made "结束任务" hang
+            # inside long tools like profile_target).
+            _finalize_partial(
+                "partial" if (text_chunks or reasoning_chunks) else "error",
+                error=f"CancelledError: {exc}",
+            )
+            raise
         except BaseException as exc:
+            # Prefer partial success over total failure when the model already answered
+            # (answer channel OR reasoning/CoT channel).
+            if (text_chunks or reasoning_chunks) and not isinstance(
+                exc, (KeyboardInterrupt, SystemExit)
+            ):
+                return _finalize_partial(
+                    "partial",
+                    error=f"{type(exc).__name__}: {exc}",
+                )
             trace_inference_response(
                 inference_id,
                 status="error",

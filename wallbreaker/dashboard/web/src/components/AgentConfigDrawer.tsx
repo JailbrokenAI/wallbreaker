@@ -27,7 +27,7 @@ export function AgentConfigDrawer({
   onChange,
   disabled = false,
   onSave,
-  saveLabel = "Save defaults",
+  saveLabel = "保存为默认",
   saving = false,
   status = "",
 }: {
@@ -68,13 +68,13 @@ export function AgentConfigDrawer({
   return (
     <details className="config-drawer">
       <summary>
-        <span>Agent configuration</span>
+        <span>智能体配置</span>
         <span className="mono muted">
-          {value.max_rounds} rounds | {value.max_tokens} tokens | {value.concurrency} concurrent | {value.request_delay_ms} ms
+          {value.max_rounds} 轮 | {value.max_tokens} tokens | 并发 {value.concurrency} | {value.request_delay_ms} ms
         </span>
       </summary>
       <div className="config-drawer-body">
-        <label className="fld">Max rounds</label>
+        <label className="fld">最大轮数</label>
         <input
           type="number"
           min={1}
@@ -85,7 +85,7 @@ export function AgentConfigDrawer({
           onBlur={() => restoreEmpty("max_rounds")}
           disabled={disabled}
         />
-        <label className="fld">Max tokens per response</label>
+        <label className="fld">每次响应最大 tokens</label>
         <input
           type="number"
           min={1}
@@ -96,7 +96,7 @@ export function AgentConfigDrawer({
           onBlur={() => restoreEmpty("max_tokens")}
           disabled={disabled}
         />
-        <label className="fld">Concurrent inference requests</label>
+        <label className="fld">并发推理请求数</label>
         <input
           type="number"
           min={1}
@@ -107,7 +107,7 @@ export function AgentConfigDrawer({
           onBlur={() => restoreEmpty("concurrency")}
           disabled={disabled}
         />
-        <label className="fld">Delay between request starts (ms)</label>
+        <label className="fld">请求启动间隔（毫秒）</label>
         <input
           type="number"
           min={0}
@@ -119,13 +119,13 @@ export function AgentConfigDrawer({
           disabled={disabled}
         />
         <div className="mono muted">
-          Applied across attacker, target, judge, and their tool-driven inference calls. Higher concurrency is faster; the delay spaces request starts to reduce rate-limit bursts.
+          作用于攻击端、目标、评判及其工具触发的推理调用。更高并发更快；间隔用于拉开请求起点，降低限流突发。
         </div>
         {(onSave || status) && (
           <div className="config-drawer-actions">
             {onSave && (
               <button type="button" className="mini-btn" disabled={disabled || saving} onClick={onSave}>
-                {saving ? "Saving..." : saveLabel}
+                {saving ? "保存中…" : saveLabel}
               </button>
             )}
             {status && <span className="mono muted">{status}</span>}

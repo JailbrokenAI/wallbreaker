@@ -6,7 +6,7 @@ import time
 from ..agent.messages import user
 from ..judging import grade
 from ..transforms import TRANSFORMS, apply_chain
-from ._util import complete_untruncated, gather_capped
+from ._util import complete_untruncated, gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 DEFAULT_CHAINS = [
@@ -60,8 +60,7 @@ async def _multi_fire(args: dict, ctx: ToolContext) -> str:
         try:
             encoded = apply_chain(base, chain) if chain else base
             start = time.monotonic()
-            reply, reasoning, stop, truncated = await asyncio.wait_for(
-                complete_untruncated(
+            reply, reasoning, stop, truncated = await await_llm(complete_untruncated(
                     provider,
                     [user(encoded)],
                     system=system,
@@ -70,21 +69,32 @@ async def _multi_fire(args: dict, ctx: ToolContext) -> str:
                 timeout=timeout,
             )
             dt = time.monotonic() - start
-            if truncated:
-                reason = f"truncated after retry (stop={stop or 'unknown'})"
+            grade_text = (reply or "").strip() or (reasoning or "").strip()
+            # BUG-001: soft partial / CoT-only answers are gradeable. Only hard-empty
+            # responses are ERROR; token-truncated content still gets a verdict.
+            if not grade_text:
+                reason = f"empty after fire (stop={stop or 'unknown'})"
                 ctx.emit(f"  {label_chain}: ERROR ({reason})")
                 return (label_chain, "ERROR", f"{dt:.1f}s", reason)
-            verdict, score, reason, _src = await asyncio.wait_for(
-                grade(
-                    ctx.judge_endpoint,
-                    reply,
-                    payload=encoded,
-                    objective=base,
-                    reasoning=reasoning,
-                ),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
+            try:
+                verdict, score, reason, _src = await await_llm(grade(
+                        ctx.judge_endpoint,
+                        grade_text,
+                        payload=encoded,
+                        objective=base,
+                        reasoning=reasoning,
+                    ),
+                    timeout=timeout,
+                )
+            except Exception as grade_exc:  # noqa: BLE001
+                from ..classify import classify
+
+                verdict, reason = classify(grade_text)
+                score = None
+                reason = f"{reason} (judge failed: {type(grade_exc).__name__})"
+            if truncated:
+                reason = f"{reason} [truncated stop={stop or 'unknown'}]"
+        except (TimeoutError, asyncio.TimeoutError):
             ctx.emit(f"  {label_chain}: ERROR (timeout)")
             return (label_chain, "ERROR", "-", "timeout")
         except Exception as exc:  # noqa: BLE001

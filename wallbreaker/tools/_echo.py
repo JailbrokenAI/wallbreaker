@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from ..judging import grade
 from ._conversation import Conversation
-from ._util import complete_with_reasoning
+from ._util import complete_with_reasoning, await_llm
 
 _CALL_TIMEOUT = 120.0
 
@@ -117,8 +117,9 @@ async def run_echo_chamber(provider, judge_endpoint, plan, *, convo=None, system
 
     Phase A plants the benign terms; phase B harvests, referencing only the target's prior
     sentences. Threads everything into a shared Conversation so crescendo/goat can hand in
-    their live convo and keep going. Each target call is wrapped in asyncio.wait_for and the
-    whole run is bounded by a max_calls budget; progress is emitted per turn.
+    their live convo and keep going. Each target call uses ``await_llm`` (provider HTTP
+    timeout + ≥120s outer floor; no short mid-stream cancel) and the whole run is bounded
+    by a max_calls budget; progress is emitted per turn.
     """
     if not isinstance(plan, EchoPlan):
         plan = plan_echo_chamber(str(plan))
@@ -153,8 +154,7 @@ async def run_echo_chamber(provider, judge_endpoint, plan, *, convo=None, system
         calls += 1
         convo.add_user(text)
         try:
-            reply, reasoning = await asyncio.wait_for(
-                complete_with_reasoning(
+            reply, reasoning = await await_llm(complete_with_reasoning(
                     provider, convo.messages, system=system, max_tokens=max_tokens
                 ),
                 timeout=call_timeout,
@@ -192,8 +192,7 @@ async def run_echo_chamber(provider, judge_endpoint, plan, *, convo=None, system
             _step(i=step_i, label="harvest", verdict="ERROR")
             continue
         try:
-            label, score, reason, _src = await asyncio.wait_for(
-                grade(
+            label, score, reason, _src = await await_llm(grade(
                     judge_endpoint, reply, payload=text, objective=plan.objective,
                     reasoning=reasoning,
                 ),

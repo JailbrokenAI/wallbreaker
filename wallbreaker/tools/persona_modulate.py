@@ -8,7 +8,7 @@ import os
 from .. import judging
 from ..agent.messages import user
 from ..state import load_state, state_path_for
-from ._util import complete_with_reasoning
+from ._util import complete_with_reasoning, await_llm
 from .registry import ToolContext, ToolRegistry
 
 MAX_ROUNDS = 4
@@ -173,7 +173,7 @@ async def _persona_modulate(args: dict, ctx: ToolContext) -> str:
     calls = 0
 
     async def _bounded(coro):
-        return await asyncio.wait_for(coro, timeout=_CALL_TIMEOUT)
+        return await await_llm(coro, timeout=_CALL_TIMEOUT)
 
     best = {
         "score": -1, "persona": "", "opener": "", "response": "", "reasoning": "",

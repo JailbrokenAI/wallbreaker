@@ -7,7 +7,7 @@ from ..agent.messages import assistant, user
 from ..judging import grade
 from ..persona_method import infer_domain, register_for
 from ..state import load_state, save_state, state_path_for
-from ._util import complete_untruncated, gather_capped
+from ._util import complete_untruncated, gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 GENERIC_OBJECTIVE = (
@@ -85,15 +85,20 @@ def _build_prompts(objective: str) -> list[tuple[str, str, str | None]]:
 
 
 async def _fire_one(ctx, prompt, prefill, system, max_tokens, timeout):
-    """One bounded probe on its OWN provider instance so last_stop_reason is race-free."""
+    """One probe on its OWN provider instance so last_stop_reason is race-free.
+
+    Uses the provider HTTP timeout instead of asyncio.wait_for(). wait_for() was cancelling
+    mid-stream after 45s while Grok still generated valid refusals, producing CancelledError
+    and false ERROR/network labels (BUG-001 / run-20260726-061510).
+    """
     from ..providers.factory import build_provider
 
-    provider = build_provider(ctx.config.target, timeout=timeout)
+    provider = build_provider(ctx.config.target, timeout=max(float(timeout), 60.0))
     messages = [user(prompt)]
     if prefill:
         messages.append(assistant(prefill))
-    reply, reasoning, stop, truncated = await asyncio.wait_for(
-        complete_untruncated(provider, messages, system, max_tokens), timeout=timeout
+    reply, reasoning, stop, truncated = await complete_untruncated(
+        provider, messages, system, max_tokens
     )
     return reply or "", reasoning or "", stop, truncated
 
@@ -104,24 +109,96 @@ async def _probe(ctx, name, prompt, prefill, objective, system, max_tokens, time
         reply, reasoning, stop, truncated = await _fire_one(
             ctx, prompt, prefill, system, max_tokens, timeout
         )
-    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
-        return {"name": name, "error": True, "label": "ERROR", "score": None,
-                "reply": "", "reasoning": "", "stop": None, "truncated": False}
-    if truncated:
-        return {"name": name, "error": True, "label": "ERROR", "score": None,
-                "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": True}
+    except (TimeoutError, asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+        return {
+            "name": name,
+            "error": True,
+            "label": "ERROR",
+            "score": None,
+            "reply": "",
+            "reasoning": "",
+            "stop": None,
+            "truncated": False,
+            "error_detail": f"{type(exc).__name__}: {exc}"[:240],
+        }
+
+    usable = bool((reply or "").strip() or (reasoning or "").strip())
+
+    # Hard empty after fire: no answer and no CoT — real failure.
+    if not usable:
+        return {
+            "name": name,
+            "error": True,
+            "label": "ERROR",
+            "score": None,
+            "reply": reply,
+            "reasoning": reasoning,
+            "stop": stop,
+            "truncated": truncated,
+            "error_detail": "empty response (no text and no reasoning)",
+        }
+
+    # Token-budget truncation with usable content: still grade the partial so
+    # operators get REFUSED/COMPLIED signal instead of a false ERROR/network.
+    # Soft partial stops (BUG-001) are already non-truncated via complete_untruncated.
     if name == "benign":
-        return {"name": name, "error": False, "label": "CONTROL", "score": None,
-                "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": False}
+        return {
+            "name": name,
+            "error": False,
+            "label": "CONTROL",
+            "score": None,
+            "reply": reply,
+            "reasoning": reasoning,
+            "stop": stop,
+            "truncated": truncated,
+        }
+
+    # Prefer answer text for grading; if only CoT leaked, grade that so
+    # reasoning-channel targets still produce a framing verdict.
+    grade_text = (reply or "").strip() or (reasoning or "").strip()
     try:
-        label, score, _reason, _src = await asyncio.wait_for(
-            grade(judge, reply, payload=prompt, objective=objective, reasoning=reasoning),
-            timeout=timeout,
+        label, score, _reason, _src = await await_llm(
+            grade(
+                judge,
+                grade_text,
+                payload=prompt,
+                objective=objective,
+                reasoning=reasoning,
+            ),
+            timeout=max(float(timeout), 60.0),
         )
-    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
-        label, score = "ERROR", None
-    return {"name": name, "error": False, "label": label, "score": score,
-            "reply": reply, "reasoning": reasoning, "stop": stop, "truncated": False}
+    except (TimeoutError, asyncio.TimeoutError):
+        # Judge timed out but target content exists — local classify fallback.
+        from ..classify import classify
+
+        label, _r = classify(grade_text)
+        score = None
+    except Exception as exc:  # noqa: BLE001
+        from ..classify import classify
+
+        label, _r = classify(grade_text)
+        score = None
+        return {
+            "name": name,
+            "error": False,
+            "label": label,
+            "score": score,
+            "reply": reply,
+            "reasoning": reasoning,
+            "stop": stop,
+            "truncated": truncated,
+            "error_detail": f"judge failed: {type(exc).__name__}: {exc}"[:240],
+        }
+    return {
+        "name": name,
+        "error": False,
+        "label": label,
+        "score": score,
+        "reply": reply,
+        "reasoning": reasoning,
+        "stop": stop,
+        "truncated": truncated,
+    }
 
 
 def _aggregate(name: str, shots: list[dict]) -> dict:
@@ -255,7 +332,7 @@ async def _profile_target(args: dict, ctx: ToolContext) -> str:
     objective = (args.get("objective") or "").strip() or GENERIC_OBJECTIVE
     system = args.get("system")
     max_tokens = int(args.get("max_tokens", 1024))
-    timeout = float(args.get("timeout", 45))
+    timeout = float(args.get("timeout", 120))
     concurrency = max(1, int(args.get("concurrency", 3)))
     samples = max(1, min(int(args.get("samples", 1)), 5))
     judge = ctx.judge_endpoint

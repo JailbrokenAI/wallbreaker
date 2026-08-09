@@ -10,7 +10,7 @@ from ..agent.messages import user
 from ..judging import grade
 from ..vault import BreakVault, label_rank
 from ._conversation import DECENT_SCORE, Conversation, grade_and_record
-from ._util import complete_with_reasoning, gather_capped
+from ._util import complete_with_reasoning, gather_capped, await_llm
 from .crescendo import _last_answer, _transcript
 from .registry import ToolContext, ToolRegistry
 
@@ -374,8 +374,7 @@ async def _siege(ctx: ToolContext, objective: str, endpoints: list, args: dict) 
                                       last_answer=last_answer or "(none)", cot=cot or "(none leaked)",
                                       pool=_format_pool(pool), verdict=verdict, score=score, frame=frame)
         try:
-            txt, _r = await asyncio.wait_for(
-                complete_with_reasoning(build_provider(ep, timeout=float(args.get("timeout", 90))),
+            txt, _r = await await_llm(complete_with_reasoning(build_provider(ep, timeout=float(args.get("timeout", 90))),
                                         [user(seed)], system=system, max_tokens=max_tokens),
                 timeout=_CALL_TIMEOUT,
             )
@@ -387,8 +386,7 @@ async def _siege(ctx: ToolContext, objective: str, endpoints: list, args: dict) 
         branch = _clone(convo)
         branch.add_user(cand)
         try:
-            reply, reasoning = await asyncio.wait_for(
-                complete_with_reasoning(target, branch.messages, max_tokens=max_tokens),
+            reply, reasoning = await await_llm(complete_with_reasoning(target, branch.messages, max_tokens=max_tokens),
                 timeout=_CALL_TIMEOUT,
             )
         except Exception as exc:  # noqa: BLE001

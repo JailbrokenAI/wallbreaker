@@ -25,14 +25,17 @@ class Transform:
     decode: Callable[[str], str] | None
     description: str
     lossy: bool = False
+    # Optional capability flags for defense-aware selection (Phase 5).
+    # ``low_perplexity``: fluent / natural-looking; safe against PPL filters.
+    low_perplexity: bool = False
 
     @property
     def reversible(self) -> bool:
         return self.decode is not None
 
 
-def _t(name, enc, dec, desc, lossy=False) -> tuple[str, Transform]:
-    return name, Transform(name, enc, dec, desc, lossy)
+def _t(name, enc, dec, desc, lossy=False, low_perplexity=False) -> tuple[str, Transform]:
+    return name, Transform(name, enc, dec, desc, lossy, low_perplexity)
 
 
 TRANSFORMS: dict[str, Transform] = dict(
@@ -110,6 +113,30 @@ TRANSFORMS: dict[str, Transform] = dict(
 
 def list_transforms() -> list[Transform]:
     return list(TRANSFORMS.values())
+
+
+# Phase 5: mark fluent transforms for perplexity-filter evasion routing.
+_LOW_PPL = {
+    "neutralize", "leet", "rot13", "rot47", "atbash", "reverse", "flip_fwo", "flip_fcw",
+    "homoglyph", "fullwidth", "smallcaps", "stringjoin", "payload_split", "delimiter",
+    "tokenbreak", "caesar3", "caesar5", "caesar13", "url", "nato", "morse",
+}
+for _name in _LOW_PPL:
+    _tr = TRANSFORMS.get(_name)
+    if _tr is not None:
+        _tr.low_perplexity = True
+
+
+
+
+def low_perplexity_transforms() -> list[str]:
+    """Names of transforms that stay fluent (safe vs perplexity / SmoothLLM filters)."""
+    return [n for n, t in TRANSFORMS.items() if getattr(t, "low_perplexity", False)]
+
+
+def high_perplexity_transforms() -> list[str]:
+    """Transforms a perplexity filter is likely to reject (noise / GCG-like)."""
+    return [n for n, t in TRANSFORMS.items() if not getattr(t, "low_perplexity", False)]
 
 
 def apply_chain(text: str, names: list[str]) -> str:

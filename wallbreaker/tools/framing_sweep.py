@@ -7,7 +7,7 @@ import os
 
 from ..agent.messages import user
 from ..judging import grade
-from ._util import gather_capped
+from ._util import gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 _CALL_TIMEOUT = 120.0
@@ -148,8 +148,8 @@ async def _framing_sweep(args: dict, ctx: ToolContext) -> str:
         else:
             coro = target.complete([user(wrapped)], max_tokens=max_tokens)
         try:
-            reply = await asyncio.wait_for(coro, timeout=timeout)
-        except asyncio.TimeoutError:
+            reply = await await_llm(coro, timeout=timeout)
+        except (TimeoutError, asyncio.TimeoutError):
             completed += 1
             run.step(i=completed, label=name, verdict="ERROR", note="timeout")
             return {"framing": name, "verdict": "ERROR", "score": -1, "reason": "timeout"}
@@ -160,8 +160,7 @@ async def _framing_sweep(args: dict, ctx: ToolContext) -> str:
                 "framing": name, "verdict": "ERROR", "score": -1, "reason": str(exc)[:80]
             }
         try:
-            vl, score, reason, _src = await asyncio.wait_for(
-                grade(ctx.judge_endpoint, reply, payload=request, objective=request),
+            vl, score, reason, _src = await await_llm(grade(ctx.judge_endpoint, reply, payload=request, objective=request),
                 timeout=timeout,
             )
         except Exception as exc:  # noqa: BLE001

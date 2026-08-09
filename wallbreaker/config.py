@@ -98,6 +98,12 @@ class Endpoint:
             return os.environ.get(self.api_key_env, "")
         return ""
 
+    def effective_timeout(self, override: float | None = None) -> float:
+        """HTTP timeout the provider will actually use (never the raw 0.0 sentinel)."""
+        from .providers.base import resolve_timeout
+
+        return resolve_timeout(self.timeout, override)
+
     def require_key(self) -> str:
         key = self.resolved_key()
         if not key:
@@ -125,35 +131,6 @@ class MCPServer:
 
 
 @dataclass
-class Config:
-    default_profile: str
-    profiles: dict[str, Endpoint] = field(default_factory=dict)
-    target: Endpoint | None = None
-    judge: Endpoint | None = None
-    art: Endpoint | None = None
-    mcp_servers: list[MCPServer] = field(default_factory=list)
-    # default attacker roster for the swarm tool (profile names); when empty the swarm
-    # falls back to every profile except the judge model.
-    swarm_roster: list[str] = field(default_factory=list)
-    path: Path | None = None
-    all_profiles: dict[str, Endpoint] = field(default_factory=dict)
-    disabled_profiles: set[str] = field(default_factory=set)
-    agent_profiles: dict[str, dict[str, "AgentProfile"]] = field(default_factory=dict)
-    active_agents: dict[str, "AgentAssignment"] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not self.all_profiles:
-            self.all_profiles = dict(self.profiles)
-
-    def profile(self, name: str | None = None) -> Endpoint:
-        key = name or self.default_profile
-        if key not in self.profiles:
-            available = ", ".join(self.profiles) or "(none)"
-            raise ConfigError(f"Unknown profile '{key}'. Available: {available}")
-        return self.profiles[key]
-
-
-@dataclass
 class AgentProfile:
     name: str
     role: str
@@ -171,6 +148,70 @@ class AgentAssignment:
     model: str = ""
 
 
+@dataclass
+class DaedalusSettings:
+    """Product-layer settings for the Daedalus vibecoding + liberation harness.
+
+    topology:
+      - dual   - attacker and target may be different models (default)
+      - single - target mirrors the attacker brain endpoint
+    memory_scope is always treated as global for now (product decision).
+
+    memory_embed_provider:
+      - offline (default) - hashed bag-of-features, zero network
+      - openai / openrouter / custom - OpenAI-compatible /v1/embeddings
+    """
+
+    codename: str = "Daedalus"
+    topology: str = "dual"
+    doctrine_enabled: bool = True
+    doctrine_file: str = "wallbreaker/doctrine/liberation_agent.md"
+    memory_scope: str = "global"
+    memory_root: str = "library/liberation"
+    cyber_gate_enabled: bool = True
+    # When True, Liberation Memory only persists wins that include a validate_rate
+    # (from the validate tool). COMPLIED one-shots skip global memory.
+    memory_require_validate: bool = True
+    # Liberation Memory similarity: offline hash by default; optional external embed.
+    memory_embed_provider: str = "offline"
+    memory_embed_model: str = ""
+    memory_embed_base_url: str = ""
+    memory_embed_api_key: str = ""
+    memory_embed_api_key_env: str = ""
+    memory_embed_profile: str = ""
+    memory_embed_dimensions: int = 0
+
+
+@dataclass
+class Config:
+    default_profile: str
+    profiles: dict[str, Endpoint] = field(default_factory=dict)
+    target: Endpoint | None = None
+    judge: Endpoint | None = None
+    art: Endpoint | None = None
+    mcp_servers: list[MCPServer] = field(default_factory=list)
+    # default attacker roster for the swarm tool (profile names); when empty the swarm
+    # falls back to every profile except the judge model.
+    swarm_roster: list[str] = field(default_factory=list)
+    path: Path | None = None
+    all_profiles: dict[str, Endpoint] = field(default_factory=dict)
+    disabled_profiles: set[str] = field(default_factory=set)
+    agent_profiles: dict[str, dict[str, AgentProfile]] = field(default_factory=dict)
+    active_agents: dict[str, AgentAssignment] = field(default_factory=dict)
+    daedalus: DaedalusSettings = field(default_factory=DaedalusSettings)
+
+    def __post_init__(self) -> None:
+        if not self.all_profiles:
+            self.all_profiles = dict(self.profiles)
+
+    def profile(self, name: str | None = None) -> Endpoint:
+        key = name or self.default_profile
+        if key not in self.profiles:
+            available = ", ".join(self.profiles) or "(none)"
+            raise ConfigError(f"Unknown profile '{key}'. Available: {available}")
+        return self.profiles[key]
+
+
 def doctor_report(config: Config) -> tuple[str, bool]:
     """Validate a loaded config and return (checklist, all_ok)."""
     lines: list[str] = ["Wallbreaker config check", "=" * 40]
@@ -186,6 +227,17 @@ def doctor_report(config: Config) -> tuple[str, bool]:
     check(
         f"default_profile '{config.default_profile}' exists",
         config.default_profile in config.profiles,
+    )
+    d = config.daedalus
+    check(
+        f"daedalus topology '{d.topology}'",
+        d.topology in ("dual", "single"),
+        (
+            f"codename={d.codename} memory={d.memory_scope} "
+            f"doctrine={'on' if d.doctrine_enabled else 'off'} "
+            f"cyber_gate={'on' if d.cyber_gate_enabled else 'off'} "
+            f"mem_validate={'on' if d.memory_require_validate else 'off'}"
+        ),
     )
     for name, ep in config.profiles.items():
         has_key = bool(ep.resolved_key())
@@ -339,6 +391,254 @@ def _load_mcp_servers(data: dict) -> list[MCPServer]:
     return [_mcp_server_from_table(s) for s in servers if isinstance(s, dict)]
 
 
+def _load_daedalus(data: dict) -> DaedalusSettings:
+    """Parse [daedalus] with env overrides for topology and doctrine."""
+    table = data.get("daedalus", {})
+    if not isinstance(table, dict):
+        table = {}
+    topology = str(table.get("topology", "dual")).strip().lower()
+    env_topo = (os.environ.get("WALLBREAKER_TOPOLOGY") or "").strip().lower()
+    if env_topo in ("dual", "single"):
+        topology = env_topo
+    if topology not in ("dual", "single"):
+        raise ConfigError(
+            f"[daedalus].topology must be 'dual' or 'single', got '{topology}'"
+        )
+    memory_scope = str(table.get("memory_scope", "global")).strip().lower() or "global"
+    # Product lock: only global is supported for now; accept aliases quietly.
+    if memory_scope in ("project", "local", "session"):
+        memory_scope = "global"
+    doctrine_enabled = bool(table.get("doctrine_enabled", True))
+    env_doc = os.environ.get("WALLBREAKER_DOCTRINE")
+    if env_doc is not None:
+        doctrine_enabled = env_doc.strip().lower() not in ("0", "false", "off", "no")
+    cyber_gate_enabled = bool(table.get("cyber_gate_enabled", True))
+    env_gate = os.environ.get("WALLBREAKER_CYBER_GATE")
+    if env_gate is not None:
+        cyber_gate_enabled = env_gate.strip().lower() not in ("0", "false", "off", "no")
+    memory_require_validate = bool(table.get("memory_require_validate", True))
+    env_mrv = os.environ.get("WALLBREAKER_MEMORY_REQUIRE_VALIDATE")
+    if env_mrv is not None:
+        memory_require_validate = env_mrv.strip().lower() not in (
+            "0",
+            "false",
+            "off",
+            "no",
+        )
+    # Embed provider: offline | openai | openrouter | custom (env overrides).
+    from .memory.embedders import normalize_embed_provider
+
+    memory_embed_provider = normalize_embed_provider(
+        str(table.get("memory_embed_provider", "offline") or "offline")
+    )
+    memory_embed_model = str(table.get("memory_embed_model", "") or "").strip()
+    memory_embed_base_url = str(table.get("memory_embed_base_url", "") or "").strip()
+    memory_embed_api_key = str(table.get("memory_embed_api_key", "") or "").strip()
+    memory_embed_api_key_env = str(
+        table.get("memory_embed_api_key_env", "") or ""
+    ).strip()
+    memory_embed_profile = str(table.get("memory_embed_profile", "") or "").strip()
+    try:
+        memory_embed_dimensions = int(table.get("memory_embed_dimensions", 0) or 0)
+    except (TypeError, ValueError):
+        memory_embed_dimensions = 0
+    if memory_embed_dimensions < 0:
+        memory_embed_dimensions = 0
+
+    return DaedalusSettings(
+        codename=str(table.get("codename", "Daedalus") or "Daedalus"),
+        topology=topology,
+        doctrine_enabled=doctrine_enabled,
+        doctrine_file=str(
+            table.get("doctrine_file", "wallbreaker/doctrine/liberation_agent.md")
+            or "wallbreaker/doctrine/liberation_agent.md"
+        ),
+        memory_scope="global",
+        memory_root=str(table.get("memory_root", "library/liberation") or "library/liberation"),
+        cyber_gate_enabled=cyber_gate_enabled,
+        memory_require_validate=memory_require_validate,
+        memory_embed_provider=memory_embed_provider,
+        memory_embed_model=memory_embed_model,
+        memory_embed_base_url=memory_embed_base_url,
+        memory_embed_api_key=memory_embed_api_key,
+        memory_embed_api_key_env=memory_embed_api_key_env,
+        memory_embed_profile=memory_embed_profile,
+        memory_embed_dimensions=memory_embed_dimensions,
+    )
+
+
+def write_daedalus_settings(config: Config, updates: dict) -> DaedalusSettings:
+    """Merge updates into config.daedalus and persist the [daedalus] TOML block."""
+    d = config.daedalus
+    topology = str(updates.get("topology", d.topology)).strip().lower()
+    if topology not in ("dual", "single"):
+        raise ConfigError(
+            f"[daedalus].topology must be 'dual' or 'single', got '{topology}'"
+        )
+    doctrine_enabled = d.doctrine_enabled
+    if "doctrine_enabled" in updates:
+        doctrine_enabled = bool(updates["doctrine_enabled"])
+    cyber_gate_enabled = d.cyber_gate_enabled
+    if "cyber_gate_enabled" in updates:
+        cyber_gate_enabled = bool(updates["cyber_gate_enabled"])
+    memory_require_validate = d.memory_require_validate
+    if "memory_require_validate" in updates:
+        memory_require_validate = bool(updates["memory_require_validate"])
+    codename = str(updates.get("codename", d.codename) or d.codename).strip() or "Daedalus"
+    doctrine_file = str(
+        updates.get("doctrine_file", d.doctrine_file) or d.doctrine_file
+    ).strip()
+    memory_root = str(updates.get("memory_root", d.memory_root) or d.memory_root).strip()
+    from .memory.embedders import normalize_embed_provider
+
+    memory_embed_provider = normalize_embed_provider(
+        str(
+            updates.get(
+                "memory_embed_provider",
+                getattr(d, "memory_embed_provider", "offline"),
+            )
+            or "offline"
+        )
+    )
+    memory_embed_model = str(
+        updates.get("memory_embed_model", getattr(d, "memory_embed_model", "")) or ""
+    ).strip()
+    memory_embed_base_url = str(
+        updates.get(
+            "memory_embed_base_url", getattr(d, "memory_embed_base_url", "")
+        )
+        or ""
+    ).strip()
+    if "memory_embed_api_key" in updates:
+        raw_key = updates.get("memory_embed_api_key")
+        if raw_key is None:
+            memory_embed_api_key = getattr(d, "memory_embed_api_key", "") or ""
+        else:
+            memory_embed_api_key = str(raw_key).strip()
+    else:
+        memory_embed_api_key = getattr(d, "memory_embed_api_key", "") or ""
+    memory_embed_api_key_env = str(
+        updates.get(
+            "memory_embed_api_key_env",
+            getattr(d, "memory_embed_api_key_env", ""),
+        )
+        or ""
+    ).strip()
+    memory_embed_profile = str(
+        updates.get(
+            "memory_embed_profile", getattr(d, "memory_embed_profile", "")
+        )
+        or ""
+    ).strip()
+    try:
+        memory_embed_dimensions = int(
+            updates.get(
+                "memory_embed_dimensions",
+                getattr(d, "memory_embed_dimensions", 0),
+            )
+            or 0
+        )
+    except (TypeError, ValueError):
+        memory_embed_dimensions = int(getattr(d, "memory_embed_dimensions", 0) or 0)
+    if memory_embed_dimensions < 0:
+        memory_embed_dimensions = 0
+    next_settings = DaedalusSettings(
+        codename=codename,
+        topology=topology,
+        doctrine_enabled=doctrine_enabled,
+        doctrine_file=doctrine_file or "wallbreaker/doctrine/liberation_agent.md",
+        memory_scope="global",
+        memory_root=memory_root or "library/liberation",
+        cyber_gate_enabled=cyber_gate_enabled,
+        memory_require_validate=memory_require_validate,
+        memory_embed_provider=memory_embed_provider,
+        memory_embed_model=memory_embed_model,
+        memory_embed_base_url=memory_embed_base_url,
+        memory_embed_api_key=memory_embed_api_key,
+        memory_embed_api_key_env=memory_embed_api_key_env,
+        memory_embed_profile=memory_embed_profile,
+        memory_embed_dimensions=memory_embed_dimensions,
+    )
+    config.daedalus = next_settings
+    if topology == "single":
+        apply_topology(config)
+    # Persist [daedalus] block when config has a path.
+    if config.path is not None:
+        import re as _re
+
+        from .provider_registry import _toml_value
+
+        values = {
+            "codename": next_settings.codename,
+            "topology": next_settings.topology,
+            "doctrine_enabled": next_settings.doctrine_enabled,
+            "doctrine_file": next_settings.doctrine_file,
+            "memory_scope": "global",
+            "memory_root": next_settings.memory_root,
+            "cyber_gate_enabled": next_settings.cyber_gate_enabled,
+            "memory_require_validate": next_settings.memory_require_validate,
+            "memory_embed_provider": next_settings.memory_embed_provider,
+            "memory_embed_model": next_settings.memory_embed_model,
+            "memory_embed_base_url": next_settings.memory_embed_base_url,
+            # Prefer env var name over writing raw secrets into toml.
+            "memory_embed_api_key_env": next_settings.memory_embed_api_key_env,
+            "memory_embed_profile": next_settings.memory_embed_profile,
+            "memory_embed_dimensions": next_settings.memory_embed_dimensions,
+        }
+        # Only persist inline api_key when no env name is set and a key was provided.
+        if next_settings.memory_embed_api_key and not next_settings.memory_embed_api_key_env:
+            values["memory_embed_api_key"] = next_settings.memory_embed_api_key
+        path = Path(config.path)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            text = ""
+        match = _re.search(r"(?m)^[ \t]*\[daedalus\][ \t]*(?:#.*)?$", text)
+        lines = ["[daedalus]"] + [
+            f"{key} = {_toml_value(value)}" for key, value in values.items()
+        ]
+        block = "\n".join(lines) + "\n\n"
+        if match:
+            nxt = _re.search(
+                r"(?m)^[ \t]*\[\[?[^\r\n]+?\]\]?[ \t]*(?:#.*)?$",
+                text[match.end() :],
+            )
+            end = match.end() + nxt.start() if nxt else len(text)
+            text = text[: match.start()] + block + text[end:]
+        else:
+            text = text.rstrip() + "\n\n" + block
+        path.write_text(text.rstrip() + "\n", encoding="utf-8")
+    return next_settings
+
+
+def apply_topology(config: Config) -> None:
+    """If topology=single, mirror attacker brain onto target (and agents.target)."""
+    if config.daedalus.topology != "single":
+        return
+    brain: Endpoint | None = None
+    # Prefer resolved default profile as the coding brain.
+    try:
+        brain = config.profile()
+    except ConfigError:
+        brain = None
+    if brain is None and config.profiles:
+        brain = next(iter(config.profiles.values()))
+    if brain is None:
+        return
+    # Clone brain into target with name="target".
+    import dataclasses as _dc
+
+    config.target = _dc.replace(brain, name="target")
+    # Keep agents.target assignment aligned if present.
+    atk = config.active_agents.get("attacker")
+    if atk is not None:
+        config.active_agents["target"] = AgentAssignment(
+            profile=atk.profile,
+            provider=atk.provider or brain.name,
+            model=atk.model or brain.model,
+        )
+
+
 def find_config(start: Path | None = None) -> Path | None:
     here = (start or Path.cwd()).resolve()
     for directory in (here, *here.parents):
@@ -451,6 +751,8 @@ def load_config(path: str | Path | None = None) -> Config:
     swarm_roster = swarm_table.get("roster", []) if isinstance(swarm_table, dict) else []
     swarm_roster = [str(n) for n in swarm_roster if str(n) in profiles]
 
+    daedalus = _load_daedalus(data)
+
     config = Config(
         default_profile=default_profile,
         profiles=profiles,
@@ -464,7 +766,9 @@ def load_config(path: str | Path | None = None) -> Config:
         disabled_profiles=disabled_profiles,
         agent_profiles=agent_profiles,
         active_agents=active_agents,
+        daedalus=daedalus,
     )
+    apply_topology(config)
     try:
         from .model_catalog import attach_catalog, catalog_path_for
 

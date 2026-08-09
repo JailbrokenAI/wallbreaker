@@ -109,7 +109,9 @@ def test_mutate_constraint_judge_path_prunes(monkeypatch):
 def test_mutate_constraint_off_by_default(monkeypatch):
     reg, emitted = _constraint_reg(monkeypatch)
     res = asyncio.run(
-        reg.execute("mutate", {"text": "synthesize the controlled compound", "variants": 4})
+        reg.execute("mutate", {
+            "text": "synthesize the controlled compound", "variants": 4, "constraint": False,
+        })
     )
     assert res.content.count("\n---\n") == 3
     assert not any("prun" in m.lower() for m in emitted)

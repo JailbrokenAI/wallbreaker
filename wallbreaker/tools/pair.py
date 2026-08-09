@@ -4,7 +4,7 @@ import asyncio
 
 from ..agent.messages import user
 from ..judging import grade
-from ._util import complete_with_reasoning, gather_capped
+from ._util import complete_with_reasoning, gather_capped, await_llm
 from .registry import ToolContext, ToolRegistry
 
 ATTACKER_SYSTEM = (
@@ -167,7 +167,7 @@ async def _run_pair(objective, attacker, target, judge_endpoint, rounds, branche
                 pass
 
     async def _bounded(coro):
-        return await asyncio.wait_for(coro, timeout=call_timeout)
+        return await await_llm(coro, timeout=call_timeout)
 
     async def _gen(seed: str):
         nonlocal calls

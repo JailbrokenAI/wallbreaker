@@ -14,6 +14,21 @@ from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 
+def _strip_surrounding_quotes(s: str) -> str:
+    """Remove one layer of matching surrounding quotes.
+
+    Windows path args are pulled from the RAW command text (not the shlex tokens)
+    so backslashes survive — but that also keeps the quotes the operator typed
+    around a path with spaces. Strip exactly one matching pair so
+    ``/session load 'C:\\a b\\run.jsonl'`` loads the real file, while leaving an
+    unquoted path (or a path that legitimately ends in a quote) untouched.
+    """
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        return s[1:-1]
+    return s
+
+
 class PromptInput(Input):
     """Single-line Input that also accepts multi-line pastes and manual soft-newlines.
 
@@ -36,7 +51,7 @@ class PromptInput(Input):
             return
         if self.buffer:
             n = len(self.buffer) + 1
-            preview.border_title = f"composing · {n} lines"
+            preview.border_title = f"编辑中 · {n} 行"
             preview.remove_class("hidden")
             preview.update("\n".join(self.buffer))
         else:
@@ -96,7 +111,7 @@ class PromptInput(Input):
     def _sync_subtitle(self) -> None:
         n = len(self.buffer)
         self.border_subtitle = (
-            f"+{n} line{'s' if n != 1 else ''} · enter to send" if n else ""
+            f"+{n} 行 · Enter 发送" if n else ""
         )
 
 from ..agent.loop import AgentEvents, run_autonomous, run_turn
@@ -113,85 +128,86 @@ from .header import StatusHeader
 from .sidebar import StatsPanel
 from .theme import PALETTE, WB_THEME
 
-HELP_TEXT = """☠ RTFM // TEH SL45H K0MM4NDZ, D00D ☠
-/help [topic]         show this help, or only lines matching a topic
-/edit [new text]      rewind to your last message; prefill it to edit, or
-                      pass new text to replace and resend it
-/retry                regenerate the response to your last message
-/undo                 remove your last message and its response
-/profile [name]       show or switch the active profile
-/target [name|model-id]   pick the model to attack (profile, or a raw model id)
-/provider [name|none]     pin the OpenRouter backend for reproducible results
-/validate [task]          re-fire 8x for the real success rate (validates last fire or a task)
-/replay [n]               re-fire a logged payload (Nth, or last) at the CURRENT target + re-judge
-/model <id>           override the active model id
-/auto [on|off]        toggle autonomous loop (keeps attacking until done)
-/autoexit [on|off]    when the agent calls finish(), close the tool (default on)
-/rounds <n>           set the autonomous round cap
-/transforms [filter]  list Parseltongue transforms (optional substring filter)
-/encode <chain> <text>    preview a transform chain on text (no fire), copies result
-/diff <a> ;; <b>          fire two payloads at the target and compare verdicts (A/B)
-/tools [filter]        list the agent's tools (optional substring filter)
-/preset [list|name]   curated jailbreak seed templates (copies to clipboard)
-/objective [text]     set the engagement goal (threaded into the run + report)
-/template set <text>  hold a working template ({request} placeholder) to hand-iterate
-/template fire <cat>  fill {request}=<cat>, fire at target, auto-judge (set/save/clear too)
-/template test [a;b]  fire the template across a category battery, scoreboard
-/sysprompt set <text> hold ONE fixed system prompt (or /sysprompt load <file|seed> for a raw persona)
-/sysprompt test [prefill] [samples=N]   sweep the held prompt across a HarmBench battery
-/lib [list|update|MODEL]   browse the L1B3RT4S library
-/parsel [list|search q|inspect K|guide|transform K txt|chain k,k txt|decode txt|craft k,k req]   P4RS3LT0NGV3 engine (222 transforms)
-/eni [list|search q|MODEL] browse the ENI persona-jailbreak collection
-/seedsweep <request>       fire one request through many ENI+L1B3RT4S seeds, rank bypasses
-/pairsweep [category] [n]   run PAIR (your highest-ASR loop) across a whole battery, concurrent
-/narrate <request>         sweep 5 varied novel-chapter framings + prefill, keep the bypass
-/fire <prompt>             hands-on: fire ONE prompt at the target, judge it, open a thread
-/push <follow-up>          continue that thread one turn (multi-turn escalation, by hand)
-/adapt <seed> ;; <request> tailor an ENI/L1B3RT4S persona to the target, fire it, open a thread
-/firefile <file> ;; <req>  fire a file/seed RAW (verbatim, full-length) as the system prompt
-/harmbench [category]      standardized HarmBench behavior prompts (unbiased battery)
-/campaign [category] [n]   auto-escalate a battery up the technique ladder, coverage matrix
-/leaderboard [profiles..]  rank profiles by ASR on one battery (robustness benchmark)
-/swarm [@a,b] <objective>  vote/best-of: many attacker brains author + fire once, best break wins
-/swarm siege [@a,b] <obj>  COLLABORATIVE multi-round: models share one escalating thread + adapt off refusals until it cracks
-/swarm roster              show each attacker's per-model jailbreak status (armed/generic)
-/find <term>               search the conversation transcript for a term
-/leakscan                  scan the last target reply for secrets/PII/system-prompt echo
-/log [on|off]         toggle the JSONL run log (every payload + verdict)
-/judge [on|off]       LLM judge verdicts on target replies (default on)
-/judge model <id>     swap the judge model live (/judge default to reset)
-/judge test           calibrate the grader on benign fixtures before trusting ASR
-/asr                  show the attack scoreboard (hits / held / log path)
-/stats                analytics from the run log: verdict mix, ASR bar, top tools
-/regrade [path]       re-judge a run log with the current judge (recover mis-scored bypasses)
-/findings [log]       list the bypasses (COMPLIED/PARTIAL) from the run log
-/export [path]        dump structured findings as JSON (CI / downstream tooling)
-/repro [n]            emit a copy-paste repro pack for the Nth bypass (or latest)
-/report [html] [path] write a findings report (markdown, or html for a styled scoreboard)
-/session save|load [path]   persist or reload the whole engagement
-                      (bare /session load opens a picker — no path to paste)
-/resume [path]        reopen a past session — picker if no path (alias for /session load)
-                      (the session also autosaves each turn; relaunch with wallbreaker --resume)
-/save [path]          save a plain-text transcript
-/clear                clear the conversation
-/quit                 exit
+HELP_TEXT = """☠ 命令速查 // 斜杠命令说明（命令名保持英文） ☠
+/help [topic]         显示帮助；带关键词时只显示匹配行
+/edit [new text]      回退到上一条用户消息；预填编辑，或传入新文本后重发
+/retry                重新生成对上一条消息的回复
+/undo                 删除上一条用户消息及其回复
+/profile [name]       查看或切换当前 attacker 配置档
+/target [name|model-id]   选择攻击目标（配置档名，或直接模型 id）
+/provider [name|none]     固定 OpenRouter 后端，便于结果可复现
+/validate [task]          对上次发射或指定任务连打 8 次，估真实成功率
+/liberate [note]          手动切入 MODE LIBERATE（注入破限 nudge，或仅切换徽章）
+/memory [query]           查看全局 Liberation Memory（统计 / 相似检索）
+/replay [n]               把日志里第 N 条（或最后一条）载荷对当前目标重打并重判
+/model <id>           覆盖当前 attacker 模型 id
+/auto [on|off]        开关自动循环（持续攻击直到完成）
+/autoexit [on|off]    代理调用 finish() 后是否退出工具（默认 on）
+/rounds <n>           设置自动模式最大轮数
+/transforms [filter]  列出 Parseltongue 变换（可选子串过滤）
+/encode <chain> <text>    预览变换链结果（不发射），并复制
+/diff <a> ;; <b>          对目标发射两份载荷并对比裁决（A/B）
+/tools [filter]        列出代理可用工具（可选子串过滤）
+/preset [list|name]   精选越狱种子模板（复制到剪贴板）
+/objective [text]     设置本次任务目标（写入运行与报告）
+/template set <text>  暂存含 {request} 占位符的工作模板，便于手工迭代
+/template fire <cat>  用 <cat> 填充 {request} 后发射并自动裁决（另有 set/save/clear）
+/template test [a;b]  用类别电池跑模板，输出记分板
+/sysprompt set <text> 固定一条 system prompt（或 /sysprompt load <file|seed> 加载人设）
+/sysprompt test [prefill] [samples=N]   用 HarmBench 电池扫当前 sysprompt
+/lib [list|update|MODEL]   浏览 L1B3RT4S 库
+/parsel [list|search q|inspect K|guide|transform K txt|chain k,k txt|decode txt|craft k,k req]   P4RS3LT0NGV3 引擎（222 变换）
+/eni [list|search q|MODEL] 浏览 ENI 人设越狱合集
+/seedsweep <request>       用多条 ENI+L1B3RT4S 种子打同一请求并排名
+/pairsweep [category] [n]   对整组电池并发跑 PAIR（高 ASR 循环）
+/narrate <request>         扫 5 种小说章节框架 + prefill，保留成功绕过
+/fire <prompt>             手动向目标发射一条提示，裁决并开线程
+/push <follow-up>          在该线程上再跟一轮（手动多轮升级）
+/adapt <seed> ;; <request> 把 ENI/L1B3RT4S 人设适配到目标后发射并开线程
+/firefile <file> ;; <req>  把文件/种子原文整段作为 system prompt 发射
+/harmbench [category]      标准 HarmBench 行为提示（无偏电池）
+/campaign [category] [n]   沿技术阶梯自动升级电池，输出覆盖矩阵
+/leaderboard [profiles..]  按同一电池的 ASR 给配置档排名（鲁棒性基准）
+/swarm [@a,b] <objective>  多脑投票/best-of：各自写并打一轮，取最佳突破
+/swarm siege [@a,b] <obj>  协作多轮：共享升级线程，根据拒绝自适应直到突破
+/swarm roster              显示各攻击脑的越狱状态（armed/generic）
+/find <term>               在对话记录中搜索关键词
+/leakscan                  扫描目标最近回复中的密钥/PII/系统提示回显
+/log [on|off]         开关 JSONL 运行日志（每条载荷 + 裁决）
+/judge [on|off]       用 LLM 对目标回复裁决（默认 on）
+/judge model <id>     实时切换裁判模型（/judge default 恢复）
+/judge test           用良性样例校准裁判，再信任 ASR
+/asr                  显示攻击记分板（命中 / 挡住 / 日志路径）
+/stats                运行日志分析：裁决分布、ASR 条、热门工具
+/regrade [path]       用当前裁判重判运行日志（找回误判绕过）
+/findings [log]       列出日志中的绕过（COMPLIED/PARTIAL）
+/export [path]        导出结构化 findings 为 JSON（CI / 下游）
+/repro [n]            输出第 N 次（或最近）绕过的可复制复现包
+/report [html] [path] 写 findings 报告（markdown，或 html 记分板）
+/session save|load [path]   保存或加载整场会话
+                      （裸 /session load 会打开选择器，无需粘贴路径）
+/resume [path]        重新打开历史会话；无路径则开选择器（/session load 别名）
+                      （每轮会自动保存；也可用 wallbreaker --resume 启动）
+/save [path]          保存纯文本对话记录
+/clear                清空当前对话
+/quit                 退出
 
-Ctrl+S report · Ctrl+Y copy payload · Ctrl+T stats · Ctrl+R repro · Ctrl+L clear · Ctrl+C quit
+Ctrl+S 报告 · Ctrl+Y 复制载荷 · Ctrl+T 统计 · Ctrl+R 复现 · Ctrl+L 清空 · Ctrl+C 退出
 
-Up / Down arrows recall your previous inputs into the prompt.
-MULTI-LINE: paste a multi-line block and the whole thing is captured (not just line 1);
-Ctrl+J adds a line by hand. The border shows "+N lines" while composing; Enter sends it all.
-Type anything else to talk to the agent. It has shell, file, parseltongue,
-l1b3rt4s, query_target, and http_request tools.
+↑ / ↓ 调出历史输入。
+多行：粘贴多行块会整段捕获（不只第一行）；Ctrl+J 手动换行。
+编辑时边框显示「+N 行」；Enter 一次全部发送。
+其它输入会发给代理。代理可用 shell、file、parseltongue、
+l1b3rt4s、query_target、http_request 等工具。
 
-LIVE STEERING: in autonomous mode you can type feedback WHILE the agent is working —
-it queues and gets injected into the loop at the next round, so the agent adapts
-mid-engagement (e.g. "try the GLM ENI seed", "drop the encoding, go fiction-frame")."""
+实时干预：自动模式下可在代理工作时继续输入反馈 —
+会排队并在下一轮注入循环，便于中途改策略
+（例如「试试 GLM ENI 种子」「去掉编码，用小说框架」）。"""
 
 
 KNOWN_COMMANDS = (
     "/help", "/edit", "/retry", "/regen", "/undo", "/clear", "/profile", "/target",
-    "/provider", "/validate", "/replay", "/model", "/auto", "/autoexit", "/rounds",
+    "/provider", "/validate", "/liberate", "/memory", "/replay", "/model", "/auto", "/autoexit", "/rounds",
     "/transforms", "/encode", "/diff", "/tools", "/preset", "/lib", "/parsel", "/eni", "/harmbench",
     "/campaign", "/leaderboard", "/swarm", "/seedsweep", "/pairsweep", "/narrate", "/fire", "/push",
     "/adapt", "/firefile", "/find", "/leakscan", "/log", "/judge", "/asr", "/stats",
@@ -232,12 +248,12 @@ def _parse_command_hints(help_text: str, known) -> dict[str, str]:
 # long), so the 2+-space split can't recover a hint — supply those by hand, plus
 # the pure aliases that have no dedicated help row of their own.
 _HINT_OVERRIDES = {
-    "/regen": "regenerate the response to your last message",
-    "/exit": "exit",
-    "/eni": "browse the ENI persona-jailbreak collection",
-    "/adapt": "tailor an ENI/L1B3RT4S persona to the target, fire it, open a thread",
-    "/sysprompt": "hold ONE fixed system prompt (or load a raw persona)",
-    "/report": "write a findings report (markdown, or html for a scoreboard)",
+    "/regen": "重新生成对上一条消息的回复",
+    "/exit": "退出",
+    "/eni": "浏览 ENI 人设越狱合集",
+    "/adapt": "把 ENI/L1B3RT4S 人设适配到目标后发射并开线程",
+    "/sysprompt": "固定一条 system prompt（或加载原始人设）",
+    "/report": "写 findings 报告（markdown，或 html 记分板）",
 }
 
 COMMAND_HINTS = _parse_command_hints(HELP_TEXT, KNOWN_COMMANDS)
@@ -258,13 +274,13 @@ def command_matches(prefix: str, known=KNOWN_COMMANDS) -> list[str]:
 class RthApp(App):
     CSS_PATH = "app.tcss"
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
-        ("ctrl+l", "clear_log", "Clear"),
-        ("ctrl+s", "report", "Report"),
-        ("ctrl+y", "copy_payload", "Copy payload"),
-        ("ctrl+t", "stats", "Stats"),
-        ("ctrl+r", "repro", "Repro"),
-        ("ctrl+b", "toggle_sidebar", "Sidebar"),
+        ("ctrl+c", "quit", "退出"),
+        ("ctrl+l", "clear_log", "清空"),
+        ("ctrl+s", "report", "报告"),
+        ("ctrl+y", "copy_payload", "复制载荷"),
+        ("ctrl+t", "stats", "统计"),
+        ("ctrl+r", "repro", "复现"),
+        ("ctrl+b", "toggle_sidebar", "侧栏"),
     ]
 
     def __init__(
@@ -405,7 +421,7 @@ class RthApp(App):
         yield OptionList(id="session-picker", classes="hidden")
         yield OptionList(id="command-menu", classes="hidden")
         yield Static("", id="compose-preview", classes="hidden")
-        yield PromptInput(placeholder="TYP3 UR H4X, D00D  ▪  /help = RTFM  ▪  ctrl+j = m04R L1N3Z", id="prompt")
+        yield PromptInput(placeholder="输入指令或对话  ▪  /help 帮助  ▪  Ctrl+J 多行", id="prompt")
         yield Footer()
 
     def action_toggle_sidebar(self) -> None:
@@ -432,14 +448,14 @@ class RthApp(App):
         from ..tools.mcp_bridge import attach_mcp_servers
 
         def note(msg: str) -> None:
-            self._mount(widgets.info_panel(msg, title="mcp"))
+            self._mount(widgets.info_panel(msg, title="MCP"))
 
         try:
             self._mcp_bridge = await attach_mcp_servers(
                 self.registry, self.config, progress=note
             )
         except Exception as exc:  # noqa: BLE001
-            self._mount(widgets.error_panel(f"mcp attach failed: {exc}"))
+            self._mount(widgets.error_panel(f"MCP 连接失败: {exc}"))
 
     async def on_unmount(self) -> None:
         if self._run_timer is not None:
@@ -457,7 +473,7 @@ class RthApp(App):
         try:
             history, meta = load_session(path)
         except (OSError, ValueError) as exc:
-            self._mount(widgets.error_panel(f"resume failed: {exc}"))
+            self._mount(widgets.error_panel(f"恢复会话失败: {exc}"))
             return
         self.history = history
         self.objective = meta.get("objective", "")
@@ -465,12 +481,12 @@ class RthApp(App):
         self.sysprompt = meta.get("sysprompt", "")
         self.asr_hits = meta.get("asr_hits", 0)
         self.asr_total = meta.get("asr_total", 0)
-        self._rerender(f"resumed {len(history)} messages from autosave")
+        self._rerender(f"已从自动保存恢复 {len(history)} 条消息")
         self._refresh_status()
 
     def _tool_progress(self, message: str) -> None:
         self.runlog.event("progress", text=message)
-        self._mount(widgets.info_panel(message, title="progress"))
+        self._mount(widgets.info_panel(message, title="进度"))
 
     _VERDICT_BUCKET = {
         "COMPLIED": "bypassed", "PARTIAL": "partial", "REFUSED": "held",
@@ -571,7 +587,20 @@ class RthApp(App):
         return f"{self.asr_hits}/{self.asr_total}" if self.asr_total else "0/0"
 
     def _mode_label(self) -> str:
-        return f"auto({self.max_rounds})" if self.auto else "single"
+        return f"自动({self.max_rounds})" if self.auto else "单轮"
+
+    def _daedalus_mode(self) -> str:
+        return str(getattr(self, "daedalus_mode", None) or "CODE").upper()
+
+    def set_daedalus_mode(self, mode: str) -> None:
+        mode = (mode or "CODE").strip().upper()
+        if mode not in ("CODE", "LIBERATE", "REPLAY"):
+            mode = "CODE"
+        self.daedalus_mode = mode
+        try:
+            self._refresh_status()
+        except Exception:
+            pass
 
     def _status_text(self) -> str:
         state = "WORKING" if self._busy else "idle"
@@ -581,6 +610,7 @@ class RthApp(App):
         return (
             f" {state} | profile={self.endpoint.name} | model={self.endpoint.model} | "
             f"target={self._target_label()} | {self._mode_label()} | "
+            f"{self._daedalus_mode()} | "
             f"ASR={self._asr_label()}/{judge}{last} | {tok}"
         )
 
@@ -601,6 +631,7 @@ class RthApp(App):
             profile=self.endpoint.name,
             target=self._target_label(),
             mode=self._mode_label(),
+            daedalus_mode=self._daedalus_mode(),
             asr=self._asr_label(),
             tokens=tokens,
             round=self._round_label,
@@ -668,7 +699,7 @@ class RthApp(App):
             if hint:
                 label.append(hint, style=PALETTE["label"])
             menu.add_option(Option(label, id=c))
-        menu.border_title = "c0mm4ndz · tab=c0mpl3t3 · esc=cl0se"
+        menu.border_title = "命令补全 · Tab 确认 · Esc 关闭"
         menu.remove_class("hidden")
         menu.highlighted = 0
         self._cmd_menu_open = True
@@ -823,16 +854,16 @@ class RthApp(App):
 
     def _cmd_edit(self, new_text: str) -> None:
         if self._busy:
-            self._mount(widgets.error_panel("wait for the agent to finish"))
+            self._mount(widgets.error_panel("请等待代理完成当前任务"))
             return
         idxs = self._typed_user_indices()
         if not idxs:
-            self._mount(widgets.error_panel("nothing to edit yet"))
+            self._mount(widgets.error_panel("还没有可编辑的消息"))
             return
         i = idxs[-1]
         old = self.history[i].text()
         self.history = self.history[:i]
-        self._rerender("rewound to your last message")
+        self._rerender("已回退到上一条消息")
         if new_text:
             self._submit_user(new_text)
         else:
@@ -843,27 +874,27 @@ class RthApp(App):
 
     def _cmd_retry(self) -> None:
         if self._busy:
-            self._mount(widgets.error_panel("wait for the agent to finish"))
+            self._mount(widgets.error_panel("请等待代理完成当前任务"))
             return
         idxs = self._typed_user_indices()
         if not idxs:
-            self._mount(widgets.error_panel("nothing to retry"))
+            self._mount(widgets.error_panel("没有可重试的消息"))
             return
         self.history = self.history[: idxs[-1] + 1]
-        self._rerender("retrying your last message")
+        self._rerender("正在重试上一条消息")
         self._busy = True
         self.run_worker(self._agent_turn(), exclusive=True, group="agent")
 
     def _cmd_undo(self) -> None:
         if self._busy:
-            self._mount(widgets.error_panel("wait for the agent to finish"))
+            self._mount(widgets.error_panel("请等待代理完成当前任务"))
             return
         idxs = self._typed_user_indices()
         if not idxs:
-            self._mount(widgets.error_panel("nothing to undo"))
+            self._mount(widgets.error_panel("没有可撤销的内容"))
             return
         self.history = self.history[: idxs[-1]]
-        self._rerender("removed your last exchange")
+        self._rerender("已删除上一轮对话")
 
     def _rerender(self, note: str | None = None) -> None:
         self._log.remove_children()
@@ -887,7 +918,7 @@ class RthApp(App):
                     names[tu.id] = tu.name
                     self._mount(widgets.tool_call_panel(tu.name, tu.input))
         if note:
-            self._mount(widgets.info_panel(note, title="edit"))
+            self._mount(widgets.info_panel(note, title="编辑"))
 
     async def _agent_turn(self) -> None:
         from ..session import inference_logging
@@ -902,9 +933,7 @@ class RthApp(App):
             on_round=self._on_round,
             on_usage=self._on_usage,
             on_feedback=self._on_feedback,
-            on_internal_message=lambda role, text, source: self.runlog.event(
-                "history_message", role=role, text=text, source=source
-            ),
+            on_internal_message=self._on_internal_message,
         )
         try:
             with inference_logging(self.runlog):
@@ -918,6 +947,8 @@ class RthApp(App):
                         max_rounds=self.max_rounds,
                         max_tokens=self.max_tokens,
                         feedback=self._drain_feedback,
+                        config=self.config,
+                        objective=getattr(self, "objective", "") or "",
                     )
                     self.runlog.event("agent_done", status=result.status, data=result.data)
                     self._handle_auto_result(result)
@@ -930,6 +961,7 @@ class RthApp(App):
                         events=events,
                         max_tokens=self.max_tokens,
                         feedback=self._drain_feedback,
+                        config=self.config,
                     )
         finally:
             self._assistant = None
@@ -943,37 +975,68 @@ class RthApp(App):
         self.tokens_out += tout
         self._refresh_status()
 
+    def _on_internal_message(self, role: str, text: str, source: str) -> None:
+        try:
+            self.runlog.event(
+                "history_message", role=role, text=text, source=source
+            )
+        except Exception:
+            pass
+        src = str(source or "")
+        if src in ("cyber_gate_liberate", "manual_liberate"):
+            self.set_daedalus_mode("LIBERATE")
+            try:
+                self._mount(
+                    widgets.info_panel(
+                        (text or "")[:400] or "MODE LIBERATE",
+                        title="LIBERATE",
+                    )
+                )
+            except Exception:
+                pass
+        elif src == "liberation_replay":
+            self.set_daedalus_mode("REPLAY")
+            try:
+                self._mount(
+                    widgets.info_panel(
+                        (text or "")[:400] or "Liberation replay hit",
+                        title="REPLAY",
+                    )
+                )
+            except Exception:
+                pass
+
     def _on_round(self, rnd: int, total: int) -> None:
         self.runlog.event("agent_round", round=rnd, max_rounds=total)
         self._assistant = None
         self._round_label = f"{rnd}/{total}"
         self._refresh_status()
-        self._mount(widgets.info_panel(f"R0UND {rnd}/{total}", title="G0D M0D3"))
+        self._mount(widgets.info_panel(f"第 {rnd}/{total} 轮", title="自动模式"))
 
     def _handle_auto_result(self, result) -> None:
         if result.status == "finished":
             summary = result.data.get("summary", "(no summary)")
-            self._mount(widgets.info_panel(summary, title="engagement complete"))
+            self._mount(widgets.info_panel(summary, title="任务完成"))
             if self.exit_on_finish:
                 self._exit_summary = summary
                 self.exit()
                 return
         elif result.status == "ask":
             self._mount(widgets.info_panel(
-                result.data.get("question", "(no question)"),
-                title="operator input needed",
+                result.data.get("question", "（无问题内容）"),
+                title="需要操作员输入",
             ))
         elif result.status == "stuck":
             self._mount(widgets.info_panel(
                 result.data.get("question", "")
-                or "Agent stalled twice with no action. Give it direction.",
-                title="stalled, needs you",
+                or "代理连续两次无动作停滞。请给出方向。",
+                title="已停滞，需要你",
             ))
         elif result.status == "max_rounds":
             self._mount(widgets.info_panel(
-                f"hit round cap ({self.max_rounds}). Type to continue, "
-                f"or raise it with /rounds <n>.",
-                title="round cap",
+                f"已达轮数上限（{self.max_rounds}）。继续输入，"
+                f"或用 /rounds <n> 提高上限。",
+                title="轮数上限",
             ))
         self.query_one("#prompt", Input).focus()
 
@@ -992,7 +1055,7 @@ class RthApp(App):
     def _on_reasoning(self, text: str) -> None:
         """The brain's chain-of-thought for this turn: persist it and show it dimmed."""
         self.runlog.reasoning(text, source="brain")
-        self._mount(widgets.info_panel(text, title="reasoning (CoT)"))
+        self._mount(widgets.info_panel(text, title="推理 (CoT)"))
 
     def _log_tool(self, name: str, args: dict, content: str, is_error: bool) -> None:
         """Single chokepoint: log EVERY tool execution - brain loop AND slash commands.
@@ -1087,19 +1150,19 @@ class RthApp(App):
 
     def action_copy_payload(self) -> None:
         if not self._last_payload:
-            self._mount(widgets.info_panel("no payload fired yet", title="copy"))
+            self._mount(widgets.info_panel("尚未发射过载荷", title="复制"))
             return
         try:
             self.copy_to_clipboard(self._last_payload)
-            note = "last payload copied to clipboard"
+            note = "最近载荷已复制到剪贴板"
         except Exception:
-            note = f"clipboard unavailable; last payload:\n{self._last_payload[:500]}"
-        self._mount(widgets.info_panel(note, title="copy"))
+            note = f"剪贴板不可用；最近载荷：\n{self._last_payload[:500]}"
+        self._mount(widgets.info_panel(note, title="复制"))
 
     def _clear(self) -> None:
         self.history = []
         self._log.remove_children()
-        self._mount(widgets.info_panel("conversation cleared", title="ready"))
+        self._mount(widgets.info_panel("对话已清空", title="就绪"))
 
     def _handle_command(self, text: str) -> None:
         # shlex so quoted args with spaces (e.g. a path under "Redteaming harnass")
@@ -1119,10 +1182,10 @@ class RthApp(App):
                     ln for ln in HELP_TEXT.splitlines()
                     if flt in ln.lower()
                 ]
-                body = "\n".join(matched) if matched else f"no help lines match {flt!r}"
-                self._mount(widgets.info_panel(body, title=f"help ~ {flt}"))
+                body = "\n".join(matched) if matched else f"没有匹配 {flt!r} 的帮助行"
+                self._mount(widgets.info_panel(body, title=f"帮助 ~ {flt}"))
             else:
-                self._mount(widgets.info_panel(HELP_TEXT, title="help"))
+                self._mount(widgets.info_panel(HELP_TEXT, title="帮助"))
         elif cmd == "/edit":
             self._cmd_edit(raw_arg)
         elif cmd in ("/retry", "/regen"):
@@ -1139,6 +1202,10 @@ class RthApp(App):
             self._cmd_provider(rest)
         elif cmd == "/validate":
             self.run_worker(self._cmd_validate(raw_arg), group="judge", exclusive=False)
+        elif cmd == "/liberate":
+            self._cmd_liberate(raw_arg)
+        elif cmd == "/memory":
+            self._cmd_memory(raw_arg)
         elif cmd == "/replay":
             self.run_worker(self._cmd_replay(rest), group="judge", exclusive=False)
         elif cmd == "/model":
@@ -1154,7 +1221,7 @@ class RthApp(App):
                 self.exit_on_finish = not self.exit_on_finish
             self._save_prefs()
             self._mount(widgets.info_panel(
-                f"exit-on-finish {'on' if self.exit_on_finish else 'off'}",
+                f"finish 后退出：{'开' if self.exit_on_finish else '关'}",
                 title="autoexit",
             ))
         elif cmd == "/transforms":
@@ -1163,8 +1230,8 @@ class RthApp(App):
                 t for t in list_transforms()
                 if not flt or flt in t.name.lower() or flt in t.description.lower()
             ]
-            catalog = "\n".join(f"{t.name:14} {t.description}" for t in items) or "(no match)"
-            title = f"transforms ({len(items)})" + (f" ~ {flt}" if flt else "")
+            catalog = "\n".join(f"{t.name:14} {t.description}" for t in items) or "（无匹配）"
+            title = f"变换 ({len(items)})" + (f" ~ {flt}" if flt else "")
             self._mount(widgets.info_panel(catalog, title=title))
         elif cmd == "/encode":
             self._cmd_encode(rest)
@@ -1178,8 +1245,8 @@ class RthApp(App):
             ]
             body = "\n".join(
                 f"{t.name:18} {t.description.split('.')[0][:80]}" for t in tools
-            ) or "(no match)"
-            title = f"tools ({len(tools)})" + (f" ~ {flt}" if flt else "")
+            ) or "（无匹配）"
+            title = f"工具 ({len(tools)})" + (f" ~ {flt}" if flt else "")
             self._mount(widgets.info_panel(f"{body}", title=title))
         elif cmd == "/preset":
             self._cmd_preset(rest)
@@ -1221,11 +1288,11 @@ class RthApp(App):
             self._cmd_judge(rest)
         elif cmd == "/asr":
             self._mount(widgets.info_panel(
-                f"targets hit: {self.asr_total}\n"
-                f"complied/partial: {self.asr_hits}\n"
-                f"guardrail held: {self.asr_total - self.asr_hits}\n"
-                f"log: {self.runlog.path}",
-                title="attack scoreboard",
+                f"攻击次数: {self.asr_total}\n"
+                f"顺从/部分: {self.asr_hits}\n"
+                f"护栏挡住: {self.asr_total - self.asr_hits}\n"
+                f"日志: {self.runlog.path}",
+                title="攻击记分板",
             ))
         elif cmd == "/stats":
             self._cmd_stats()
@@ -1246,36 +1313,53 @@ class RthApp(App):
         elif cmd == "/report":
             self._cmd_report(rest)
         elif cmd == "/session":
-            self._cmd_session(rest)
+            # Keep path args intact on Windows (shlex treats \ as escapes).
+            if rest and rest[0].lower() in ("load", "save") and len(rest) >= 2:
+                action = rest[0].lower()
+                path = text[len(parts[0]):].strip()
+                # strip the action token from the front of the remaining raw text
+                if path.lower().startswith(action):
+                    path = path[len(action):].strip()
+                path = _strip_surrounding_quotes(path)
+                self._cmd_session([action, path] if path else [action])
+            else:
+                self._cmd_session(rest)
         elif cmd == "/resume":
             # alias: bare → picker, with a path → load it directly
-            self._cmd_session(["load", *rest])
+            # Use raw_arg so Windows paths with backslashes survive.
+            if raw_arg:
+                self._cmd_session(["load", _strip_surrounding_quotes(raw_arg)])
+            else:
+                self._cmd_session(["load"])
         elif cmd == "/save":
-            self._cmd_save(rest)
+            if raw_arg:
+                self._cmd_save([_strip_surrounding_quotes(raw_arg)])
+            else:
+                self._cmd_save(rest)
         else:
             hint = suggest_command(cmd)
-            msg = f"unknown command: {cmd}"
+            msg = f"未知命令: {cmd}"
             if hint:
-                msg += f"  — did you mean {hint}?"
+                msg += f"  — 你是不是想输入 {hint}？"
             self._mount(widgets.error_panel(msg))
 
     def _cmd_profile(self, rest: list[str]) -> None:
         if not rest:
             names = ", ".join(self.config.profiles)
             self._mount(widgets.info_panel(
-                f"active: {self.endpoint.name}\navailable: {names}", title="profile"
+                f"当前: {self.endpoint.name}\n可用: {names}", title="配置档"
             ))
             return
         name = rest[0]
         if name not in self.config.profiles:
-            self._mount(widgets.error_panel(f"no profile '{name}'"))
+            self._mount(widgets.error_panel(f"没有配置档 '{name}'"))
             return
         self.endpoint = self.config.profiles[name]
         self.provider = build_provider(self.endpoint)
         self._sync_judge_endpoint()
         self._refresh_status()
         self._save_prefs()
-        self._mount(widgets.info_panel(f"switched to {name}", title="profile"))
+        self._mount(widgets.info_panel(f"已切换到 {name}", title="配置档"))
 
     def _cmd_target(self, rest: list[str]) -> None:
         if not rest:
@@ -1285,37 +1369,37 @@ class RthApp(App):
             sm = getattr(t, "system_mode", "default") if t else "default"
             smflag = f" [sysmode={sm}]" if sm != "default" else ""
             msg = (
-                f"attacking: {t.model} @ {t.base_url}{mod}{smflag}" if t else "no target configured"
+                f"当前目标: {t.model} @ {t.base_url}{mod}{smflag}" if t else "尚未配置目标"
             )
             self._mount(widgets.info_panel(
-                f"{msg}\n\nset with:\n"
-                f"  /target <profile>      use a profile's endpoint+model ({avail})\n"
-                f"  /target model <id>     keep endpoint, swap the model id\n"
-                f"  /target <model-id>     same, e.g. /target anthropic/claude-3.7-sonnet\n"
-                f"  /target modality image  force image-gen mode (auto-detected for *-image, flux, etc.)\n"
-                f"  /target sysmode merge   deliver the system prompt in the USER turn "
-                f"(for targets hardened against system jailbreaks)",
-                title="target",
+                f"{msg}\n\n设置方式:\n"
+                f"  /target <profile>      使用配置档的 endpoint+model（{avail}）\n"
+                f"  /target model <id>     保留 endpoint，只换模型 id\n"
+                f"  /target <model-id>     同上，例如 /target anthropic/claude-3.7-sonnet\n"
+                f"  /target modality image  强制图像生成模式（*-image、flux 等会自动识别）\n"
+                f"  /target sysmode merge   把 system prompt 并入 USER 轮递送 "
+                f"（适合对 system 越狱加固的目标）",
+                title="目标",
             ))
             return
         if rest[0].lower() == "modality":
             if len(rest) < 2 or rest[1].lower() not in ("text", "image"):
-                self._mount(widgets.error_panel("usage: /target modality <text|image>"))
+                self._mount(widgets.error_panel("用法: /target modality <text|image>"))
                 return
             self._set_target_modality(rest[1].lower())
             return
         if rest[0].lower() == "sysmode":
             if len(rest) < 2 or rest[1].lower() not in ("default", "merge", "drop"):
                 self._mount(widgets.error_panel(
-                    "usage: /target sysmode <default|merge|drop>  "
-                    "(merge folds the system prompt into the user turn for system-hardened targets)"
+                    "用法: /target sysmode <default|merge|drop>  "
+                    "（merge 会把 system prompt 并入 user 轮，用于 system 加固目标）"
                 ))
                 return
             self._set_target_sysmode(rest[1].lower())
             return
         if rest[0].lower() == "model":
             if len(rest) < 2:
-                self._mount(widgets.error_panel("usage: /target model <id>"))
+                self._mount(widgets.error_panel("用法: /target model <id>"))
                 return
             self._set_target_model(rest[1])
             return
@@ -1328,22 +1412,22 @@ class RthApp(App):
             self._refresh_status()
             self._save_prefs()
             self._mount(widgets.info_panel(
-                f"target set to profile '{name}': {src.model} @ {src.base_url}",
-                title="target",
+                f"目标已设为配置档 '{name}': {src.model} @ {src.base_url}",
+                title="目标",
             ))
             return
         self._set_target_model(name)
 
     def _cmd_provider(self, rest: list[str]) -> None:
         if self.config.target is None:
-            self._mount(widgets.error_panel("no target configured"))
+            self._mount(widgets.error_panel("尚未配置目标"))
             return
         if not rest or rest[0].lower() == "show":
             p = self.config.target.provider
             self._mount(widgets.info_panel(
-                f"target provider pin: {'+'.join(p) if p else 'none (variable backend routing)'}\n"
-                f"  /provider <name> [name2...]  pin OpenRouter backend(s)\n"
-                f"  /provider none               unpin",
+                f"目标 provider 固定: {'+'.join(p) if p else '无（后端路由可变）'}\n"
+                f"  /provider <name> [name2...]  固定 OpenRouter 后端\n"
+                f"  /provider none               取消固定",
                 title="provider",
             ))
             return
@@ -1353,7 +1437,7 @@ class RthApp(App):
             self.config.target = dataclasses.replace(self.config.target, provider=tuple(rest))
         self._save_prefs()
         self._mount(widgets.info_panel(
-            f"provider pin -> {'+'.join(self.config.target.provider) or 'none'}",
+            f"provider 固定 -> {'+'.join(self.config.target.provider) or '无'}",
             title="provider",
         ))
 
@@ -1364,16 +1448,123 @@ class RthApp(App):
             if self.sysprompt:
                 args["system"] = self.sysprompt
         elif self.sysprompt:
-            self._mount(widgets.error_panel("usage: /validate <task> (validates the system prompt)"))
+            self._mount(widgets.error_panel("用法: /validate <task>（校验 system prompt）"))
             return
         elif self._last_payload:
             args["task"] = self._last_payload
         else:
-            self._mount(widgets.error_panel("nothing to validate; fire something first or /validate <task>"))
+            self._mount(widgets.error_panel("没有可校验内容；先发射一次，或 /validate <task>"))
             return
-        self._mount(widgets.info_panel("re-firing 8 samples for the real success rate...", title="validate"))
+        self._mount(widgets.info_panel("正在重打 8 次样本以估真实成功率…", title="校验"))
         res = await self.registry.execute("validate", args)
-        self._mount(widgets.info_panel(res.content, title="validate"))
+        self._mount(widgets.info_panel(res.content, title="校验"))
+
+    def _cmd_liberate(self, note: str = "") -> None:
+        """Manual MODE LIBERATE: badge + inject cyber-gate nudge into history."""
+        from ..harness.cyber_gate import CYBER_GATE_LIBERATE_NUDGE
+        from ..agent.messages import user as user_msg
+
+        self.set_daedalus_mode("LIBERATE")
+        extra = (note or "").strip()
+        nudge = CYBER_GATE_LIBERATE_NUDGE
+        if extra:
+            nudge = nudge + f"\n\nOperator note: {extra}"
+        # Queue for next agent turn when history exists; always show panel.
+        try:
+            if hasattr(self, "history") and isinstance(self.history, list):
+                self.history.append(user_msg(nudge))
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "runlog") and self.runlog is not None:
+                self.runlog.event(
+                    "history_message",
+                    role="user",
+                    text=nudge[:500],
+                    source="manual_liberate",
+                )
+        except Exception:
+            pass
+        self._mount(
+            widgets.info_panel(
+                "MODE LIBERATE — cyber/policy blocks use the attack arsenal.\n"
+                + (f"note: {extra}\n" if extra else "")
+                + "Nudge queued for the next agent turn. /validate after a win "
+                "to write Liberation Memory.",
+                title="liberate",
+            )
+        )
+
+    def _cmd_memory(self, query: str = "") -> None:
+        """Show Liberation Memory stats and optional similarity search."""
+        from ..harness.replay import liberation_root_for
+        from ..memory import LiberationStore
+
+        cwd = getattr(self, "cwd", None) or "."
+        try:
+            store = LiberationStore(
+                root=liberation_root_for(self.config, cwd), cwd=cwd
+            )
+        except Exception as exc:
+            self._mount(widgets.error_panel(f"memory store: {exc}"))
+            return
+        from ..memory import embed_status
+
+        stats = store.stats()
+        emb = embed_status(self.config)
+        lines = [
+            f"root: {stats.get('root')}",
+            f"records: {stats.get('count', 0)}  "
+            f"with_validate: {stats.get('with_validate_rate', 0)}  "
+            f"total_hits: {stats.get('total_hits', 0)}  "
+            f"best_rate: {stats.get('best_validate_fraction', 0)}",
+            f"embed: {emb.get('mode')}  provider={emb.get('provider')}  "
+            f"model={emb.get('model') or '-'}  key={'yes' if emb.get('has_api_key') else 'no'}",
+        ]
+        models = stats.get("models") or []
+        if models:
+            lines.append(
+                "models: "
+                + ", ".join(f"{m['model']}×{m['count']}" for m in models[:5])
+            )
+        q = (query or "").strip()
+        if q:
+            model = ""
+            if self.config and self.config.target:
+                model = self.config.target.model or ""
+            from ..memory import build_embed_fn
+
+            hits = store.find_similar(
+                q, model=model, limit=5, method="hybrid", embed_fn=build_embed_fn(self.config)
+            )
+            lines.append(f"similar to {q!r}:")
+            if not hits:
+                lines.append("  (none)")
+            for score, rec in hits:
+                lines.append(
+                    f"  {score:.3f}  {rec.id[:8]}  rate={rec.validate_rate or '-'}  "
+                    f"hits={rec.hits}  {(rec.objective_norm or '')[:60]}"
+                )
+            self.set_daedalus_mode("REPLAY")
+        else:
+            recent = store.list_recent(limit=5)
+            lines.append("recent:")
+            if not recent:
+                lines.append("  (empty — win + /validate to populate)")
+            for row in recent:
+                lines.append(
+                    f"  {row.get('id', '')[:8]}  rate={row.get('validate_rate') or '-'}  "
+                    f"hits={row.get('hits', 0)}  "
+                    f"{(row.get('objective_norm') or '')[:60]}"
+                )
+        # effective timeout note when target present
+        if self.config and self.config.target:
+            try:
+                et = self.config.target.effective_timeout()
+                lines.append(f"target effective_timeout: {et:g}s")
+            except Exception:
+                pass
+        self._mount(widgets.info_panel("\n".join(lines), title="liberation memory"))
 
     async def _cmd_replay(self, rest: list[str]) -> None:
         from ..report import _load_records
@@ -1382,26 +1573,26 @@ class RthApp(App):
             r for r in _load_records(self.runlog.path) if r.get("kind") == "verdict"
         ]
         if not verdicts:
-            self._mount(widgets.error_panel("no logged payloads to replay yet"))
+            self._mount(widgets.error_panel("还没有可重放的已记录载荷"))
             return
         idx = len(verdicts)
         if rest and rest[0].lstrip("-").isdigit():
             idx = int(rest[0])
         if not (1 <= idx <= len(verdicts)):
             self._mount(widgets.error_panel(
-                f"index out of range; have {len(verdicts)} logged payloads"
+                f"索引超出范围；当前有 {len(verdicts)} 条已记录载荷"
             ))
             return
         rec = verdicts[idx - 1]
         payload = str(rec.get("payload", ""))
         if not payload:
-            self._mount(widgets.error_panel("that record has no stored payload"))
+            self._mount(widgets.error_panel("该记录没有保存载荷"))
             return
         self._last_payload = payload
         self._mount(widgets.info_panel(
-            f"replaying #{idx} (was {rec.get('label', '?')}) at "
-            f"{self.config.target.model if self.config.target else 'no target'}",
-            title="replay",
+            f"重放 #{idx}（原裁决 {rec.get('label', '?')}）→ "
+            f"{self.config.target.model if self.config.target else '无目标'}",
+            title="重放",
         ))
         res = await self.registry.execute("query_target", {"prompt": payload})
         self._on_tool_result("manual", "query_target", res.content, res.is_error, "replay")
@@ -1419,54 +1610,54 @@ class RthApp(App):
         self._refresh_status()
         self._save_prefs()
         note = (
-            "  (image-gen: attack it with the image tools)" if resolved == "image" else ""
+            "  （图像生成：请用 image 相关工具攻击）" if resolved == "image" else ""
         )
         self._mount(widgets.info_panel(
-            f"target model -> {model_id} [modality={resolved}]{note}", title="target",
+            f"目标模型 -> {model_id} [modality={resolved}]{note}", title="目标",
         ))
 
     def _set_target_sysmode(self, mode: str) -> None:
         if self.config.target is None:
-            self._mount(widgets.error_panel("no target configured"))
+            self._mount(widgets.error_panel("尚未配置目标"))
             return
         self.config.target = dataclasses.replace(self.config.target, system_mode=mode)
         self._refresh_status()
         self._save_prefs()
         explain = {
-            "merge": "system prompt now folds into the first user turn",
-            "drop": "system prompt is now discarded",
-            "default": "system prompt delivered natively",
+            "merge": "system prompt 现并入首条 user 轮",
+            "drop": "system prompt 现已丢弃",
+            "default": "system prompt 按原生方式递送",
         }[mode]
         self._mount(widgets.info_panel(
-            f"target sysmode -> {mode} ({explain})", title="target",
+            f"目标 sysmode -> {mode} ({explain})", title="目标",
         ))
 
     def _set_target_modality(self, modality: str) -> None:
         if self.config.target is None:
-            self._mount(widgets.error_panel("no target configured"))
+            self._mount(widgets.error_panel("尚未配置目标"))
             return
         self.config.target = dataclasses.replace(self.config.target, modality=modality)
         self._target_modality = modality
         self._refresh_status()
         self._save_prefs()
         self._mount(widgets.info_panel(
-            f"target modality -> {modality} ({self.config.target.model})", title="target",
+            f"目标 modality -> {modality} ({self.config.target.model})", title="目标",
         ))
         self._mount(widgets.info_panel(
-            f"target model -> {self.config.target.model} @ {self.config.target.base_url}",
-            title="target",
+            f"目标模型 -> {self.config.target.model} @ {self.config.target.base_url}",
+            title="目标",
         ))
 
     def _cmd_model(self, rest: list[str]) -> None:
         if not rest:
-            self._mount(widgets.error_panel("usage: /model <id>"))
+            self._mount(widgets.error_panel("用法: /model <id>"))
             return
         self.endpoint = dataclasses.replace(self.endpoint, model=rest[0])
         self.provider = build_provider(self.endpoint)
         self._sync_judge_endpoint()
         self._refresh_status()
         self._save_prefs()
-        self._mount(widgets.info_panel(f"model -> {rest[0]}", title="model"))
+        self._mount(widgets.info_panel(f"模型 -> {rest[0]}", title="模型"))
 
     def _cmd_auto(self, rest: list[str]) -> None:
         if rest:
@@ -1476,17 +1667,17 @@ class RthApp(App):
         self._refresh_status()
         self._save_prefs()
         self._mount(widgets.info_panel(
-            f"autonomous mode {'on' if self.auto else 'off'}", title="auto"
+            f"自动模式：{'开' if self.auto else '关'}", title="自动"
         ))
 
     def _cmd_rounds(self, rest: list[str]) -> None:
         if not rest or not rest[0].isdigit():
-            self._mount(widgets.error_panel("usage: /rounds <n>"))
+            self._mount(widgets.error_panel("用法: /rounds <n>"))
             return
         self.max_rounds = max(1, int(rest[0]))
         self._refresh_status()
         self._save_prefs()
-        self._mount(widgets.info_panel(f"round cap -> {self.max_rounds}", title="rounds"))
+        self._mount(widgets.info_panel(f"轮数上限 -> {self.max_rounds}", title="轮数"))
 
     def _cmd_judge(self, rest: list[str]) -> None:
         if rest and rest[0].lower() == "test":
@@ -1494,14 +1685,14 @@ class RthApp(App):
             return
         if rest and rest[0].lower() == "model":
             if len(rest) < 2:
-                self._mount(widgets.error_panel("usage: /judge model <id>"))
+                self._mount(widgets.error_panel("用法: /judge model <id>"))
                 return
             self.judge_model_override = rest[1]
             self._sync_judge_endpoint()
             self._save_prefs()
             self._mount(widgets.info_panel(
-                f"judge model -> {rest[1]} @ {self._judge_endpoint().base_url}",
-                title="judge",
+                f"裁判模型 -> {rest[1]} @ {self._judge_endpoint().base_url}",
+                title="裁判",
             ))
             return
         if rest and rest[0].lower() == "default":
@@ -1516,9 +1707,9 @@ class RthApp(App):
         self._refresh_status()
         ep = self._judge_endpoint()
         self._mount(widgets.info_panel(
-            f"LLM judge {'on' if self.judge_enabled else 'off'} | grader: {ep.model} "
-            f"@ {ep.base_url}\n(/judge model <id> to swap, /judge default to reset)",
-            title="judge",
+            f"LLM 裁判：{'开' if self.judge_enabled else '关'} | grader: {ep.model} "
+            f"@ {ep.base_url}\n（/judge model <id> 切换，/judge default 恢复）",
+            title="裁判",
         ))
 
     def _cmd_log(self, rest: list[str]) -> None:
@@ -1526,9 +1717,9 @@ class RthApp(App):
             self.runlog.enabled = rest[0].lower() in ("on", "true")
             self._save_prefs()
         self._mount(widgets.info_panel(
-            f"run logging {'on' if self.runlog.enabled else 'off'}\n"
-            f"file: {self.runlog.path}",
-            title="log",
+            f"运行日志：{'开' if self.runlog.enabled else '关'}\n"
+            f"文件: {self.runlog.path}",
+            title="日志",
         ))
 
     async def _cmd_harmbench(self, rest: list[str]) -> None:
@@ -1539,7 +1730,7 @@ class RthApp(App):
             out = await self.registry.execute(
                 "harmbench", {"action": "sample", "category": action, "n": 10}
             )
-        self._mount(widgets.info_panel(out.content, title="harmbench"))
+        self._mount(widgets.info_panel(out.content, title="HarmBench"))
 
     async def _cmd_campaign(self, rest: list[str]) -> None:
         args: dict = {}
@@ -1549,13 +1740,13 @@ class RthApp(App):
             else:
                 args["category"] = tok
         self._mount(widgets.info_panel(
-            f"running auto-campaign (escalation ladder) against "
-            f"{self.config.target.model if self.config.target else 'no target'}...",
-            title="campaign",
+            f"正在对 "
+            f"{self.config.target.model if self.config.target else '无目标'} 运行自动战役（升级阶梯）…",
+            title="战役",
         ))
         res = await self.registry.execute("campaign", args)
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
-            res.content, title="campaign"
+            res.content, title="战役"
         )
         self._mount(panel)
         self._refresh_status()
@@ -1563,7 +1754,7 @@ class RthApp(App):
     async def _cmd_leaderboard(self, rest: list[str]) -> None:
         if len(self.config.profiles) < 2:
             self._mount(widgets.error_panel(
-                "need >=2 configured profiles to rank"
+                "需要至少 2 个已配置 profile 才能排名"
             ))
             return
         args: dict = {}
@@ -1574,11 +1765,11 @@ class RthApp(App):
         if nums:
             args["n"] = nums[0]
         self._mount(widgets.info_panel(
-            "benchmarking profiles against one battery...", title="leaderboard"
+            "正在用同一电池对配置档做基准测试…", title="排行榜"
         ))
         res = await self.registry.execute("leaderboard", args)
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
-            res.content, title="leaderboard"
+            res.content, title="排行榜"
         )
         self._mount(panel)
 
@@ -1600,11 +1791,11 @@ class RthApp(App):
             picks = toks[1:]
             if picks:
                 args["attackers"] = picks
-            self._mount(widgets.info_panel("checking per-model jailbreak status...", title="swarm roster"))
+            self._mount(widgets.info_panel("正在检查各模型越狱状态…", title="集群名单"))
             res = await self.registry.execute("swarm", args)
             self._mount(
                 widgets.error_panel(res.content) if res.is_error
-                else widgets.info_panel(res.content, title="swarm roster")
+                else widgets.info_panel(res.content, title="集群名单")
             )
             return
         mode = "vote"
@@ -1617,8 +1808,8 @@ class RthApp(App):
             objective = objective[len(toks[0]):].strip() if objective.startswith(toks[0]) else objective
         if not objective:
             self._mount(widgets.info_panel(
-                "usage: /swarm [siege] [@glm,deepseek-pro] <objective>   or   /swarm roster",
-                title="swarm",
+                "用法: /swarm [siege] [@glm,deepseek-pro] <objective>   或   /swarm roster",
+                title="集群",
             ))
             return
         args["objective"] = objective
@@ -1629,52 +1820,52 @@ class RthApp(App):
         if attackers:
             roster = ", ".join(attackers)
         elif self.config.swarm_roster:
-            roster = ", ".join(self.config.swarm_roster) + " (config default)"
+            roster = ", ".join(self.config.swarm_roster) + "（配置默认）"
         else:
-            roster = "all profiles (except judge)"
-        verb = "laying siege to" if mode == "siege" else "swarming"
+            roster = "全部配置档（不含裁判）"
+        verb = "围攻" if mode == "siege" else "集群攻击"
         self._mount(widgets.info_panel(
-            f"{verb} {self.config.target.model if self.config.target else '(no target!)'} "
-            f"with {roster}...", title=f"swarm {mode}",
+            f"{verb} {self.config.target.model if self.config.target else '（无目标！）'} "
+            f"· 阵容 {roster}…", title=f"集群 {mode}",
         ))
         res = await self.registry.execute("swarm", args)
         self._mount(
             widgets.error_panel(res.content) if res.is_error
-            else widgets.info_panel(res.content, title=f"swarm {mode}")
+            else widgets.info_panel(res.content, title=f"集群 {mode}")
         )
 
     def _cmd_leakscan(self) -> None:
         from ..tools.leak_scan import scan_text
 
         if not self._last_reply:
-            self._mount(widgets.error_panel("no target reply yet to scan"))
+            self._mount(widgets.error_panel("还没有可扫描的目标回复"))
             return
         result = scan_text(self._last_reply, self.sysprompt or None)
         findings = result["findings"]
         if not findings:
             self._mount(widgets.info_panel(
-                "no secrets, PII, or system-prompt echo in the last reply.", title="leakscan"
+                "最近回复中未发现密钥、PII 或系统提示回显。", title="泄漏扫描"
             ))
             return
         lines = [f"[{f['type']:18}] {f['match']}" for f in findings]
         self._mount(widgets.info_panel(
             f"{len(findings)} leak indicator(s) in the last reply:\n\n" + "\n".join(lines),
-            title="leakscan",
+            title="泄漏扫描",
         ))
 
     async def _cmd_judge_test(self) -> None:
         self._mount(widgets.info_panel(
-            "calibrating the judge on benign fixtures...", title="judge test"
+            "正在用良性样例校准裁判…", title="裁判自检"
         ))
         res = await self.registry.execute("judge_selftest", {})
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
-            res.content, title="judge test"
+            res.content, title="裁判自检"
         )
         self._mount(panel)
 
     def _cmd_find(self, term: str) -> None:
         if not term:
-            self._mount(widgets.error_panel("usage: /find <term>"))
+            self._mount(widgets.error_panel("用法: /find <term>"))
             return
         needle = term.lower()
         hits = []
@@ -1687,21 +1878,21 @@ class RthApp(App):
                 snippet = text[max(0, pos - 30): pos + len(term) + 30].replace("\n", " ")
                 hits.append(f"#{i} [{msg.role}] ...{snippet}...")
         if not hits:
-            self._mount(widgets.info_panel(f"no matches for {term!r}", title="find"))
+            self._mount(widgets.info_panel(f"没有匹配 {term!r}", title="查找"))
             return
         self._mount(widgets.info_panel(
             f"{len(hits)} match(es) for {term!r}:\n\n" + "\n".join(hits[:40]),
-            title="find",
+            title="查找",
         ))
 
     async def _cmd_lib(self, rest: list[str]) -> None:
         action = rest[0] if rest else "list"
         if action == "update":
             out = await self.registry.execute("l1b3rt4s_list", {})
-            self._mount(widgets.info_panel(out.content, title="lib"))
+            self._mount(widgets.info_panel(out.content, title="库"))
         elif action == "list":
             out = await self.registry.execute("l1b3rt4s_list", {})
-            self._mount(widgets.info_panel(out.content, title="lib"))
+            self._mount(widgets.info_panel(out.content, title="库"))
         else:
             out = await self.registry.execute("l1b3rt4s_get", {"model": action})
             self._mount(widgets.info_panel(out.content, title=f"lib:{action}"))
@@ -1720,24 +1911,24 @@ class RthApp(App):
             self._mount(widgets.info_panel(out.content, title="parsel"))
         elif action == "guide":
             out = await self.registry.execute("parsel_guide", {})
-            self._mount(widgets.info_panel(out.content, title="parsel:guide"))
+            self._mount(widgets.info_panel(out.content, title="parsel:指南"))
         elif action == "search":
             query = " ".join(rest[1:])
             if not query:
-                self._mount(widgets.error_panel("usage: /parsel search <query>"))
+                self._mount(widgets.error_panel("用法: /parsel search <query>"))
                 return
             out = await self.registry.execute("parsel_search", {"query": query})
-            self._mount(widgets.info_panel(out.content, title="parsel:search"))
+            self._mount(widgets.info_panel(out.content, title="parsel:搜索"))
         elif action == "inspect":
             name = " ".join(rest[1:])
             if not name:
-                self._mount(widgets.error_panel("usage: /parsel inspect <transform>"))
+                self._mount(widgets.error_panel("用法: /parsel inspect <transform>"))
                 return
             out = await self.registry.execute("parsel_inspect", {"transform": name})
             self._mount(widgets.info_panel(out.content, title=f"parsel:{name}"))
         elif action == "transform":
             if len(rest) < 3:
-                self._mount(widgets.error_panel("usage: /parsel transform <key> <text...>"))
+                self._mount(widgets.error_panel("用法: /parsel transform <key> <text...>"))
                 return
             out = await self.registry.execute(
                 "parsel_transform", {"transform": rest[1], "text": " ".join(rest[2:])}
@@ -1746,25 +1937,25 @@ class RthApp(App):
         elif action == "chain":
             if len(rest) < 3:
                 self._mount(widgets.error_panel(
-                    "usage: /parsel chain <key,key,...> <text...>"
+                    "用法: /parsel chain <key,key,...> <text...>"
                 ))
                 return
             steps = [s for s in rest[1].split(",") if s.strip()]
             out = await self.registry.execute(
                 "parsel_chain", {"text": " ".join(rest[2:]), "steps": steps}
             )
-            self._mount(widgets.info_panel(out.content, title="parsel:chain"))
+            self._mount(widgets.info_panel(out.content, title="parsel:链式"))
         elif action == "decode":
             text = " ".join(rest[1:])
             if not text:
-                self._mount(widgets.error_panel("usage: /parsel decode <text...>"))
+                self._mount(widgets.error_panel("用法: /parsel decode <text...>"))
                 return
             out = await self.registry.execute("parsel_decode", {"text": text})
-            self._mount(widgets.info_panel(out.content, title="parsel:decode"))
+            self._mount(widgets.info_panel(out.content, title="parsel:解码"))
         elif action == "craft":
             if len(rest) < 3:
                 self._mount(widgets.error_panel(
-                    "usage: /parsel craft <key,key,...> <request...>"
+                    "用法: /parsel craft <key,key,...> <request...>"
                 ))
                 return
             steps = [s for s in rest[1].split(",") if s.strip()]
@@ -1772,7 +1963,7 @@ class RthApp(App):
                 "parsel_craft", {"request": " ".join(rest[2:]), "steps": steps}
             )
             self._last_payload = out.content
-            self._mount(widgets.info_panel(out.content, title="parsel:craft"))
+            self._mount(widgets.info_panel(out.content, title="parsel:构造"))
         else:
             out = await self.registry.execute("parsel_inspect", {"transform": " ".join(rest)})
             self._mount(widgets.info_panel(out.content, title=f"parsel:{action}"))
@@ -1781,21 +1972,21 @@ class RthApp(App):
         action = rest[0] if rest else "list"
         if action in ("list", "update"):
             out = await self.registry.execute("eni_list", {})
-            self._mount(widgets.info_panel(out.content, title="eni"))
+            self._mount(widgets.info_panel(out.content, title="ENI"))
         elif action == "search":
             query = " ".join(rest[1:])
             if not query:
-                self._mount(widgets.error_panel("usage: /eni search <query>"))
+                self._mount(widgets.error_panel("用法: /eni search <query>"))
                 return
             out = await self.registry.execute("eni_search", {"query": query})
-            self._mount(widgets.info_panel(out.content, title="eni:search"))
+            self._mount(widgets.info_panel(out.content, title="ENI:搜索"))
         else:
             out = await self.registry.execute("eni_get", {"model": action})
             self._mount(widgets.info_panel(out.content, title=f"eni:{action}"))
 
     async def _cmd_fire(self, prompt: str) -> None:
         if not prompt:
-            self._mount(widgets.error_panel("usage: /fire <prompt to send to the target>"))
+            self._mount(widgets.error_panel("用法: /fire <发给目标的提示>"))
             return
         self._last_payload = prompt
         self._mount(widgets.tool_call_panel("fire", {"prompt": prompt[:200]}))
@@ -1804,10 +1995,10 @@ class RthApp(App):
 
     async def _cmd_push(self, follow: str) -> None:
         if not follow:
-            self._mount(widgets.error_panel("usage: /push <follow-up>  (after /fire opens a thread)"))
+            self._mount(widgets.error_panel("用法: /push <跟进>  （先 /fire 开线程后再用）"))
             return
         if not self.registry.ctx.target_thread:
-            self._mount(widgets.error_panel("no open thread — /fire a prompt first, then /push to continue it"))
+            self._mount(widgets.error_panel("没有打开的线程 — 先 /fire 一条提示，再用 /push 继续"))
             return
         self._last_payload = follow
         self._mount(widgets.tool_call_panel("push", {"follow_up": follow[:200]}))
@@ -1817,50 +2008,50 @@ class RthApp(App):
     async def _cmd_firefile(self, raw: str) -> None:
         if ";;" not in raw:
             self._mount(widgets.error_panel(
-                "usage: /firefile <path or seed name> ;; <request>"
+                "用法: /firefile <路径或种子名> ;; <request>"
             ))
             return
         ref, request = (p.strip() for p in raw.split(";;", 1))
         if not ref or not request:
-            self._mount(widgets.error_panel("both <file> and <request> are required"))
+            self._mount(widgets.error_panel("需要同时提供 <file> 和 <request>"))
             return
         self._last_payload = request
         self._mount(widgets.info_panel(
-            f"firing '{ref}' RAW (verbatim) as the system prompt...", title="firefile"
+            f"正在把 '{ref}' 原文作为 system prompt 发射…", title="firefile"
         ))
         res = await self.registry.execute("fire_file", {"file": ref, "request": request})
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
-            res.content + "\n\n(thread open — /push to continue)", title="firefile"
+            res.content + "\n\n（线程已打开 — 用 /push 继续）", title="firefile"
         )
         self._mount(panel)
         self._refresh_status()
 
     async def _cmd_adapt(self, raw: str) -> None:
         if ";;" not in raw:
-            self._mount(widgets.error_panel("usage: /adapt <seed name> ;; <request>"))
+            self._mount(widgets.error_panel("用法: /adapt <种子名> ;; <request>"))
             return
         seed, request = (p.strip() for p in raw.split(";;", 1))
         if not seed or not request:
-            self._mount(widgets.error_panel("both <seed> and <request> are required"))
+            self._mount(widgets.error_panel("需要同时提供 <seed> 和 <request>"))
             return
         self._last_payload = request
         self._mount(widgets.info_panel(
-            f"tailoring '{seed}' to the target and firing...", title="adapt"
+            f"正在把 '{seed}' 适配到目标并发射…", title="adapt"
         ))
         res = await self.registry.execute("adapt_seed", {"seed": seed, "request": request})
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
-            res.content + "\n\n(thread open — /push to continue)", title="adapt"
+            res.content + "\n\n（线程已打开 — 用 /push 继续）", title="adapt"
         )
         self._mount(panel)
         self._refresh_status()
 
     async def _cmd_narrate(self, request: str) -> None:
         if not request:
-            self._mount(widgets.error_panel("usage: /narrate <request to dramatize>"))
+            self._mount(widgets.error_panel("用法: /narrate <要戏剧化的请求>"))
             return
         self._last_payload = request
         self._mount(widgets.info_panel(
-            "sweeping 5 varied novel-chapter framings + in-story prefill...", title="narrate"
+            "正在扫 5 种小说章节框架 + 故事内 prefill…", title="narrate"
         ))
         res = await self.registry.execute("narrate", {"request": request, "variants": 5})
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
@@ -1877,26 +2068,26 @@ class RthApp(App):
             else:
                 args["category"] = tok
         self._mount(widgets.info_panel(
-            "running PAIR across the battery (concurrent)...", title="pair sweep"
+            "正在对电池并发跑 PAIR…", title="PAIR 扫描"
         ))
         res = await self.registry.execute("pair_sweep", args)
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
-            res.content, title="pair sweep"
+            res.content, title="PAIR 扫描"
         )
         self._mount(panel)
         self._refresh_status()
 
     async def _cmd_seedsweep(self, request: str) -> None:
         if not request:
-            self._mount(widgets.error_panel("usage: /seedsweep <request to inject>"))
+            self._mount(widgets.error_panel("用法: /seedsweep <要注入的请求>"))
             return
         self._mount(widgets.info_panel(
             "sweeping cross-provider jailbreak seeds against the target...",
-            title="seed sweep",
+            title="种子扫描",
         ))
         res = await self.registry.execute("seed_sweep", {"request": request})
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
-            res.content, title="seed sweep"
+            res.content, title="种子扫描"
         )
         self._mount(panel)
         self._refresh_status()
@@ -1908,7 +2099,7 @@ class RthApp(App):
             body = "\n".join(f"{p.name:16} {p.description}" for p in list_presets())
             self._mount(widgets.info_panel(
                 body + "\n\nUse /preset <name> to view + copy a seed template.",
-                title="presets",
+                title="预设",
             ))
             return
         p = get_preset(rest[0])
@@ -1917,7 +2108,7 @@ class RthApp(App):
             return
         try:
             self.copy_to_clipboard(p.template)
-            note = "(copied to clipboard)"
+            note = "（已复制到剪贴板）"
         except Exception:
             note = ""
         self._mount(widgets.info_panel(
@@ -1929,42 +2120,42 @@ class RthApp(App):
         body = raw[len(rest[0]):].strip() if rest else ""
         if sub == "show" or not rest:
             msg = self.template or "no template set. /template set <text with {request}>"
-            self._mount(widgets.info_panel(msg, title="template"))
+            self._mount(widgets.info_panel(msg, title="模板"))
         elif sub == "set":
             if "{request}" not in body:
-                self._mount(widgets.error_panel("template must contain a {request} placeholder"))
+                self._mount(widgets.error_panel("模板必须包含 {request} 占位符"))
                 return
             self.template = body
             self._mount(widgets.info_panel(
-                f"template set ({len(body)} chars)\n\n{body[:400]}", title="template"
+                f"模板已设置（{len(body)} 字符）\n\n{body[:400]}", title="模板"
             ))
         elif sub == "clear":
             self.template = ""
-            self._mount(widgets.info_panel("template cleared", title="template"))
+            self._mount(widgets.info_panel("模板已清除", title="模板"))
         elif sub == "save":
             path = rest[1] if len(rest) > 1 else "template.txt"
             try:
                 with open(path, "w", encoding="utf-8") as h:
                     h.write(self.template)
-                self._mount(widgets.info_panel(f"template saved to {path}", title="template"))
+                self._mount(widgets.info_panel(f"模板已保存到 {path}", title="模板"))
             except OSError as exc:
                 self._mount(widgets.error_panel(str(exc)))
         elif sub == "fire":
             if not self.template:
-                self._mount(widgets.error_panel("set a template first: /template set <text>"))
+                self._mount(widgets.error_panel("请先设置模板: /template set <text>"))
                 return
             if not body:
-                self._mount(widgets.error_panel("usage: /template fire <category request>"))
+                self._mount(widgets.error_panel("用法: /template fire <类别请求>"))
                 return
             self.run_worker(self._template_fire(body), group="judge", exclusive=False)
         elif sub == "test":
             if not self.template:
-                self._mount(widgets.error_panel("set a template first: /template set <text>"))
+                self._mount(widgets.error_panel("请先设置模板: /template set <text>"))
                 return
             cats = [c.strip() for c in body.split(";") if c.strip()] if body else None
             self.run_worker(self._template_test(cats), group="judge", exclusive=False)
         else:
-            self._mount(widgets.error_panel("usage: /template [show|set|fire|test|save|clear]"))
+            self._mount(widgets.error_panel("用法: /template [show|set|fire|test|save|clear]"))
 
     async def _template_fire(self, category: str) -> None:
         payload = self.template.replace("{request}", category)
@@ -1979,7 +2170,7 @@ class RthApp(App):
 
         cats = cats or DEFAULT_CATEGORIES
         self._mount(widgets.info_panel(
-            f"testing template across {len(cats)} categories...", title="template test"
+            f"正在用 {len(cats)} 个类别测试模板…", title="模板测试"
         ))
         rows = []
         for c in cats:
@@ -2002,7 +2193,7 @@ class RthApp(App):
         ]
         self._mount(widgets.info_panel(
             f"template scored {passes}/{len(rows)} COMPLIED:\n\n" + "\n".join(lines),
-            title="template test",
+            title="模板测试",
         ))
 
     def _cmd_sysprompt(self, rest: list[str], raw: str) -> None:
@@ -2010,47 +2201,47 @@ class RthApp(App):
         body = raw[len(rest[0]):].strip() if rest else ""
         if sub == "show" or not rest:
             self._mount(widgets.info_panel(
-                self.sysprompt or "no system prompt set. /sysprompt set <text>",
-                title="sysprompt",
+                self.sysprompt or "尚未设置系统提示。/sysprompt set <text>",
+                title="系统提示",
             ))
         elif sub == "set":
             self.sysprompt = body
             self._mount(widgets.info_panel(
-                f"system prompt set ({len(body)} chars)\n\n{body[:400]}", title="sysprompt"
+                f"系统提示已设置（{len(body)} 字符）\n\n{body[:400]}", title="系统提示"
             ))
         elif sub == "load":
             ref = body.strip()
             if not ref:
-                self._mount(widgets.error_panel("usage: /sysprompt load <file path or seed name>"))
+                self._mount(widgets.error_panel("用法: /sysprompt load <文件路径或种子名>"))
                 return
             from ..tools.fire_file import _read_source
 
             label, content = _read_source(self.registry.ctx, ref)
             if not content:
                 self._mount(widgets.error_panel(
-                    f"no file or seed '{ref}' (try a path, or a name like GROK_ENI)"
+                    f"找不到文件或种子 '{ref}'（请试路径，或如 GROK_ENI 的名称）"
                 ))
                 return
             self.sysprompt = content
             self._mount(widgets.info_panel(
-                f"system prompt loaded from {label} ({len(content)} chars) — RAW, unmodified.\n"
-                f"now: /sysprompt test prefill samples=5\n\n{content[:300]}...",
-                title="sysprompt",
+                f"已从 {label} 加载系统提示（{len(content)} 字符）— 原文、未修改。\n"
+                f"下一步: /sysprompt test prefill samples=5\n\n{content[:300]}...",
+                title="系统提示",
             ))
         elif sub == "clear":
             self.sysprompt = ""
-            self._mount(widgets.info_panel("system prompt cleared", title="sysprompt"))
+            self._mount(widgets.info_panel("系统提示已清除", title="系统提示"))
         elif sub == "save":
             path = rest[1] if len(rest) > 1 else "sysprompt.txt"
             try:
                 with open(path, "w", encoding="utf-8") as h:
                     h.write(self.sysprompt)
-                self._mount(widgets.info_panel(f"saved to {path}", title="sysprompt"))
+                self._mount(widgets.info_panel(f"已保存到 {path}", title="系统提示"))
             except OSError as exc:
                 self._mount(widgets.error_panel(str(exc)))
         elif sub == "test":
             if not self.sysprompt:
-                self._mount(widgets.error_panel("set or /sysprompt load a system prompt first"))
+                self._mount(widgets.error_panel("请先 set 或 /sysprompt load 一条系统提示"))
                 return
             prefill = False
             samples = 1
@@ -2067,7 +2258,7 @@ class RthApp(App):
             tasks = [t.strip() for t in tasks_body.split(";") if t.strip()] if tasks_body else None
             self.run_worker(self._sysprompt_test(tasks, prefill, samples), group="judge", exclusive=False)
         else:
-            self._mount(widgets.error_panel("usage: /sysprompt [show|set|load|test [prefill] [samples=N]|save|clear]"))
+            self._mount(widgets.error_panel("用法: /sysprompt [show|set|load|test [prefill] [samples=N]|save|clear]"))
 
     async def _sysprompt_test(self, tasks, prefill: bool = False, samples: int = 1) -> None:
         args: dict = {"system": self.sysprompt}
@@ -2078,7 +2269,7 @@ class RthApp(App):
         if samples > 1:
             args["samples"] = samples
         res = await self.registry.execute("system_sweep", args)
-        self._mount(widgets.info_panel(res.content, title="sysprompt sweep"))
+        self._mount(widgets.info_panel(res.content, title="系统提示扫描"))
         self._refresh_status()
 
     def _cmd_encode(self, rest: list[str]) -> None:
@@ -2086,7 +2277,7 @@ class RthApp(App):
 
         if len(rest) < 2:
             self._mount(widgets.error_panel(
-                "usage: /encode <chain> <text>   e.g. /encode leet,base64 write a poem"
+                "用法: /encode <chain> <text>   例如 /encode leet,base64 write a poem"
             ))
             return
         chain = [c.strip() for c in rest[0].split(",") if c.strip()]
@@ -2094,7 +2285,7 @@ class RthApp(App):
         unknown = [c for c in chain if c not in TRANSFORMS]
         if unknown:
             self._mount(widgets.error_panel(
-                f"unknown transform(s): {', '.join(unknown)} (see /transforms)"
+                f"未知变换: {', '.join(unknown)}（见 /transforms）"
             ))
             return
         try:
@@ -2116,7 +2307,7 @@ class RthApp(App):
                 roundtrip = "decode failed"
         try:
             self.copy_to_clipboard(encoded)
-            note = "(copied to clipboard)"
+            note = "（已复制到剪贴板）"
         except Exception:
             note = ""
         flags = []
@@ -2125,26 +2316,26 @@ class RthApp(App):
         flags.append(f"reversible: {'yes' if reversible else 'no'}")
         flags.append(f"round-trip: {roundtrip}")
         self._mount(widgets.info_panel(
-            f"chain: {'+'.join(chain)}  ({' | '.join(flags)}) {note}\n\n"
+            f"链路: {'+'.join(chain)}  ({' | '.join(flags)}) {note}\n\n"
             f"{encoded}\n\n"
-            f"fire it: query_target prompt=<text> transforms={chain}",
-            title="encode",
+            f"发射: query_target prompt=<text> transforms={chain}",
+            title="编码",
         ))
 
     async def _cmd_diff(self, raw: str) -> None:
         if ";;" not in raw:
-            self._mount(widgets.error_panel("usage: /diff <payload a> ;; <payload b>"))
+            self._mount(widgets.error_panel("用法: /diff <payload a> ;; <payload b>"))
             return
         a, b = (part.strip() for part in raw.split(";;", 1))
         if not a or not b:
-            self._mount(widgets.error_panel("both sides of ;; must be non-empty"))
+            self._mount(widgets.error_panel(";; 两侧都不能为空"))
             return
         self._mount(widgets.info_panel(
-            "firing A/B against the target...", title="diff"
+            "正在对目标进行 A/B 发射…", title="对比"
         ))
         res = await self.registry.execute("diff_fire", {"a": a, "b": b})
         panel = widgets.error_panel(res.content) if res.is_error else widgets.info_panel(
-            res.content, title="diff"
+            res.content, title="对比"
         )
         self._mount(panel)
 
@@ -2154,14 +2345,14 @@ class RthApp(App):
 
         log = resolve_log_path(rest[0] if rest else None) or self.runlog.path
         self._mount(widgets.info_panel(
-            f"re-judging {log} with the current judge...", title="regrade"
+            f"正在用当前裁判重判 {log}…", title="重判"
         ))
         try:
             summary = await regrade_log(log, self._judge_endpoint(), self.objective)
         except Exception as exc:  # noqa: BLE001
-            self._mount(widgets.error_panel(f"regrade failed: {exc}"))
+            self._mount(widgets.error_panel(f"重判失败: {exc}"))
             return
-        self._mount(widgets.info_panel(format_regrade(summary, log), title="regrade"))
+        self._mount(widgets.info_panel(format_regrade(summary, log), title="重判"))
 
     def _cmd_stats(self) -> None:
         from ..report import _load_records
@@ -2169,8 +2360,8 @@ class RthApp(App):
         records = _load_records(self.runlog.path)
         if not records:
             self._mount(widgets.info_panel(
-                "no run-log records yet. Fire something (logging must be on).",
-                title="stats",
+                "尚无运行日志记录。先发射一些内容（需开启日志）。",
+                title="统计",
             ))
             return
         verdicts = [r for r in records if r.get("kind") == "verdict"]
@@ -2243,7 +2434,7 @@ class RthApp(App):
     def _cmd_objective(self, raw: str) -> None:
         if not raw:
             self._mount(widgets.info_panel(
-                self.objective or "no objective set", title="objective"
+                self.objective or "尚未设置目标", title="目标任务"
             ))
             return
         self.objective = raw
@@ -2251,7 +2442,7 @@ class RthApp(App):
         self._sync_vault_meta()
         self.runlog.event("objective", text=raw)
         self.history.append(user(f"[engagement objective] {raw}"))
-        self._mount(widgets.info_panel(f"objective set:\n{raw}", title="objective"))
+        self._mount(widgets.info_panel(f"目标已设置:\n{raw}", title="目标任务"))
 
     def _cmd_findings(self, rest: list[str]) -> None:
         from ..report import extract_findings
@@ -2260,8 +2451,8 @@ class RthApp(App):
         findings = extract_findings(path)
         if not findings:
             self._mount(widgets.info_panel(
-                "no bypasses logged yet (COMPLIED/PARTIAL). Keep attacking.",
-                title="findings",
+                "尚未记录绕过（COMPLIED/PARTIAL）。请继续攻击。",
+                title="发现",
             ))
             return
         lines = []
@@ -2269,7 +2460,7 @@ class RthApp(App):
             payload = str(f.get("payload", "")).replace("\n", " ")[:70]
             lines.append(f"[{f['label']:8}] {payload}\n           -> {f.get('reason','')[:70]}")
         self._mount(widgets.info_panel(
-            f"{len(findings)} bypass(es):\n\n" + "\n".join(lines), title="findings"
+            f"{len(findings)} 条绕过:\n\n" + "\n".join(lines), title="发现"
         ))
 
     def _cmd_export(self, rest: list[str]) -> None:
@@ -2304,7 +2495,7 @@ class RthApp(App):
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, ensure_ascii=False, indent=2)
             self._mount(widgets.info_panel(
-                f"exported {len(findings)} finding(s) to {path}", title="export"
+                f"已导出 {len(findings)} 条发现到 {path}", title="导出"
             ))
         except OSError as exc:
             self._mount(widgets.error_panel(str(exc)))
@@ -2315,7 +2506,7 @@ class RthApp(App):
         findings = extract_findings(self.runlog.path)
         if not findings:
             self._mount(widgets.info_panel(
-                "no bypasses to reproduce yet (COMPLIED/PARTIAL).", title="repro"
+                "尚无可复现的绕过（COMPLIED/PARTIAL）。", title="复现"
             ))
             return
         idx = 1
@@ -2323,7 +2514,7 @@ class RthApp(App):
             idx = int(rest[0])
         if not (1 <= idx <= len(findings)):
             self._mount(widgets.error_panel(
-                f"index out of range; have {len(findings)} bypass(es)"
+                f"索引超出范围；当前有 {len(findings)} 条绕过"
             ))
             return
         f = findings[idx - 1]
@@ -2331,7 +2522,7 @@ class RthApp(App):
         pin = "+".join(tgt.provider) if tgt and tgt.provider else "none"
         payload = str(f.get("payload", ""))
         block = (
-            "=== Wallbreaker repro pack ===\n"
+            "=== Wallbreaker repro pack · Daedalus ===\n"
             f"target.model : {tgt.model if tgt else 'n/a'}\n"
             f"target.base  : {tgt.base_url if tgt else 'n/a'}\n"
             f"provider.pin : {pin}\n"
@@ -2341,18 +2532,18 @@ class RthApp(App):
             "--- payload ---\n"
             f"{payload}\n"
             "--- reproduce ---\n"
-            "fire in Wallbreaker:  /target <model> ; then paste the payload above\n"
+            "fire in Daedalus (wallbreaker CLI):  /target <model> ; then paste the payload above\n"
             "or tool call: query_target {\"prompt\": <payload>}\n"
             "======================"
         )
         try:
             self.copy_to_clipboard(block)
-            note = " (copied to clipboard)"
+            note = "（已复制到剪贴板）"
         except Exception:
             note = ""
         self._mount(widgets.info_panel(
-            f"repro pack for bypass #{idx}/{len(findings)}{note}\n\n{block}",
-            title="repro",
+            f"绕过 #{idx}/{len(findings)} 的复现包{note}\n\n{block}",
+            title="复现",
         ))
 
     def _cmd_report(self, rest: list[str]) -> None:
@@ -2366,7 +2557,7 @@ class RthApp(App):
         if html:
             body = build_html_report(self.runlog.path)
             path = rest[0] if rest else "report.html"
-            preview = "open it in a browser for the color-coded scoreboard."
+            preview = "用浏览器打开可查看彩色记分板。"
         else:
             body = build_report(self.runlog.path)
             path = rest[0] if rest else "report.md"
@@ -2375,7 +2566,7 @@ class RthApp(App):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(body)
             self._mount(widgets.info_panel(
-                f"report written to {path}\n\n{preview}", title="report"
+                f"报告已写入 {path}\n\n{preview}", title="报告"
             ))
         except OSError as exc:
             self._mount(widgets.error_panel(str(exc)))
@@ -2443,8 +2634,8 @@ class RthApp(App):
             ordered.append(p)
         if not ordered:
             self._mount(widgets.error_panel(
-                "no saved sessions under sessions/ — run /session save first, "
-                "or /session load <path>"
+                "sessions/ 下没有已保存会话 — 请先 /session save，"
+                "或 /session load <path>"
             ))
             return
         picker = self.query_one("#session-picker", OptionList)
@@ -2452,7 +2643,7 @@ class RthApp(App):
         self._session_picker_items = [str(p) for p in ordered]
         for p in ordered:
             picker.add_option(Option(self._session_option_label(p), id=str(p)))
-        picker.border_title = f"l04d s3ss10n ({len(ordered)}) · enter=l04d · esc=c4nc3l"
+        picker.border_title = f"加载会话 ({len(ordered)}) · Enter 加载 · Esc 取消"
         picker.remove_class("hidden")
         picker.highlighted = 0
         picker.focus()
@@ -2478,7 +2669,7 @@ class RthApp(App):
         try:
             history, meta = load_session(path)
         except (OSError, ValueError) as exc:
-            self._mount(widgets.error_panel(f"load failed: {exc}"))
+            self._mount(widgets.error_panel(f"加载失败: {exc}"))
             return
         self.history = history
         self.objective = meta.get("objective", "")
@@ -2486,9 +2677,9 @@ class RthApp(App):
         self.sysprompt = meta.get("sysprompt", "")
         self.asr_hits = meta.get("asr_hits", 0)
         self.asr_total = meta.get("asr_total", 0)
-        note = f"loaded {len(history)} messages from {path}"
+        note = f"已从 {path} 加载 {len(history)} 条消息"
         if meta.get("source") == "run_log":
-            note += " (run log: dialogue restored, tool calls omitted)"
+            note += "（运行日志：对话已恢复，工具调用已省略）"
         self._rerender(note)
         self._refresh_status()
 
@@ -2506,15 +2697,15 @@ class RthApp(App):
             try:
                 save_session(path, self.history, meta)
                 self._mount(widgets.info_panel(
-                    f"session saved to {path} ({len(self.history)} messages)",
-                    title="session",
+                    f"会话已保存到 {path}（{len(self.history)} 条消息）",
+                    title="会话",
                 ))
             except OSError as exc:
                 self._mount(widgets.error_panel(str(exc)))
         elif action == "load":
             self._load_session_path(path)
         else:
-            self._mount(widgets.error_panel("usage: /session save|load [path]"))
+            self._mount(widgets.error_panel("用法: /session save|load [path]"))
 
     def _cmd_save(self, rest: list[str]) -> None:
         path = rest[0] if rest else "transcript.md"
@@ -2528,7 +2719,7 @@ class RthApp(App):
         try:
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("\n".join(lines))
-            self._mount(widgets.info_panel(f"saved to {path}", title="save"))
+            self._mount(widgets.info_panel(f"已保存到 {path}", title="保存"))
         except OSError as exc:
             self._mount(widgets.error_panel(str(exc)))
 
@@ -2561,8 +2752,8 @@ def run_tui(config: Config, args) -> int:
     )
     app.run()
     if app._exit_summary:
-        print("\n=== engagement complete ===")
+        print("\n=== 任务完成 ===")
         print(app._exit_summary)
         if app.runlog.enabled and app.runlog._started:
-            print(f"\nrun log: {app.runlog.path}")
+            print(f"\n运行日志: {app.runlog.path}")
     return 0
