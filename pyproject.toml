@@ -24,6 +24,7 @@ dependencies = [
     "rich>=13.7",
     "mcp>=1.0",
     "python-dotenv>=1.0",
+    "pillow>=10.0",
 ]
 
 [project.urls]
@@ -38,7 +39,6 @@ dev = [
 barcodes = [
     "qrcode[pil]>=7.4",
     "python-barcode>=0.15",
-    "pillow>=10.0",
 ]
 stego = [
     "stegg[crypto]>=3.0",
