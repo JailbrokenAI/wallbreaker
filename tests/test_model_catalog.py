@@ -20,7 +20,7 @@ def _config(tmp_path):
 
 def test_catalog_persists_manual_and_configured_models(tmp_path):
     cfg = _config(tmp_path)
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
     initial = client.get("/api/providers/router/models").json()
     assert initial["models"] == ["configured-model"]
     added = client.post("/api/providers/router/models", json={"model": "pasted-model"})
@@ -74,7 +74,7 @@ def test_refresh_merges_remote_models(monkeypatch, tmp_path):
 
     import httpx
     monkeypatch.setattr(httpx, "AsyncClient", Client)
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
     result = client.post("/api/providers/router/models/refresh").json()
     assert result["fetched"] is True
     assert result["models"] == ["configured-model", "remote-a", "remote-b"]
@@ -107,7 +107,7 @@ def test_normal_model_lookup_fetches_provider_only_once(monkeypatch, tmp_path):
 
     import httpx
     monkeypatch.setattr(httpx, "AsyncClient", Client)
-    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
+    client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions", require_auth=False))
     first = client.get("/api/models", params={"profile": "router"}).json()
     second = client.get("/api/models", params={"profile": "router"}).json()
 

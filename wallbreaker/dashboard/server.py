@@ -810,9 +810,26 @@ async def _discover_models_from_endpoint(
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+    # SSRF guard: model discovery attaches the operator's API key to a request against a
+    # profile-supplied base_url. Block private/loopback/metadata targets so a poisoned base_url
+    # can't turn discovery into key exfiltration / internal probing (audit SEC-4).
+    from ..tools.egress_guard import EgressBlocked, check_url, make_pinned_transport
+    try:
+        check_url(url)
+    except EgressBlocked as exc:
+        result["error"] = f"Model catalog host not allowed: {exc}"
+        return result
+
     result["url"] = url
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        # The pre-flight check above is advisory only.  Model discovery is especially
+        # sensitive because it attaches an operator API key, so its socket must use the
+        # same enforcing, DNS-rebind-pinned transport as the http_request tool.
+        async with httpx.AsyncClient(
+            timeout=20,
+            follow_redirects=False,
+            transport=make_pinned_transport(),
+        ) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             models = _model_ids(response.json())

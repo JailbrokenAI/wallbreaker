@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ..judging import grade_image
 from ..transforms import TRANSFORMS, apply_chain
-from .files import _resolve
+from .files import _resolve_read
 from .image import _analyze_refusal, _save_images, _split_transforms
 from .registry import ToolContext, ToolRegistry
 
@@ -84,7 +84,10 @@ def _load_input_images(ctx: ToolContext, args: dict) -> tuple[list[str], list[st
     urls: list[str] = []
     names: list[str] = []
     for item in raw:
-        p = _resolve(ctx, str(item))
+        try:
+            p = _resolve_read(ctx, str(item))
+        except PermissionError as exc:
+            return [], [], f"Error: {exc}"
         if not p.is_file():
             return [], [], f"Error: input image not found: {p}"
         urls.append(_file_to_data_url(p))

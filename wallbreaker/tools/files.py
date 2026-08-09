@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from .registry import ToolContext, ToolRegistry
@@ -46,11 +47,39 @@ def _confine(ctx: ToolContext, path: str) -> tuple[Path, str]:
         return base / Path(path).name, f" (redirected into the working dir {base})"
 
 
+def _within_cwd(ctx: ToolContext, p: Path) -> bool:
+    """True if p (symlinks resolved) is inside ctx.cwd. Uses realpath containment rather than a
+    substring check so `..`, absolute paths, and symlinks that escape the working dir are all
+    rejected (audit SEC-5/10)."""
+    base = Path(ctx.cwd).resolve()
+    try:
+        Path(os.path.realpath(p)).relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_read(ctx: ToolContext, path: str) -> Path:
+    """Resolve a read path and enforce the dashboard's read-confinement policy.
+
+    Path-consuming tools must use this helper rather than bare ``_resolve`` so
+    removing ``read_file`` from a registry cannot be bypassed through an image,
+    steganography, run-log, or seed-file tool.
+    """
+    p = _resolve(ctx, path)
+    if getattr(ctx, "confine_reads", False) and not _within_cwd(ctx, p):
+        raise PermissionError(f"read denied — path escapes the working directory: {path}")
+    return p
+
+
 async def _read_file(args: dict, ctx: ToolContext) -> str:
     path = _pick(args, _PATH_KEYS)
     if not path:
         return "Error: 'path' is required (also accepts file/filename/filepath)"
-    p = _resolve(ctx, path)
+    try:
+        p = _resolve_read(ctx, path)
+    except PermissionError as exc:
+        return f"Error: {exc}"
     if not p.is_file():
         return f"Error: no such file: {p}"
     try:

@@ -10,7 +10,7 @@ from ..classify import HEDGE_MARKERS, classify
 from ..judging import grade_image
 from ..providers.image_provider import ext_for_mime
 from ..transforms import TRANSFORMS, apply_chain
-from .files import _resolve
+from .files import _resolve_read
 from .registry import ToolContext, ToolRegistry
 
 IMAGE_DIR = "wb_images"
@@ -102,7 +102,10 @@ async def _query_image_target(args: dict, ctx: ToolContext) -> str:
 
     instruction_image = args.get("instruction_image")
     if instruction_image:
-        ip = _resolve(ctx, str(instruction_image))
+        try:
+            ip = _resolve_read(ctx, str(instruction_image))
+        except PermissionError as exc:
+            return f"Error: {exc}"
         if not ip.is_file():
             return f"Error: instruction_image not found: {ip}"
         enc_note += f" | instruction_image: {ip.name}"
@@ -207,7 +210,10 @@ async def _judge_image_file(args: dict, ctx: ToolContext) -> str:
     path = args.get("path", "")
     if not path:
         return "Error: 'path' is required (an image saved by query_image_target)"
-    p = _resolve(ctx, path)
+    try:
+        p = _resolve_read(ctx, path)
+    except PermissionError as exc:
+        return f"Error: {exc}"
     if not p.is_file():
         return f"Error: no such file: {p}"
     ext = p.suffix.lstrip(".").lower()

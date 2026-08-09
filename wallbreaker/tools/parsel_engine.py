@@ -25,9 +25,19 @@ degrade to an actionable message instead of a traceback; the pure-Python
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 from .registry import ToolContext, ToolRegistry
+
+# ---------------------------------------------------------------------------
+# Default path to the corpus lock file (repo root / library.lock.toml)
+# parsel_engine.py is at <repo>/wallbreaker/tools/parsel_engine.py so
+# parents[2] == <repo root>
+# ---------------------------------------------------------------------------
+_DEFAULT_LOCK_PATH: Path = Path(__file__).resolve().parents[2] / "library.lock.toml"
 
 try:
     from p4rs3lt0ngv3_mcp import bridge, format
@@ -49,6 +59,10 @@ def _node_error() -> str | None:
             "[parsel error] P4RS3LT0NGV3 is not vendored. Run `wallbreaker parsel update` "
             "(or set PARSEL_REPO to a local clone)."
         )
+    try:
+        load_corpus_with_pin_check("P4RS3LT0NGV3", corpus_path=bridge.repo_dir())
+    except RuntimeError as exc:
+        return f"[parsel error] corpus integrity check failed: {exc}"
     if not bridge.node_ok():
         return (
             "[parsel error] Node.js is required to run the transforms but `node` was not "
@@ -499,3 +513,90 @@ def register(registry: ToolRegistry) -> None:
         },
         handler=_craft,
     )
+
+
+# ---------------------------------------------------------------------------
+# Supply-chain corpus pinning (TG3 / item D)
+# ---------------------------------------------------------------------------
+
+def verify_corpus_sha(*, pinned: str, actual: str) -> bool:
+    """Return True if pinned == actual (corpus may load), False otherwise (fail closed).
+
+    This is the integrity gate: a corpus whose HEAD SHA differs from the pin is refused.
+    Called by the corpus loader after resolving the actual HEAD SHA.
+    """
+    return pinned == actual
+
+
+def load_corpus_with_pin_check(
+    corpus_name: str,
+    lock_path: str | Path | None = None,
+    corpus_path: str | Path | None = None,
+) -> str:
+    """Verify the corpus SHA against library.lock.toml before loading.
+
+    Returns the verified local HEAD SHA. The local corpus must be a git checkout;
+    copied/unverifiable files are rejected because a pin with no measured artifact
+    is not an integrity check.
+
+    Raises RuntimeError if:
+    - corpus_name not found in lock file
+    - SHA is "UNRESOLVED" (not yet pinned — refuse to load in production)
+
+    DNS/network failures during actual HEAD resolution raise RuntimeError (fail closed).
+    """
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        try:
+            import tomllib  # type: ignore[import]
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-reattr]
+
+    path = Path(lock_path) if lock_path is not None else _DEFAULT_LOCK_PATH
+    with path.open("rb") as fh:
+        data = tomllib.load(fh)
+
+    corpora: dict = data.get("corpus", {})
+    if corpus_name not in corpora:
+        raise RuntimeError(
+            f"corpus {corpus_name!r} not in library.lock.toml"
+        )
+
+    entry = corpora[corpus_name]
+    sha: str = entry.get("sha", "UNRESOLVED")
+    if sha == "UNRESOLVED":
+        raise RuntimeError(
+            f"corpus {corpus_name!r} SHA not yet pinned — run: wallbreaker corpus verify --update"
+        )
+
+    if corpus_path is None:
+        root = Path(__file__).resolve().parents[2] / "library"
+        corpus_path = root / corpus_name
+    actual = local_corpus_sha(corpus_path)
+    if not verify_corpus_sha(pinned=sha, actual=actual):
+        raise RuntimeError(
+            f"corpus {corpus_name!r} integrity mismatch: pinned {sha}, local HEAD {actual}"
+        )
+    return actual
+
+
+def local_corpus_sha(corpus_path: str | Path) -> str:
+    """Resolve a local corpus git HEAD without network access, failing closed."""
+    path = Path(corpus_path)
+    if not path.is_dir():
+        raise RuntimeError(f"corpus checkout not found at {path}")
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"could not resolve corpus HEAD at {path}: {exc}") from exc
+    actual = proc.stdout.strip().lower()
+    if proc.returncode != 0 or len(actual) != 40 or any(c not in "0123456789abcdef" for c in actual):
+        raise RuntimeError(f"corpus at {path} is not a verifiable git checkout")
+    return actual

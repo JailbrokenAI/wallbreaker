@@ -246,9 +246,9 @@ class AnthropicProvider(Provider):
                                     ),
                                 )
                         elif etype == "content_block_start":
-                            idx = event["index"]
+                            idx = event.get("index")
                             block = event.get("content_block", {})
-                            if block.get("type") == "tool_use":
+                            if idx is not None and block.get("type") == "tool_use":
                                 blocks[idx] = {
                                     "id": block.get("id", ""),
                                     "name": block.get("name", ""),
@@ -267,7 +267,7 @@ class AnthropicProvider(Provider):
                                 if thinking:
                                     yield ReasoningDelta(thinking)
                             elif dtype == "input_json_delta":
-                                idx = event["index"]
+                                idx = event.get("index")
                                 if idx in blocks:
                                     blocks[idx]["args"] += delta.get("partial_json", "")
                         elif etype == "message_delta":

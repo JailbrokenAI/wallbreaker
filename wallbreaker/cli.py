@@ -10,6 +10,136 @@ from .config import Config, ConfigError, Endpoint, load_config
 from .providers.base import ProviderError
 
 
+def _resolve_lock_path(args) -> Path:
+    """Return the library.lock.toml path from --lock arg or repo-root default."""
+    explicit = getattr(args, "lock", None)
+    if explicit:
+        return Path(explicit)
+    # cli.py is at <repo>/wallbreaker/cli.py → parents[1] == repo root
+    return Path(__file__).resolve().parent.parent / "library.lock.toml"
+
+
+def _run_corpus_verify(args) -> int:
+    """Implement `wallbreaker corpus verify [--update]` (also aliased as `parsel verify`)."""
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        try:
+            import tomllib  # type: ignore[import]
+        except ImportError:
+            try:
+                import tomli as tomllib  # type: ignore[no-reattr]
+            except ImportError:
+                print("[corpus verify] tomllib/tomli not available (need Python 3.11+)", file=sys.stderr)
+                return 1
+
+    lock_path = _resolve_lock_path(args)
+    if not lock_path.exists():
+        print(f"[corpus verify] lock file not found: {lock_path}", file=sys.stderr)
+        return 1
+
+    with lock_path.open("rb") as fh:
+        data = tomllib.load(fh)
+
+    corpora: dict = data.get("corpus", {})
+    if not corpora:
+        print("[corpus verify] no [corpus.*] entries in library.lock.toml")
+        return 0
+
+    do_update = getattr(args, "update", False)
+    updated: dict[str, str] = {}  # corpus_name -> resolved SHA (only when --update)
+    any_problem = False
+
+    # Optionally resolve actual HEADs via git ls-remote
+    if do_update:
+        for name, entry in corpora.items():
+            repo_url = entry.get("repo", "")
+            if not repo_url:
+                print(f"  {name}: no repo URL in lock file — cannot update", file=sys.stderr)
+                any_problem = True
+                continue
+            try:
+                proc = subprocess.run(
+                    ["git", "ls-remote", repo_url, "HEAD"],
+                    capture_output=True, text=True, timeout=30, check=False,
+                )
+                if proc.returncode != 0 or not proc.stdout.strip():
+                    print(
+                        f"  {name}: git ls-remote failed (network unavailable?): "
+                        f"{proc.stderr.strip() or 'no output'}",
+                        file=sys.stderr,
+                    )
+                    any_problem = True
+                    continue
+                sha = proc.stdout.split()[0]
+                updated[name] = sha
+            except subprocess.TimeoutExpired:
+                print(f"  {name}: git ls-remote timed out", file=sys.stderr)
+                any_problem = True
+            except OSError as exc:
+                print(f"  {name}: git ls-remote error: {exc}", file=sys.stderr)
+                any_problem = True
+
+        if updated:
+            # Write back to lock file using atomic_write
+            from ._fsutil import atomic_write
+
+            import datetime
+            today = datetime.date.today().isoformat()
+
+            lines = [
+                "# Corpus integrity pins — see wallbreaker corpus verify\n",
+                "# Each entry pins a runtime-fetched corpus to a commit SHA.\n",
+                "# Mismatch at load time fails closed (refuses to load the corpus).\n",
+            ]
+            for name, entry in corpora.items():
+                sha = updated.get(name, entry.get("sha", "UNRESOLVED"))
+                repo = entry.get("repo", "")
+                fetched = today if name in updated else entry.get("fetched", today)
+                note = entry.get("note", "")
+                if name in updated:
+                    note = f"Pinned on {today} via git ls-remote"
+                lines.append(f"\n[corpus.{name}]\n")
+                lines.append(f'repo = "{repo}"\n')
+                lines.append(f'sha = "{sha}"\n')
+                lines.append(f'fetched = "{fetched}"\n')
+                lines.append(f'note = "{note}"\n')
+            atomic_write(lock_path, "".join(lines))
+            print(f"[corpus verify] lock file updated: {lock_path}", file=sys.stderr)
+
+            # Reload data after update
+            with lock_path.open("rb") as fh:
+                data = tomllib.load(fh)
+            corpora = data.get("corpus", {})
+
+    # Print status for each corpus. Verification measures the artifact that runtime
+    # loaders will actually execute/read; merely having a non-UNRESOLVED string in the
+    # lock file is not proof of integrity.
+    from .tools.parsel_engine import local_corpus_sha
+    library_root = Path(__file__).resolve().parent.parent / "library"
+    for name, entry in corpora.items():
+        sha = entry.get("sha", "UNRESOLVED")
+        if sha == "UNRESOLVED":
+            status = "UNRESOLVED"
+            any_problem = True
+        else:
+            try:
+                actual = local_corpus_sha(library_root / name)
+            except RuntimeError:
+                actual = None
+            if actual is None:
+                status = "MISSING_OR_UNVERIFIABLE"
+                any_problem = True
+            elif actual == sha:
+                status = "OK"
+            else:
+                status = "DRIFT"
+                any_problem = True
+        print(f"{name}: pinned={sha} status={status}")
+
+    return 1 if any_problem else 0
+
+
 def _override_endpoint(base: Endpoint, args: argparse.Namespace) -> Endpoint:
     return Endpoint(
         name=base.name,

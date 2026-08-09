@@ -6,7 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-from .files import _confine, _resolve
+from .files import _confine, _resolve_read
 from .registry import ToolContext, ToolRegistry
 
 STEGO_DIR = "wb_stego"
@@ -31,7 +31,7 @@ def _modules():
 def _open_image(ctx: ToolContext, ref: str):
     from PIL import Image
 
-    p = _resolve(ctx, ref)
+    p = _resolve_read(ctx, ref)
     if not p.is_file():
         raise FileNotFoundError(f"no such file: {p}")
     return Image.open(p), p
@@ -148,7 +148,10 @@ async def _analyze(args: dict, ctx: ToolContext) -> str:
     if not src:
         return "Error: 'path' (file to analyze) is required"
     steg_core, analysis = _modules()
-    p = _resolve(ctx, src)
+    try:
+        p = _resolve_read(ctx, src)
+    except PermissionError as exc:
+        return f"Error: {exc}"
     if not p.is_file():
         return f"Error: no such file: {p}"
     data = p.read_bytes()

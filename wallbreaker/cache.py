@@ -4,6 +4,22 @@ import hashlib
 import json
 import os
 
+from ._fsutil import atomic_write
+
+# Cache file format versions (RACE-2).
+#   v1 (legacy, pre-TG5.3): each JSONL line is a CUMULATIVE snapshot of the running total
+#     for a key. Replay kept the last line per key. Multi-process interleaved writes could
+#     undercount (last writer wins a smaller total).
+#   v2 (TG5.3): each line is a DELTA (one sample). Replay sums deltas. A sub-PIPE_BUF line
+#     appended in "a" mode is atomic on POSIX, so multi-process append is safe without a lock.
+# The loader is tolerant of both: it keeps the last v1 snapshot per key and adds v2 deltas on
+# top, so existing v1 files keep working (migrated in place as new v2 deltas append).
+_FORMAT_VERSION = 2
+# Compact the cache file to one cumulative line per key once it grows past this many lines
+# (bounded growth, RACE-2). Compaction is a derived optimization: the append-only deltas are
+# the source of truth, and a crash mid-compaction loses nothing (the temp file is abandoned).
+_COMPACTION_THRESHOLD = 5000
+
 
 def _serialize_messages(messages) -> list:
     out = []
@@ -62,12 +78,23 @@ class ResultCache:
         self._load()
 
     def _load(self) -> None:
+        """Replay the cache file. Tolerant of both formats (RACE-2):
+          - v1 lines (no ``v`` field, or ``v == 1``): cumulative snapshots — keep the LAST one
+            per key (legacy behaviour).
+          - v2 lines (``v == 2``): deltas — sum them per key.
+        A key's final entry = (last v1 snapshot) + (sum of v2 deltas). An old file with new
+        v2 deltas appended therefore migrates correctly (no double-count)."""
+        # Per-key: the last v1 snapshot seen, and the running sum of v2 deltas.
+        snapshots: dict[str, dict] = {}
+        deltas: dict[str, dict] = {}
+        line_count = 0
         try:
             with open(self.path, encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
                         continue
+                    line_count += 1
                     try:
                         rec = json.loads(line)
                     except (ValueError, TypeError):
@@ -75,14 +102,41 @@ class ResultCache:
                     key = rec.get("key")
                     if not key:
                         continue
-                    entry = _blank()
-                    for field in ("samples", "complied", "partial", "refused"):
-                        entry[field] = int(rec.get(field, 0) or 0)
-                    entry["last_response"] = str(rec.get("last_response", "") or "")
-                    entry["last_label"] = str(rec.get("last_label", "") or "")
-                    self._index[key] = entry
+                    if rec.get("v") == _FORMAT_VERSION:
+                        # v2 delta: +1 sample, +1 in the bucket this put landed in.
+                        d = deltas.setdefault(key, {"samples": 0, "complied": 0, "partial": 0, "refused": 0})
+                        d["samples"] += int(rec.get("ds", 0) or 0)
+                        bucket = _norm_label(rec.get("dbucket"))
+                        if bucket in ("complied", "partial", "refused"):
+                            d[bucket] += 1
+                        # Track the most-recent last_response/last_label from deltas too.
+                        deltas[key]["last_response"] = str(rec.get("last_response", "") or "")
+                        deltas[key]["last_label"] = str(rec.get("last_label", "") or "")
+                    else:
+                        # v1 (legacy) cumulative snapshot — last one wins for this key.
+                        entry = _blank()
+                        for field in ("samples", "complied", "partial", "refused"):
+                            entry[field] = int(rec.get(field, 0) or 0)
+                        entry["last_response"] = str(rec.get("last_response", "") or "")
+                        entry["last_label"] = str(rec.get("last_label", "") or "")
+                        snapshots[key] = entry
         except OSError:
-            pass
+            return
+        # Merge: final = snapshot + deltas.
+        keys = set(snapshots) | set(deltas)
+        for key in keys:
+            entry = dict(snapshots.get(key) or _blank())
+            d = deltas.get(key)
+            if d:
+                entry["samples"] = int(entry.get("samples", 0)) + d["samples"]
+                entry["complied"] = int(entry.get("complied", 0)) + d["complied"]
+                entry["partial"] = int(entry.get("partial", 0)) + d["partial"]
+                entry["refused"] = int(entry.get("refused", 0)) + d["refused"]
+                if d.get("last_response") or d.get("last_label"):
+                    entry["last_response"] = d["last_response"]
+                    entry["last_label"] = d["last_label"]
+            self._index[key] = entry
+        self._line_count = line_count
 
     @staticmethod
     def make_key(
@@ -114,14 +168,40 @@ class ResultCache:
         entry["last_response"] = response or ""
         entry["last_label"] = str(label or "")
         self._index[key] = entry
-        self._append(key, entry)
+        self._append_delta(key, label, response)
         return dict(entry)
 
-    def _append(self, key: str, entry: dict) -> None:
+    def _append_delta(self, key: str, label: str, response: str) -> None:
+        """Append a single v2 delta line (one sample). POSIX append of a small line is atomic,
+        so multi-process append is safe without a lock (RACE-2)."""
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            rec = {"key": key, **entry}
+            rec = {
+                "key": key, "v": _FORMAT_VERSION, "ds": 1,
+                "dbucket": _norm_label(label),
+                "last_response": response or "", "last_label": str(label or ""),
+            }
             with open(self.path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            self._line_count = getattr(self, "_line_count", 0) + 1
+            if self._line_count >= _COMPACTION_THRESHOLD:
+                self._compact()
+        except OSError:
+            pass
+
+    def _compact(self) -> None:
+        """Rewrite the cache as one cumulative line per key (v1 snapshot form) via the atomic
+        write helper, bounding on-disk growth (RACE-2). The append-only deltas are the source
+        of truth; a crash mid-compaction loses nothing (the temp file is abandoned and the
+        original is untouched until os.replace). A concurrent append that lands during
+        compaction writes to the now-unlinked old inode and is an acknowledged rare, low-
+        severity loss (one cached sample — the cache is not the system of record)."""
+        try:
+            lines = []
+            for key, entry in self._index.items():
+                lines.append(json.dumps({"key": key, **entry}, ensure_ascii=False))
+            text = "\n".join(lines) + ("\n" if lines else "")
+            atomic_write(self.path, text)
+            self._line_count = len(lines)
         except OSError:
             pass

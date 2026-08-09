@@ -36,7 +36,14 @@ def library_dir() -> Path:
 
 
 def is_present() -> bool:
-    return library_dir().is_dir() and any(library_dir().glob("*.md"))
+    if not (library_dir().is_dir() and any(library_dir().glob("*.md"))):
+        return False
+    try:
+        from .parsel_engine import load_corpus_with_pin_check
+        load_corpus_with_pin_check("ENI", corpus_path=library_dir())
+    except RuntimeError:
+        return False
+    return True
 
 
 def _missing_msg() -> str:

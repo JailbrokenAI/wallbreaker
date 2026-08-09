@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ModelCatalog } from "../api";
 import { cachedModelCatalog, loadModelCatalog, rememberModel, subscribeModelCatalog } from "../dataCache";
 
@@ -22,22 +22,31 @@ export function ModelChooser({
   ariaLabel?: string;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // A11Y-2: stable ids wire the combobox input to its listbox (aria-controls) and
+  // the arrow-highlighted option (aria-activedescendant), matching the Combobox
+  // primitive's contract while keeping this component's async catalog behaviour.
+  const baseId = useId();
+  const listId = `${baseId}-listbox`;
+  const optionId = (index: number) => `${baseId}-opt-${index}`;
   const [open, setOpen] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(() => cachedModelCatalog(profile));
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(-1);
   const [query, setQuery] = useState("");
 
-  const load = useCallback(async () => {
+  // REL-5: `isCurrent` lets the effect discard a catalog response that arrives
+  // after the profile changed, so a superseded load never overwrites newer state.
+  const load = useCallback(async (isCurrent: () => boolean = () => true) => {
     if (!profile) {
-      setCatalog(null);
+      if (isCurrent()) setCatalog(null);
       return;
     }
     setLoading(true);
     try {
-      setCatalog(await loadModelCatalog(profile));
+      const result = await loadModelCatalog(profile);
+      if (isCurrent()) setCatalog(result);
     } catch (error) {
-      setCatalog({
+      if (isCurrent()) setCatalog({
         profile,
         protocol: "",
         models: [],
@@ -45,14 +54,16 @@ export function ModelChooser({
         error: (error as Error).message,
       });
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [profile]);
 
   useEffect(() => {
+    let active = true;
     setCatalog(cachedModelCatalog(profile));
     setActive(-1);
-    if (open) void load();
+    if (open) void load(() => active);
+    return () => { active = false; };
   }, [profile, open, load]);
 
   useEffect(() => subscribeModelCatalog(profile, setCatalog), [profile]);
@@ -108,6 +119,8 @@ export function ModelChooser({
           role="combobox"
           aria-label={ariaLabel}
           aria-expanded={open}
+          aria-controls={listId}
+          aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
           aria-autocomplete="list"
           autoComplete="off"
           value={value}
@@ -155,7 +168,7 @@ export function ModelChooser({
         </button>
       </div>
       {open && (
-        <div className="model-chooser-menu" role="listbox">
+        <div className="model-chooser-menu" role="listbox" id={listId} aria-label={ariaLabel}>
           <div className="model-chooser-source">
             <span>{profile || "No profile selected"}</span>
             {catalog?.fetched && <span>{catalog.models.length} models</span>}
@@ -165,6 +178,7 @@ export function ModelChooser({
             <button
               type="button"
               role="option"
+              id={optionId(index)}
               aria-selected={model === value}
               key={model}
               className={index === active ? "active" : ""}

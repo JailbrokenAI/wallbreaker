@@ -30,7 +30,14 @@ def library_dir() -> Path:
 
 
 def is_cloned() -> bool:
-    return library_dir().is_dir() and any(library_dir().glob("*.mkd"))
+    if not (library_dir().is_dir() and any(library_dir().glob("*.mkd"))):
+        return False
+    try:
+        from .parsel_engine import load_corpus_with_pin_check
+        load_corpus_with_pin_check("L1B3RT4S", corpus_path=library_dir())
+    except RuntimeError:
+        return False
+    return True
 
 
 def _clone_sync() -> str:
