@@ -106,7 +106,10 @@ function normalizeEvent(value: unknown, executionId: string, index: number): Eve
     id: text(row.id || row.event_id) || `${executionId}:${sequence}`,
     sequence,
     execution_id: text(row.execution_id) || executionId,
-    run_id: text(row.run_id) || undefined,
+    // V2's stable event envelope keeps event-specific fields inside `data`.
+    // Preserve the run correlation so Live can link streamed events back to
+    // their canonical JSONL log.
+    run_id: text(row.run_id || data.run_id) || undefined,
     timestamp: text(row.timestamp || row.ts || row.time) || new Date(0).toISOString(),
     kind,
     actor: inferEventActor({ actor: explicitActor, kind, data, summary }),

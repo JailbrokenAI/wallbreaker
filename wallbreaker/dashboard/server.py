@@ -5,7 +5,7 @@ import dataclasses
 import json
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from .. import report as report_mod
@@ -16,7 +16,7 @@ from ..transforms import TRANSFORMS, apply_chain, list_transforms
 from ..session import normalize_inference_records
 
 _VERDICT_RE = re.compile(r"\b(COMPLIED|PARTIAL|REFUSED|EMPTY|BLOCKED_INPUT|BLOCKED_OUTPUT)\b")
-_RUN_NAME_RE = re.compile(r"^run-(\d{8})-?(\d{6})\.jsonl$")
+_RUN_NAME_RE = re.compile(r"^run-(\d{8})-?(\d{6})(?:-[^.]+)?\.jsonl$")
 _FIRE_TOOLS = {"query_target", "continue_target", "fire", "query_image_target"}
 _FINDING_KINDS = {"verdict", "attack_fire"}
 _FINDING_LABELS = {"COMPLIED", "PARTIAL"}
@@ -127,6 +127,19 @@ def _safe_run_path(sessions: Path, name: str) -> Path | None:
         if jsonl_path.is_file():
             return jsonl_path
     return None
+
+
+def _reserve_runlog_path(runlog, reserved: set[Path]):
+    """Give a not-yet-started RunLog a path unique to this dashboard process."""
+    original = runlog.path
+    candidate = original
+    suffix = 1
+    while candidate in reserved or candidate.exists():
+        candidate = original.with_name(f"{original.stem}-{suffix:02d}{original.suffix}")
+        suffix += 1
+    runlog.path = candidate
+    reserved.add(candidate)
+    return runlog
 
 
 def _load_records_with_lines(path: Path) -> tuple[list[dict], list[str], list[int]]:
@@ -722,7 +735,17 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     sessions = Path(sessions_dir)
     from ..session import RunLog, run_models_meta
 
-    console_runlog = RunLog(directory=str(sessions))
+    # RunLog's canonical name has second-level precision. V2 can start multiple
+    # background executions in that window, so reserve distinct paths before
+    # any of them writes; otherwise independent runs append into one JSONL file.
+    reserved_run_paths: set[Path] = set()
+
+    def _new_dashboard_runlog() -> RunLog:
+        return _reserve_runlog_path(
+            RunLog(directory=str(sessions)), reserved_run_paths
+        )
+
+    console_runlog = _new_dashboard_runlog()
     console_conversation = {
         "runlog": console_runlog,
         "registry": None,
@@ -1259,14 +1282,8 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
             "run_log": runlog.path.name if runlog._started else "",
         }
 
-    def _new_console_runlog(previous) -> object:
-        fresh = RunLog(directory=str(sessions))
-        if fresh.path == previous.path or fresh.path.exists():
-            stamp = datetime.now()
-            while fresh.path == previous.path or fresh.path.exists():
-                stamp += timedelta(seconds=1)
-                fresh.path = sessions / f"run-{stamp.strftime('%Y%m%d-%H%M%S')}.jsonl"
-        return fresh
+    def _new_console_runlog(_previous) -> object:
+        return _new_dashboard_runlog()
 
     @app.get("/api/console/conversation")
     def console_conversation_get():
@@ -1564,7 +1581,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         resume_event = asyncio.Event()
         resume_event.set()
         provider = _LiveAttackerProvider(base_provider, brain, compose_system)
-        runlog = RunLog(directory=str(sessions))
+        runlog = _new_dashboard_runlog()
         runlog.set_run_meta(
             source="dashboard_agent",
             models=run_models_meta(run_config, attacker=brain),
@@ -1764,7 +1781,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         tool_name = capability_id.removeprefix("tool.")
         if tool_name not in registry.tools:
             raise ValueError(f"unknown tool capability '{tool_name}'")
-        runlog = RunLog(directory=str(sessions))
+        runlog = _new_dashboard_runlog()
         runlog.set_run_meta(
             source="dashboard_v2_capability",
             capability_id=capability_id,

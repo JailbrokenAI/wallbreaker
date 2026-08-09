@@ -305,12 +305,37 @@ class HistoryIndex:
         directory = Path(sessions)
         changed = 0
         skipped = 0
-        for path in sorted(directory.glob("run-*.jsonl")):
+        current_paths = {
+            str(path.resolve()): path
+            for path in sorted(directory.glob("run-*.jsonl"))
+            if path.is_file()
+        }
+        # The database is disposable and must mirror the canonical directory.
+        # Prune rows for logs that were archived or deleted between updates.
+        indexed_paths = {
+            row["run_name"]: row["source_path"]
+            for row in self._connection.execute("SELECT run_name, source_path FROM runs")
+        }
+        removed = [
+            run_name for run_name, source_path in indexed_paths.items()
+            if source_path and source_path not in current_paths
+        ]
+        if removed:
+            with self._connection:
+                self._connection.executemany(
+                    "DELETE FROM runs WHERE run_name = ?",
+                    ((run_name,) for run_name in removed),
+                )
+        for path in current_paths.values():
             result = self.index_file(path)
             changed += int(not result["skipped"])
             skipped += int(result["skipped"])
         result = self.status()
-        result.update({"changed_runs": changed, "skipped_runs": skipped})
+        result.update({
+            "changed_runs": changed,
+            "skipped_runs": skipped,
+            "removed_runs": len(removed),
+        })
         return result
 
     def index_file(self, path: str | Path, *, force: bool = False) -> dict[str, Any]:

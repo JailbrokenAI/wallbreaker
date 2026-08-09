@@ -230,6 +230,26 @@ def test_parallel_v2_and_legacy_shell_routes(tmp_path):
         assert "wallbreaker shell" in client.get("/").text
 
 
+def test_dashboard_reserves_unique_run_paths_within_one_second(tmp_path, monkeypatch):
+    from wallbreaker import session as session_mod
+    from wallbreaker.dashboard.server import _reserve_runlog_path, _run_time_from_name
+
+    monkeypatch.setattr(session_mod, "_timestamp", lambda: "20260801-120000")
+    reserved = set()
+    logs = [
+        _reserve_runlog_path(session_mod.RunLog(tmp_path), reserved)
+        for _ in range(3)
+    ]
+
+    assert [log.path.name for log in logs] == [
+        "run-20260801-120000.jsonl",
+        "run-20260801-120000-01.jsonl",
+        "run-20260801-120000-02.jsonl",
+    ]
+    assert len({log.path for log in logs}) == 3
+    assert _run_time_from_name(logs[1].path.name) == "2026-08-01 12:00:00"
+
+
 def test_dashboard_refuses_network_bind_without_explicit_acknowledgement():
     with pytest.raises(ValueError, match="unauthenticated dashboard"):
         serve(host="0.0.0.0")

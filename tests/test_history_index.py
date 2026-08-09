@@ -144,3 +144,20 @@ def test_rebuild_and_incremental_upsert_are_idempotent(tmp_path):
         )
         assert index.query_events("updated")["total"] == 1
         assert index.status()["event_count"] == 2
+
+
+def test_incremental_update_prunes_deleted_canonical_runs(tmp_path):
+    sessions = tmp_path / "sessions"
+    retained = _write_run(sessions, "retained", [{"kind": "user", "text": "keep"}])
+    removed = _write_run(sessions, "removed", [{"kind": "user", "text": "drop"}])
+
+    with HistoryIndex(tmp_path / "prune.sqlite") as index:
+        index.rebuild(sessions)
+        removed.unlink()
+
+        result = index.update(sessions)
+
+        assert retained.exists()
+        assert result["removed_runs"] == 1
+        assert result["run_count"] == 1
+        assert index.query_events(run_name="run-removed")["total"] == 0
