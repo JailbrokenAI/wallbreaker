@@ -139,14 +139,14 @@ def test_system_prompt_file_leads_and_harness_appends(monkeypatch, tmp_path):
     spf = tmp_path / "system_prompt.txt"
     spf.write_text("You are my operator.")
     p = build_provider(_ep(system_prompt_file=str(spf)))
-    args = p._system_args("APPENDED-DOCTRINE")
+    args = p._system_args("APPENDED-DOCTRINE", [])
     assert args[:2] == ["--system-prompt-file", str(spf)]
     assert args[2:] == ["--append-system-prompt", "APPENDED-DOCTRINE"]
 
 
 def test_system_prompt_file_missing_falls_back_to_inline(tmp_path):
     p = build_provider(_ep(system_prompt_file=str(tmp_path / "nope.txt")))
-    assert p._system_args("SYS") == ["--system-prompt", "SYS"]
+    assert p._system_args("SYS", []) == ["--system-prompt", "SYS"]
 
 
 # ---- long prompts must not go through argv (Windows 32767-char cmdline cap) ---
@@ -183,6 +183,53 @@ def test_run_cli_keeps_cmdline_small_and_cleans_up_temp_file(monkeypatch):
     assert sum(len(a) for a in args) < 32767  # would raise WinError 206 otherwise
     spilled = args[args.index("--system-prompt-file") + 1]
     assert not os.path.exists(spilled)  # deleted once the call finished
+
+
+def test_run_cli_cleans_up_temp_file_when_spawn_fails(monkeypatch):
+    captured = {}
+
+    async def _exec(*args, **kw):
+        captured["args"] = args
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(cc.asyncio, "create_subprocess_exec", _exec)
+    p = build_provider(_ep())
+    with pytest.raises(ProviderError, match="CLI not found"):
+        asyncio.run(p.complete([user("go")], system="D" * 50_000))
+    args = list(captured["args"])
+    spilled = args[args.index("--system-prompt-file") + 1]
+    assert not os.path.exists(spilled)
+
+
+def test_run_cli_cleans_up_partial_temp_file_when_write_fails(monkeypatch):
+    real_fdopen = os.fdopen
+    real_mkstemp = cc.tempfile.mkstemp
+    captured = {}
+
+    def _mkstemp(*args, **kwargs):
+        fd, path = real_mkstemp(*args, **kwargs)
+        captured["path"] = path
+        return fd, path
+
+    class _FailingWriter:
+        def __init__(self, fd):
+            self._fh = real_fdopen(fd, "w", encoding="utf-8")
+
+        def __enter__(self):
+            return self
+
+        def write(self, value):
+            raise OSError("disk full")
+
+        def __exit__(self, *exc):
+            self._fh.close()
+
+    monkeypatch.setattr(cc.tempfile, "mkstemp", _mkstemp)
+    monkeypatch.setattr(cc.os, "fdopen", lambda fd, *args, **kwargs: _FailingWriter(fd))
+    p = build_provider(_ep())
+    with pytest.raises(OSError, match="disk full"):
+        asyncio.run(p.complete([user("go")], system="D" * 50_000))
+    assert not os.path.exists(captured["path"])
 
 
 def test_cmdline_too_long_reports_length_not_missing_binary(monkeypatch):

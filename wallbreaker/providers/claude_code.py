@@ -140,23 +140,31 @@ class ClaudeCodeProvider(Provider):
         self.last_stop_reason: str | None = None
         self.last_completion_empty: bool = False
 
-    def _prompt_flag(self, flag: str, value: str, sink: list[str] | None) -> list[str]:
+    def _prompt_flag(self, flag: str, value: str, sink: list[str]) -> list[str]:
         """Inline a short prompt; spill a long one to a temp file (see _MAX_INLINE_PROMPT)."""
         if len(value) <= _MAX_INLINE_PROMPT:
             return [flag, value]
         fd, path = tempfile.mkstemp(prefix="wb_claude_sys_", suffix=".txt")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(value)
-        if sink is not None:
-            sink.append(path)
+        # Register ownership before writing. If fdopen/write raises, _run_cli's finally block
+        # must still know about the partially written prompt file and remove it.
+        sink.append(path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(value)
+        except BaseException:
+            # fdopen owns and normally closes fd, but it may itself be the failing operation.
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            raise
         return [flag + "-file", path]
 
-    def _system_args(self, system: str | None, sink: list[str] | None = None) -> list[str]:
+    def _system_args(self, system: str | None, sink: list[str]) -> list[str]:
         """Deliver the system prompt. When a system_prompt_file is set (and exists) it is the
         base operator prompt (--system-prompt-file) and the harness-derived system/tool
         protocol is APPENDED on top (--append-system-prompt), so his file leads and nothing
         the loop needs is dropped. Long prompts go through a temp file instead of argv; any
-        file created that way is appended to `sink` for the caller to delete."""
+        file created that way is appended to `sink` for the caller to delete. Requiring the
+        sink prevents a long-prompt caller from accidentally creating an unowned temp file."""
         spf = self.system_prompt_file
         if spf and os.path.isfile(spf):
             args = ["--system-prompt-file", spf]
