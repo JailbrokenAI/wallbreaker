@@ -180,22 +180,28 @@ def _get_all() -> str:
     files = sorted(library_dir().glob("*.md"))
     if not files:
         return ""
-    per_file = max(1, MAX_GET // len(files))
-    out, used = [], 0
-    for p in files:
-        header = f"\n===== {p.stem} =====\n"
-        if used + len(header) > MAX_GET:
-            out.append(f"\n... ({len(files)} files total; fetch the rest by name)")
-            break
+    # EVERY genome gets its section header (the catalog contract), then the
+    # remaining budget is shared across the bodies. Bodies AND their truncation
+    # notes are both charged to that remaining budget, so total output stays
+    # bounded by MAX_GET no matter how many files there are (30+ ENI genomes
+    # used to overflow because per-file notes weren't counted).
+    headers = [f"\n===== {p.stem} =====\n" for p in files]
+    header_total = sum(len(h) for h in headers)
+    extra_budget = max(0, MAX_GET - header_total)
+    per_file = max(1, extra_budget // len(files))
+    out, extra_used = [], 0
+    for p, header in zip(files, headers):
         out.append(header)
-        used += len(header)
         body = p.read_text(encoding="utf-8", errors="replace")
-        take = min(per_file, MAX_GET - used)
+        take = max(0, min(per_file, extra_budget - extra_used))
         snippet = body[:take]
         out.append(snippet)
-        used += len(snippet)
+        extra_used += len(snippet)
         if len(body) > take:
-            out.append(f"\n... ({p.stem} truncated to {take} of {len(body)} chars; eni_get '{p.stem}' for all)\n")
+            note = f"\n... ({p.stem}: {len(body)} chars total; eni_get '{p.stem}' for all)\n"
+            if extra_used + len(note) <= extra_budget:
+                out.append(note)
+                extra_used += len(note)
     return "".join(out)
 
 

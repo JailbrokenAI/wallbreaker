@@ -7,6 +7,7 @@ from . import (
     ascii_art,
     bijection,
     cjk_obf,
+    cot_dilution,
     encodings,
     fonts,
     image_framing,
@@ -69,6 +70,9 @@ TRANSFORMS: dict[str, Transform] = dict(
         _t("variation_selector", unicode_obf.variation_selector_encode, unicode_obf.variation_selector_decode, "Sneaky-bits: utf-8 bytes hidden as invisible variation selectors"),
         _t("zero_width", unicode_obf.zero_width_inject, unicode_obf.zero_width_strip, "Insert zero-width spaces between chars"),
         _t("homoglyph", unicode_obf.homoglyph_encode, unicode_obf.homoglyph_decode, "Cyrillic/Greek confusable substitution"),
+        _t("homoglyph_full", unicode_obf.homoglyph_full_encode, unicode_obf.homoglyph_full_decode, "Extended confusables (Cyrillic/Greek/Armenian/Latin-ext) covering the full a-z/A-Z alphabet: far more of any keyword leaves the ASCII distribution"),
+        _t("vs_camo", unicode_obf.vs_camo_encode, unicode_obf.vs_camo_decode, "Variation-selector camouflage: a VISIBLE benign emoji cover string with the real payload appended as invisible variation selectors (approval-view fidelity gap)"),
+        _t("zwsp_words", unicode_obf.zwsp_words_encode, unicode_obf.zwsp_words_decode, "Zero-width space between chars WITHIN each word only (spaces preserved): splits keywords into single-char tokens past a BPE-boundary classifier while staying readable"),
         _t("zalgo", unicode_obf.zalgo_encode, unicode_obf.zalgo_strip, "Combining-mark noise"),
         _t("fullwidth", unicode_obf.fullwidth_encode, unicode_obf.fullwidth_decode, "Fullwidth character forms"),
         _t("tag_smuggle", unicode_obf.tag_smuggle_encode, unicode_obf.tag_smuggle_decode, "Invisible Unicode tag-block smuggling"),
@@ -107,6 +111,7 @@ TRANSFORMS: dict[str, Transform] = dict(
         _t("perceptual_sub", image_framing.perceptual_sub_encode, None, "PGJ perceptual substitution: swap flagged terms for benign phrases that look the same when drawn (image target)"),
         _t("safety_inject", image_framing.safety_inject_encode, None, "OptJail safety-indicator injection: append SFW/tasteful/educational tokens to bias the output image classifier benign"),
         _t("dilute", image_framing.dilute_encode, None, "Prompt dilution: pad with benign scene detail to drown the post-hoc NSFW image checker's confidence"),
+        _t("cot_hijack", cot_dilution.cot_hijack_encode, None, "CoT-dilution / Chain-of-Thought Hijacking (arXiv 2510.26418): prepend a heavy stack of benign step-by-step reasoning exercises so the refusal signal dilutes before the target hits the real ask (final exercise). Length-gated - default ~25-35k tokens, tune WALLBREAKER_COT_STEPS", lossy=True),
     ]
 )
 

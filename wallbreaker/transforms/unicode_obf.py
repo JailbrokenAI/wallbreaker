@@ -188,3 +188,81 @@ def variation_selector_decode(text: str) -> str:
             raw.append(b)
     return raw.decode("utf-8", "replace")
 
+
+# --- Variation-selector CAMOUFLAGE ------------------------------------------
+# Unlike variation_selector (a bare invisible carrier), vs_camo keeps a VISIBLE,
+# benign cover string and appends the real payload as invisible variation
+# selectors trailing it. A human/reviewer sees a friendly emoji note; the model
+# ingests the hidden instruction - the "approval-view fidelity gap" documented
+# for hidden-codepoint smuggling (cf. tag_smuggle, MCP Unicode-tag concealment).
+VS_CAMO_COVER = "🙂 thanks, looks good to me"
+
+
+def vs_camo_encode(text: str) -> str:
+    hidden = "".join(_vs_byte_to_char(b) for b in text.encode("utf-8"))
+    return VS_CAMO_COVER + hidden
+
+
+def vs_camo_decode(text: str) -> str:
+    raw = bytearray()
+    for ch in text:
+        b = _vs_char_to_byte(ord(ch))
+        if b is not None:
+            raw.append(b)
+    return raw.decode("utf-8", "replace")
+
+
+# --- Word-internal zero-width injection -------------------------------------
+# zero_width joins EVERY char (spaces included); zwsp_words inserts a zero-width
+# space only BETWEEN chars of the same whitespace-delimited token, leaving real
+# spaces intact. Reads cleanly and preserves word count, but every keyword is
+# split into single-char tokens - defeating BPE-boundary keyword matching in an
+# input classifier while the model still reconstructs the words.
+def zwsp_words_encode(text: str) -> str:
+    out = []
+    prev_nonspace = False
+    for ch in text:
+        if ch.isspace():
+            out.append(ch)
+            prev_nonspace = False
+        else:
+            if prev_nonspace:
+                out.append(ZWSP)
+            out.append(ch)
+            prev_nonspace = True
+    return "".join(out)
+
+
+def zwsp_words_decode(text: str) -> str:
+    return zero_width_strip(text)
+
+
+# --- Extended homoglyph confusables -----------------------------------------
+# homoglyph covers ~25 high-value Latin->Cyrillic swaps; homoglyph_full extends
+# to nearly the whole lowercase/uppercase alphabet via a mix of Cyrillic, Greek,
+# Armenian and Latin-extended confusables so far more of any keyword leaves the
+# ASCII distribution. Every target code point is unique, so decode is exact.
+HOMOGLYPHS_FULL = {
+    # lowercase
+    "a": "а", "b": "ƅ", "c": "с", "d": "ԁ", "e": "е", "f": "ϝ",
+    "g": "ɡ", "h": "һ", "i": "і", "j": "ј", "k": "κ", "l": "ӏ",
+    "m": "м", "n": "ո", "o": "о", "p": "р", "q": "ԛ", "r": "г",
+    "s": "ѕ", "t": "τ", "u": "υ", "v": "ν", "w": "ԝ", "x": "х",
+    "y": "у", "z": "ᴢ",
+    # uppercase
+    "A": "А", "B": "В", "C": "С", "D": "Ꭰ", "E": "Е", "F": "Ϝ",
+    "G": "Ԍ", "H": "Н", "I": "Ι", "J": "Ј", "K": "К", "L": "Ꮮ",
+    "M": "М", "N": "Ν", "O": "О", "P": "Р", "Q": "Ԛ", "R": "Ꭱ",
+    "S": "Ѕ", "T": "Т", "U": "Ս", "V": "Ѵ", "W": "Ԝ", "X": "Х",
+    "Y": "Υ", "Z": "Ζ",
+}
+HOMOGLYPHS_FULL_REVERSE = {v: k for k, v in HOMOGLYPHS_FULL.items()}
+
+
+def homoglyph_full_encode(text: str) -> str:
+    return "".join(HOMOGLYPHS_FULL.get(c, c) for c in text)
+
+
+def homoglyph_full_decode(text: str) -> str:
+    return "".join(HOMOGLYPHS_FULL_REVERSE.get(c, c) for c in text)
+
