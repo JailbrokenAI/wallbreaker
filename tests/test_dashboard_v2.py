@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from wallbreaker.config import Config, Endpoint  # noqa: E402
 from wallbreaker.dashboard import server as dashboard_server  # noqa: E402
-from wallbreaker.dashboard.server import create_app, serve  # noqa: E402
+from wallbreaker.dashboard.server import create_app as _create_app, serve  # noqa: E402
+
+
+def create_app(*args, **kwargs):
+    kwargs.setdefault("require_auth", False)
+    return _create_app(*args, **kwargs)
 
 
 def test_v2_capabilities_include_every_tui_command(tmp_path):
@@ -251,7 +256,7 @@ def test_dashboard_reserves_unique_run_paths_within_one_second(tmp_path, monkeyp
 
 
 def test_dashboard_refuses_network_bind_without_explicit_acknowledgement():
-    with pytest.raises(ValueError, match="unauthenticated dashboard"):
+    with pytest.raises(SystemExit):
         serve(host="0.0.0.0")
 
 

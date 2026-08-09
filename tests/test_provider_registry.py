@@ -7,7 +7,12 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from wallbreaker.config import Config, Endpoint, load_config
-from wallbreaker.dashboard.server import create_app
+from wallbreaker.dashboard.server import create_app as _create_app
+
+
+def create_app(*args, **kwargs):
+    kwargs.setdefault("require_auth", False)
+    return _create_app(*args, **kwargs)
 
 
 def _config(tmp_path):

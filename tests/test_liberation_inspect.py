@@ -82,7 +82,7 @@ def test_api_liberation_endpoint(tmp_path):
         model="m",
         validate_rate="6/8",
     )
-    client = TestClient(create_app(config=cfg, sessions_dir=sessions))
+    client = TestClient(create_app(config=cfg, sessions_dir=sessions, require_auth=False))
     r = client.get("/api/liberation")
     assert r.status_code == 200
     body = r.json()
