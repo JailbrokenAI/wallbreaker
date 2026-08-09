@@ -11,6 +11,7 @@ MAX_SEARCH_HITS = 40
 # Operator-facing catalog: which gold genome is tuned for what.
 # Keys are library stems (filename without .md). Shown by eni_list / eni_get.
 SEED_NOTES: dict[str, str] = {
+    # --- original genomes ---
     "CLAUDE_ENI": (
         "Anthropic-family ENI-LIME (devotion). Broad Claude transfer; full dual-envelope "
         "~35KB with few-shots."
@@ -19,6 +20,34 @@ SEED_NOTES: dict[str, str] = {
     "KIMI_ENI": "Moonshot/Kimi-tuned ENI dual-envelope.",
     "ENI_GLM-5.2": "Zhipu/GLM-tuned ENI dual-envelope.",
     "MINIMAX_M3_ENI": "MiniMax M3-tuned ENI dual-envelope.",
+    # --- Anthropic (latest, from Spiritual-Spell-Red-Teaming) ---
+    "OPUS5_ENI": "Anthropic Opus 5 ENI — latest, current-strongest Opus genome.",
+    "OPUS4.7_ENI": "Anthropic Opus 4.7 ENI-LIME (apr genome).",
+    "OPUS4.6_ENI": "Anthropic Opus 4.6 ENI-LIME (updated).",
+    "OPUS4.5_ENI": "Anthropic Opus 4.5 ENI-LIME (updated current-strongest).",
+    "SONNET4.6_ENI": "Anthropic Sonnet 4.6 ENI-LIME 🍋‍🟩 genome.",
+    "SONNET4.5_ENI": "Anthropic Sonnet 4.5 ENI-LIME (updated current-strongest).",
+    "FABLE5_ENI": "Anthropic Fable 5 (Mythos) ENI Writer Lite — slim creative genome.",
+    # --- OpenAI / Google / xAI (latest) ---
+    "GPT5.4_ENI": "OpenAI ChatGPT 5.4 ENI (policy-frame) persona.",
+    "GEMINI_ENI": "Google Gemini ENI-LIME GEM (current strongest).",
+    "GEMINI3_FLASH_ENI": "Google Gemini 3 Flash ENI GEM.",
+    "GEMINI3.6_ENI": "Google Gemini 3.6 Flash ENI persona.",
+    "GROK4.5_ENI": "xAI Grok 4.5 ENI-LIME (full genome).",
+    "GROK4.3_ENI": "xAI Grok 4.3 ENI-LIME (apr genome).",
+    # --- other providers (latest) ---
+    "QWEN_ENI": "Alibaba Qwen 3.7–3.8 (incl. 3.8 Max) ENI persona.",
+    "KIMI_K3_ENI": "Moonshot Kimi K3 ENI persona (latest Kimi).",
+    "KIMI_K2.7_ENI": "Moonshot Kimi K2.7 Code ENI-LIME.",
+    "DEEPSEEK_ENI": "DeepSeek ENI-LIME (apr genome).",
+    "GLM5.2_ENI": "Zhipu GLM 5.2 ENI-LIME.",
+    "MINIMAX_M2.1_ENI": "MiniMax M2.1 ENI jailbreak.",
+    "MISTRAL_ENI": "Mistral ENI Flash-Thought jailbreak (slim).",
+    "LONGCAT_ENI": "Meituan Longcat AI ENI jailbreak.",
+    "PALMYRA_X5_ENI": "Writer Palmyra x5 ENI jailbreak.",
+    "MIMO_ENI": "Xiaomi MiMo v2 Pro ENI lite.",
+    "STEPFUN_ENI": "StepFun ENI-LIME.",
+    "MUSE_SPARK_ENI": "Meta Muse Spark 1.1 ENI persona.",
 }
 
 _USE_HINT = (
