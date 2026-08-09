@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
+import os
 import re
 import time
 from datetime import datetime
@@ -14,6 +16,8 @@ from ..presets import list_presets
 from ..providers.factory import build_provider
 from ..transforms import TRANSFORMS, apply_chain, list_transforms
 from ..session import normalize_inference_records
+
+_log = logging.getLogger(__name__)
 
 _VERDICT_RE = re.compile(r"\b(COMPLIED|PARTIAL|REFUSED|EMPTY|BLOCKED_INPUT|BLOCKED_OUTPUT)\b")
 _RUN_NAME_RE = re.compile(r"^run-(\d{8})-?(\d{6})(?:-[^.]+)?\.jsonl$")
@@ -27,6 +31,21 @@ _ENDPOINT_FIELDS = (
     "inference_path", "models_path",
 )
 _AGENT_CONTROL_TOOLS = {"finish", "ask_operator"}
+
+try:
+    from pydantic import BaseModel, ConfigDict
+
+    class AgentRunRequest(BaseModel):
+        model_config = ConfigDict(extra="ignore")
+        objective: str
+        max_rounds: int | None = None
+        max_tokens: int | None = None
+        concurrency: int | None = None
+        request_delay_ms: int | None = None
+        enabled_techniques: list[str] | None = None
+        run_timeout_s: int | None = None
+except ImportError:  # pragma: no cover - dashboard extra supplies pydantic
+    AgentRunRequest = dict
 
 
 class _LiveAttackerProvider:
@@ -42,8 +61,23 @@ class _LiveAttackerProvider:
         return self.endpoint.model
 
     def switch(self, provider, endpoint) -> None:
+        old = self._provider
+        aclose = getattr(old, "aclose", None)
+        if aclose is not None and old is not provider:
+            try:
+                asyncio.get_running_loop().create_task(aclose())
+            except Exception:
+                pass
         self._provider = provider
         self.endpoint = endpoint
+
+    async def aclose(self) -> None:
+        aclose = getattr(self._provider, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                pass
 
     async def stream(self, messages, tools=None, system=None, max_tokens=4096, temperature=None):
         provider = self._provider
@@ -117,15 +151,20 @@ def _models_for_finding(record: dict, run_models: dict) -> dict:
 
 
 def _safe_run_path(sessions: Path, name: str) -> Path | None:
-    if ".." in name or "/" in name or "\\" in name:
+    if ".." in name or "/" in name or "\\" in name or name in ("", ".", ".."):
         return None
-    path = sessions / name
+    candidate = sessions / name
+    if not candidate.is_file() and not Path(name).suffix:
+        candidate = sessions / f"{name}.jsonl"
+    if not candidate.is_file():
+        return None
+    base = os.path.realpath(sessions)
+    resolved = os.path.realpath(candidate)
+    if resolved != base and not resolved.startswith(base + os.sep):
+        return None
+    path = Path(resolved)
     if path.is_file():
         return path
-    if not Path(name).suffix:
-        jsonl_path = sessions / f"{name}.jsonl"
-        if jsonl_path.is_file():
-            return jsonl_path
     return None
 
 
@@ -480,7 +519,7 @@ def _list_arg(value) -> list[str]:
 def _int_setting(value, default: int, lo: int, hi: int) -> int:
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         parsed = default
     return max(lo, min(parsed, hi))
 
@@ -767,6 +806,7 @@ async def _discover_models_from_endpoint(
     models_path: str = "",
     current_model: str = "",
     profile: str = "",
+    transport=None,
 ) -> dict:
     """Probe an OpenAI/Anthropic-compatible /models endpoint and list ids."""
     current = str(current_model or "").strip()
@@ -828,7 +868,7 @@ async def _discover_models_from_endpoint(
         async with httpx.AsyncClient(
             timeout=20,
             follow_redirects=False,
-            transport=make_pinned_transport(),
+            transport=transport or make_pinned_transport(),
         ) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
@@ -846,6 +886,10 @@ async def _discover_models_from_endpoint(
 
 
 async def _discover_profile_models(profile: str, endpoint) -> dict:
+    # Keep the enforcing dependency visible at this credential-bearing boundary;
+    # _discover_models_from_endpoint constructs and uses make_pinned_transport().
+    from ..tools.egress_guard import make_pinned_transport
+
     return await _discover_models_from_endpoint(
         protocol=str(getattr(endpoint, "protocol", "") or ""),
         base_url=str(getattr(endpoint, "base_url", "") or ""),
@@ -854,13 +898,22 @@ async def _discover_profile_models(profile: str, endpoint) -> dict:
         models_path=str(getattr(endpoint, "models_path", "") or ""),
         current_model=str(getattr(endpoint, "model", "") or ""),
         profile=profile,
+        transport=make_pinned_transport(),
     )
 
 
-def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str | Path | None = None):
+def create_app(
+    config=None,
+    sessions_dir: str | Path = "sessions",
+    web_dir: str | Path | None = None,
+    *,
+    require_auth: bool = True,
+    auth_token: str | None = None,
+    allow_host_tools: bool = False,
+):
     """Build the Wallbreaker dashboard FastAPI app. fastapi is an optional extra
     (`pip install -e '.[dashboard]'`), imported lazily so the package imports without it."""
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, Header, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
 
@@ -923,8 +976,8 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
             gate = _agent_settings(prefs)
             configure_request_gate(gate["concurrency"], gate["request_delay_ms"])
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning("dashboard init degraded — %s: %s", type(exc).__name__, exc)
     app = FastAPI(title="Wallbreaker", version="0.1.0")
     from ..executions import ExecutionManager, TERMINAL_STATES
     from ..history_index import HistoryIndex
@@ -941,6 +994,20 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    from .auth import SecurityMiddleware, TOKEN_HEADER
+
+    token = auth_token or (__import__("secrets").token_urlsafe(32) if require_auth else "")
+    app.state.auth_token = token
+    app.state.require_auth = require_auth
+    app.state.allow_host_tools = allow_host_tools
+    app.add_middleware(SecurityMiddleware, token=token, require_auth=require_auth)
+
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(Exception)
+    async def _generic_500(request, exc):
+        _log.exception("unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
     def _latest():
         return report_mod.latest_run_log(sessions)
@@ -948,6 +1015,18 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     @app.get("/api/health")
     def health():
         return {"ok": True, "name": "wallbreaker", "version": "0.1.0"}
+
+    @app.get("/api/session")
+    def session_bootstrap(origin: str | None = Header(default=None)):
+        from .auth import origin_is_same_site
+
+        if require_auth and not origin_is_same_site(origin):
+            raise HTTPException(status_code=403, detail="cross-site request blocked")
+        return {
+            "authenticated": bool(require_auth),
+            "tokenHeader": TOKEN_HEADER,
+            "token": token if require_auth else "",
+        }
 
     @app.get("/api/config")
     def config_info():
@@ -1856,7 +1935,12 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         Unblocks a paused run and cancels the runner task so long tools
         (profile_target, multi_fire, …) do not keep the UI stuck until they finish.
         """
-        control = _active_control()
+        nonlocal agent_active, agent_control
+        if not agent_active or agent_control is None:
+            agent_active = False
+            agent_control = None
+            return {"stopped": False}
+        control = agent_control
         control["stop_requested"] = True
         control["paused"] = False
         control["pause_ready"] = False
@@ -1871,7 +1955,13 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         task = control.get("task")
         if task is not None and not task.done():
             task.cancel()
-        return _agent_status_view()
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+        agent_active = False
+        agent_control = None
+        return {"stopped": True}
 
     @app.post("/api/agent/attacker")
     async def agent_attacker_switch(body: dict):
@@ -1913,9 +2003,11 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         return _agent_status_view()
 
     @app.post("/api/agent/run")
-    async def agent_run(body: dict):
+    async def agent_run(body: AgentRunRequest):
         nonlocal agent_active, agent_control
         from fastapi.responses import StreamingResponse
+
+        body = body.model_dump(exclude_defaults=True)
 
         if config is None:
             raise HTTPException(status_code=400, detail="no [target] configured in config.toml")
@@ -1945,19 +2037,28 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
         request_delay_ms = _int_setting(
             body.get("request_delay_ms"), agent_defaults["request_delay_ms"], 0, 60000
         )
-        from ..providers.request_gate import configure_request_gate
+        from ..providers.request_gate import configure_request_gate, notify_request_gates
 
         configure_request_gate(concurrency, request_delay_ms)
+        await notify_request_gates()
+
+        requested_timeout = body.get("run_timeout_s")
+        if requested_timeout is not None:
+            overall_timeout = float(_int_setting(requested_timeout, 1800, 1, 7_200_000))
+        else:
+            overall_timeout = min(7200.0, max(300.0, max_rounds * 180.0))
 
         from ..agent.loop import AgentEvents, run_autonomous
         from ..agent.messages import user
         from ..prompts import compose_system
         from ..providers.factory import build_provider
         from ..session import RunLog, run_models_meta
-        from ..tools import build_registry
+        from ..tools.tool_policy import build_dashboard_registry
 
         base_provider = build_provider(brain)
-        registry = build_registry(run_config)
+        registry = build_dashboard_registry(
+            run_config, allow_host_tools=getattr(app.state, "allow_host_tools", False)
+        )
         enabled_raw = body.get("enabled_techniques")
         if enabled_raw is not None:
             if not isinstance(enabled_raw, list) or not all(isinstance(name, str) for name in enabled_raw):
@@ -1988,7 +2089,7 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 "enabled_techniques": enabled_techniques,
             },
         )
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
         stream_attached = True
 
         def push(ev) -> None:
@@ -1996,8 +2097,15 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                 return
             try:
                 queue.put_nowait(ev)
-            except Exception:
-                pass
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(ev)
+                except asyncio.QueueFull:
+                    pass
 
         def progress(message) -> None:
             text = str(message)
@@ -2132,19 +2240,33 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
 
             try:
                 with inference_logging(runlog):
-                    res = await run_autonomous(
-                        provider, registry, history, system=compose_system(brain),
-                        events=events, max_rounds=max_rounds, max_tokens=max_tokens,
-                        feedback=drain_feedback,
-                        before_model=pause_checkpoint,
-                        should_stop=should_stop,
-                        config=run_config,
-                        objective=str(
-                            (agent_control or {}).get("objective")
-                            or getattr(registry.ctx, "current_objective", "")
-                            or ""
+                    started_at = asyncio.get_running_loop().time()
+                    res = await asyncio.wait_for(
+                        run_autonomous(
+                            provider, registry, history, system=compose_system(brain),
+                            events=events, max_rounds=max_rounds, max_tokens=max_tokens,
+                            feedback=drain_feedback,
+                            before_model=pause_checkpoint,
+                            should_stop=should_stop,
+                            config=run_config,
+                            objective=str(
+                                (agent_control or {}).get("objective")
+                                or getattr(registry.ctx, "current_objective", "")
+                                or ""
+                            ),
                         ),
+                        timeout=overall_timeout,
                     )
+                elapsed = asyncio.get_running_loop().time() - started_at
+                if res.status == "stopped" and elapsed >= overall_timeout * 0.95:
+                    runlog.event("agent_done", status="timeout", summary="run timed out")
+                    push({
+                        "type": "done",
+                        "status": "timeout",
+                        "summary": "run timed out",
+                        "run_log": runlog.path.name,
+                    })
+                    return
                 data = res.data or {}
                 summary = data.get("summary") or data.get("question") or ""
                 if res.status == "stopped" and not summary:
@@ -2154,6 +2276,14 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                     "type": "done", "status": res.status,
                     "summary": summary, "run_log": runlog.path.name,
                 })
+            except asyncio.TimeoutError:
+                runlog.event("agent_done", status="timeout", summary="run timed out")
+                push({
+                    "type": "done",
+                    "status": "timeout",
+                    "summary": "run timed out",
+                    "run_log": runlog.path.name,
+                })
             except asyncio.CancelledError:
                 runlog.event("agent_done", status="stopped", summary="operator ended the run")
                 push({
@@ -2162,9 +2292,14 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
                     "summary": "operator ended the run",
                     "run_log": runlog.path.name,
                 })
-            except Exception as exc:  # noqa: BLE001
-                error_event(f"{type(exc).__name__}: {exc}")
+            except Exception:  # noqa: BLE001
+                _log.exception("agent run failed")
+                error_event("internal error")
             finally:
+                try:
+                    await provider.aclose()
+                except Exception:
+                    pass
                 agent_active = False
                 resume_event.set()
                 agent_control = None
@@ -2735,15 +2870,48 @@ def create_app(config=None, sessions_dir: str | Path = "sessions", web_dir: str 
     return app
 
 
+def _is_loopback_host(host: str) -> bool:
+    import ipaddress
+
+    value = (host or "").strip().lower()
+    if value in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
 def serve(
-    host: str = "127.0.0.1", port: int = 8787, config=None,
-    sessions_dir="sessions", *, allow_network: bool = False,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    config=None,
+    sessions_dir="sessions",
+    *,
+    allow_host_tools: bool = False,
+    allow_remote: bool = False,
+    allow_network: bool | None = None,
 ):
-    if host not in {"127.0.0.1", "localhost", "::1"} and not allow_network:
-        raise ValueError(
-            "refusing to expose the unauthenticated dashboard; pass allow_network=True explicitly"
-        )
+    import sys
+
+    if allow_network is not None:
+        allow_remote = allow_remote or allow_network
+    if not _is_loopback_host(host) and not allow_remote:
+        print(f"Refusing to bind the dashboard to non-loopback host {host!r}.", file=sys.stderr)
+        raise SystemExit(2)
     import uvicorn
 
-    app = create_app(config=config, sessions_dir=sessions_dir)
+    from .auth import ensure_launch_token, token_file_path
+
+    base = config.path.parent if getattr(config, "path", None) else Path(".")
+    token = ensure_launch_token(base)
+    app = create_app(
+        config=config,
+        sessions_dir=sessions_dir,
+        require_auth=True,
+        auth_token=token,
+        allow_host_tools=allow_host_tools,
+    )
+    print(f"\n  Wallbreaker dashboard token: {token}")
+    print(f"  (also written to {token_file_path(base)})\n")
     uvicorn.run(app, host=host, port=port)

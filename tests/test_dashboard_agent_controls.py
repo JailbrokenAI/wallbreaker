@@ -85,7 +85,9 @@ def test_agent_control_routes_report_inactive(tmp_path):
     }
     assert client.post("/api/agent/pause").status_code == 409
     assert client.post("/api/agent/resume").status_code == 409
-    assert client.post("/api/agent/stop").status_code == 409
+    stopped = client.post("/api/agent/stop")
+    assert stopped.status_code == 200
+    assert stopped.json() == {"stopped": False}
     assert client.post("/api/agent/steer", json={"message": "pivot"}).status_code == 409
     assert client.post("/api/agent/attacker", json={"provider": "x", "model": "y"}).status_code == 409
 

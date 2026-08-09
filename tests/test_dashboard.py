@@ -231,7 +231,7 @@ def test_console_conversation_is_multi_turn_until_reset_and_archive(monkeypatch,
         return registry
 
     monkeypatch.setattr(tools_mod, "build_registry", build_registry)
-    client = TestClient(create_app(config=cfg, sessions_dir=sessions))
+    client = TestClient(create_app(config=cfg, sessions_dir=sessions, require_auth=False))
 
     first = client.post("/api/fire", json={"request": "first"}).json()
     second = client.post("/api/fire", json={"request": "follow up"}).json()
@@ -397,7 +397,7 @@ def test_settings_daedalus_roundtrip(tmp_path):
         encoding="utf-8",
     )
     cfg = load_config(path)
-    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path)))
+    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path), require_auth=False))
     r = client.post(
         "/api/settings",
         json={

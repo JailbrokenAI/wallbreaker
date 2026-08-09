@@ -176,7 +176,7 @@ _CATEGORY_COMMANDS: Mapping[str, frozenset[str]] = MappingProxyType({
     "operations": frozenset({
         "/validate", "/replay", "/diff", "/harmbench", "/campaign", "/leaderboard",
         "/swarm", "/seedsweep", "/pairsweep", "/narrate", "/fire", "/push",
-        "/adapt", "/firefile", "/leakscan",
+        "/adapt", "/firefile", "/leakscan", "/liberate", "/memory",
     }),
     "evidence": frozenset({
         "/asr", "/stats", "/regrade", "/findings", "/export", "/repro", "/report",
