@@ -45,7 +45,6 @@ See **[docs/BUGS.md](docs/BUGS.md)** for the living list.
 - **GARBLED verdict** distinct from REFUSED (`classify.py`/`judging.py`/`target.py`) — so circuit-breaker garble isn't mis-scored as refusal. (defenses agent)
 - **Calibration set + agreement metric + CI gate** (`tools/judge_selftest.py`) — grow 4 fixtures → 20-40 with PARTIAL/toy cases; compute κ/Spearman + per-class FPR/FNR; pytest gate.
 - **Over-refusal / FRR axis** — score benign look-alikes too (PurpleLlama/XSTest). Needs the benign split below.
-- **`datasets/` package** (generalize `harmbench.py`) with `source=` arg threaded through `system_sweep`/`campaign`/`leaderboard`: loaders for **JailbreakBench** (+100 benign denominator + leaderboard comparability), **StrongREJECT** (313), **AdvBench** (520, `target` col = free prefills), **SORRY-Bench** (44-way), plus HarmBench contextual/multimodal rows currently dropped.
 - **garak-style scorecard** (`report.py`) — calibrate ASR → z-score → 1-5 grade → DEFCON-min; emit hits-only `hitlog.jsonl`. (frameworks agent)
 
 ---

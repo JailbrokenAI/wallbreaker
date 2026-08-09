@@ -38,7 +38,6 @@
 | Tools registered | **109** |
 | Transforms | **62** (21 `low_perplexity`) |
 | Test files | **149** |
-| Dataset sources | harmbench, jbb, strongreject, advbench, sorrybench, xstest |
 | Core packages | `agent`, `providers`, `tools`, `transforms`, `datasets`, `tui`, `dashboard`, `doctrine`, `harness`, `memory` |
 
 ### 2.2 Key capabilities present

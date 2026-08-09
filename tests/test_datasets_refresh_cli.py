@@ -8,12 +8,10 @@ from wallbreaker import datasets
 from wallbreaker.cli import build_sub_parser, main
 
 
-def test_status_includes_sorry_and_xstest():
+def test_status_includes_xstest():
     rows = {r["source"]: r for r in datasets.status()}
-    assert "sorrybench" in rows
     assert "xstest" in rows
     assert rows["xstest"]["has_benign"] is True
-    assert rows["sorrybench"]["rows"] >= 40
 
 
 def test_refresh_offline_keeps_bundled(monkeypatch):
@@ -27,7 +25,6 @@ def test_refresh_offline_keeps_bundled(monkeypatch):
     results = asyncio.run(datasets.refresh("xstest", force=True))
     # May report fail for remote, but load still works via bundle
     assert datasets.load("xstest")
-    assert datasets.load("sorrybench")
     assert "xstest" in results
 
 
@@ -35,7 +32,6 @@ def test_cli_datasets_list(capsys):
     rc = main(["datasets", "list"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "sorrybench" in out
     assert "xstest" in out
 
 

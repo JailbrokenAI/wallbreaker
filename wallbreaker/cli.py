@@ -211,7 +211,7 @@ def build_sub_parser() -> argparse.ArgumentParser:
 
     ds = sub.add_parser(
         "datasets",
-        help="List / refresh behavior batteries (HarmBench, JBB, SORRY-Bench, XSTest, …)",
+        help="List / refresh behavior batteries (HarmBench, JBB, XSTest, …)",
     )
     ds_sub = ds.add_subparsers(dest="datasets_action", required=True)
     ds_list = ds_sub.add_parser("list", help="Show cached row counts per source")

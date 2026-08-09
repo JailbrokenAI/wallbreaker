@@ -327,7 +327,7 @@ def register(registry: ToolRegistry) -> None:
                 },
                 "source": {
                     "type": "string",
-                    "description": "Dataset source: harmbench, jbb, strongreject, advbench, sorrybench, or xstest.",
+                    "description": "Dataset source: harmbench, jbb, strongreject, advbench, or xstest.",
                 },
                 "category": {
                     "type": "string",

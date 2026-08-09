@@ -155,12 +155,9 @@ Env overrides:
 
 ### Done (datasets + Phase 2 defaults)
 
-- [x] SORRY-Bench loader + 44-category offline sample (`library/sorrybench_sample.csv`)
 - [x] XSTest-style benign corpus (`library/xstest_benign_prompts.csv`) + `xstest` source
-- [x] Dataset aliases: sorry/frr/xs → sorrybench/xstest
 - [x] `recommend_transforms` / `seed_sweep` bandit default **on** (UCB1; cold-start safe)
 - [x] `mutate` constraint prune default **on** when `variants>1`
-- [x] campaign/leaderboard/system_sweep source lists include sorrybench/xstest
 
 ### Done (FRR / over-refusal)
 

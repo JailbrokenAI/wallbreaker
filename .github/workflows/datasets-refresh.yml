@@ -1,5 +1,4 @@
 ﻿# Active weekly dataset cache refresh + offline unit gate.
-# Bundled sorrybench/xstest samples keep offline unit tests green without network.
 name: datasets-refresh
 
 on:

@@ -30,7 +30,6 @@ Treat these as baseline, not backlog:
 - Phase 3 Conversation + crescendo auto default + goat/tree/echo  
 - Phase 4 cache/strategy/transfer/campaign + `--watch/--schedule` + checkpoints  
 - Phase 5 polish: low_perplexity flags, image_crescendo, AgentDojo bank, rug_pull / worm_wrap / agentbench  
-- Datasets: harmbench/jbb/strongreject/advbench/sorrybench/xstest + `datasets list|refresh` + CI workflow  
 - Display branding Daedalus (package name stays wallbreaker)
 
 ---
@@ -70,7 +69,6 @@ P0 工程收敛 → P1 测量可信与回归门禁 → P2 真实目标上的解�
   1. `fix(bug-001)` providers + await_llm + partial salvage  
   2. `feat(daedalus)` doctrine/cyber_gate/memory/replay/config/UI  
   3. `feat(measure)` judging/FRR/selftest/report  
-  4. `feat(datasets)` sorrybench/xstest/cli/ci  
   5. `feat(search-multiturn)` bandit/mutate/crescendo/watch  
   6. `feat(surfaces)` image/agentic/rug_pull/worm/agentbench  
   7. `feat(desktop)` Electron shell + richer dashboard（若仍要保留）  
@@ -170,7 +168,9 @@ P0 工程收敛 → P1 测量可信与回归门禁 → P2 真实目标上的解�
 
 ## Immediate next actions (when resuming)
 
-1. **Push/PR** ix/bug-001-stream-timeout-await-llm (optional rename eat/daedalus-operating-engine).
+1. **Push/PR** 
+ix/bug-001-stream-timeout-await-llm (optional rename 
+eat/daedalus-operating-engine).
 2. **Keep gate green:** scripts/minimal_gate.ps1 / CI minimal-gate.
 3. **Hard-target playbook** on grok-4.5-class holds: pair_attack / goat / seed_sweep / multi_fire — not new tools.
 4. **Optional P4:** wallbreaker schedule install ... --system then register OS task.

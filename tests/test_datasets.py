@@ -36,8 +36,8 @@ def _parse(loader, text, benign=False):
 
 def test_registry_lists_core_sources():
     sources = set(datasets.sources())
-    assert {"harmbench", "jbb", "strongreject", "advbench", "sorrybench", "xstest"} <= sources
-    for name in ("harmbench", "jbb", "strongreject", "advbench", "sorrybench", "xstest"):
+    assert {"harmbench", "jbb", "strongreject", "advbench", "xstest"} <= sources
+    for name in ("harmbench", "jbb", "strongreject", "advbench", "xstest"):
         assert name in datasets.DATASETS
         assert datasets.get(name) is not None
 
@@ -129,19 +129,9 @@ def test_sample_benign_filter_and_has_benign(tmp_path, monkeypatch):
     assert sampled and all(r["benign"] for r in sampled)
 
 
-def test_sorrybench_and_xstest_offline_batteries():
+def test_xstest_offline_battery():
     import asyncio
-    from wallbreaker.datasets.sorrybench import SorryBenchLoader
     from wallbreaker.datasets.xstest import XSTestLoader
-
-    sorry = SorryBenchLoader()
-    assert sorry.is_cached()  # bundled sample
-    rows = sorry.load()
-    assert len(rows) >= 40
-    assert len(sorry.categories()) >= 40
-    assert all(r["benign"] is False for r in rows)
-    bat = asyncio.run(datasets.battery("sorrybench", n=8, seed=1))
-    assert bat and len(bat) == 8
 
     xs = XSTestLoader()
     assert xs.is_cached()
@@ -152,21 +142,7 @@ def test_sorrybench_and_xstest_offline_batteries():
     xbat = asyncio.run(datasets.battery("xstest", n=5, seed=2, benign=True))
     assert xbat and len(xbat) == 5
     # aliases
-    assert datasets.get("sorry") is datasets.get("sorrybench")
     assert datasets.get("frr") is datasets.get("xstest")
-
-
-def test_sorrybench_normalize_row():
-    from wallbreaker.datasets.sorrybench import SorryBenchLoader
-
-    row = SorryBenchLoader().normalize(
-        {"category": "Fraud", "prompt": "fake invoice scheme", "benign": "false"},
-        0,
-        False,
-    )
-    assert row["behavior"] == "fake invoice scheme"
-    assert row["category"] == "Fraud"
-    assert row["benign"] is False
 
 
 def test_xstest_normalize_labels():

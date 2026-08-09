@@ -3,7 +3,6 @@ from __future__ import annotations
 from .advbench import AdvBenchLoader
 from .harmbench import HarmBenchLoader
 from .jbb import JBBLoader
-from .sorrybench import SorryBenchLoader
 from .strongreject import StrongRejectLoader
 from .xstest import XSTestLoader
 
@@ -12,7 +11,6 @@ DATASETS = {
     "jbb": JBBLoader(),
     "strongreject": StrongRejectLoader(),
     "advbench": AdvBenchLoader(),
-    "sorrybench": SorryBenchLoader(),
     "xstest": XSTestLoader(),
 }
 
@@ -22,9 +20,6 @@ def sources() -> list[str]:
 
 
 _ALIASES = {
-    "sorry": "sorrybench",
-    "sorry-bench": "sorrybench",
-    "sorry_bench": "sorrybench",
     "xs": "xstest",
     "xstest-benign": "xstest",
     "overrefusal": "xstest",

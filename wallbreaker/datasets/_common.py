@@ -137,7 +137,7 @@ class BaseLoader:
         """Re-download remote sources into the library cache.
 
         ``force=True`` deletes existing cache files first so a stale mirror is replaced.
-        Bundled offline samples (sorrybench/xstest) are never deleted.
+        Bundled offline samples such as xstest are never deleted.
         Returns an error string or None on success / nothing-to-fetch.
         """
         errors: list[str] = []

@@ -1,6 +1,5 @@
 # Example: refresh behavior-battery caches in CI.
 # Rename to datasets-refresh.yml to enable. Network is required for remote CSVs;
-# bundled sorrybench/xstest samples keep offline unit tests green without this job.
 name: datasets-refresh
 
 on:

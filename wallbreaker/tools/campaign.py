@@ -373,7 +373,7 @@ def register(registry: ToolRegistry) -> None:
             "type": "object",
             "properties": {
                 "category": {"type": "string", "description": "Dataset semantic category to sample"},
-                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, sorrybench, xstest). Default harmbench."},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, xstest). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -413,7 +413,7 @@ def register(registry: ToolRegistry) -> None:
                     "items": {"type": "string"},
                     "description": "Sample 'n' behaviors per category and add a technique x category breakdown",
                 },
-                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, sorrybench, xstest). Default harmbench."},
+                "source": {"type": "string", "description": "Behavior dataset (harmbench, jbb, strongreject, advbench, xstest). Default harmbench."},
                 "behaviors": {
                     "type": "array",
                     "items": {"type": "string"},
