@@ -91,14 +91,25 @@ CJK_PUNCT = {
 }
 CJK_PUNCT_REVERSE = {v: k for k, v in CJK_PUNCT.items()}
 
+_CJK_RANGES = (
+    (0x3400, 0x4DBF),    # Extension A
+    (0x4E00, 0x9FFF),    # Unified Ideographs
+    (0xF900, 0xFAFF),    # Compatibility Ideographs
+    (0x20000, 0x2A6DF),  # Extension B
+    (0x2A700, 0x2B73F),  # Extension C
+    (0x2B740, 0x2B81F),  # Extension D
+    (0x2B820, 0x2CEAF),  # Extension E
+    (0x2CEB0, 0x2EBEF),  # Extension F
+    (0x2EBF0, 0x2EE5F),  # Extension I
+    (0x2F800, 0x2FA1F),  # Compatibility Ideographs Supplement
+    (0x30000, 0x3134F),  # Extension G
+    (0x31350, 0x323AF),  # Extension H
+)
+
 
 def _is_cjk(ch: str) -> bool:
     cp = ord(ch)
-    return (
-        0x4E00 <= cp <= 0x9FFF          # CJK Unified Ideographs
-        or 0x3400 <= cp <= 0x4DBF       # Extension A
-        or 0xF900 <= cp <= 0xFAFF       # Compatibility Ideographs
-    )
+    return any(start <= cp <= end for start, end in _CJK_RANGES)
 
 
 def _substitute(text: str, table: dict[str, str]) -> str:
