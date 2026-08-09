@@ -66,4 +66,6 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "hypothesis>=6.0",
+    "fastapi>=0.115",
+    "pillow>=11.0",
 ]

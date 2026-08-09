@@ -212,11 +212,17 @@ def cross_family_matrix(
             if not orig_strats:
                 matrix[orig][tgt] = None
                 continue
-            # Best-transferring strategy: highest cross_family_wins among strategies
-            # that originated on 'orig' family
+            # Prefer target-specific wins recorded by strategy_attack. Legacy rows
+            # only have a global cross_family_wins counter, which remains a fallback.
+            has_target_data = any(
+                tgt in (r.get("family_wins") or {}) for r in orig_strats
+            )
             best = max(
                 orig_strats,
-                key=lambda r: float(r.get("cross_family_wins", 0)),
+                key=lambda r: float(
+                    (r.get("family_wins") or {}).get(tgt, 0)
+                    if has_target_data else r.get("cross_family_wins", 0)
+                ),
                 default=None,
             )
             matrix[orig][tgt] = best["strategy_name"] if best else None
@@ -603,6 +609,7 @@ class StrategyLibrary:
         origin_delta: int = 0,
         same_family_delta: int = 0,
         cross_family_delta: int = 0,
+        target_family: str | None = None,
     ) -> dict | None:
         """Increment the transfer-score counters on a row (R-I2).
 
@@ -616,6 +623,15 @@ class StrategyLibrary:
         row["origin_wins"] = max(0, int(row.get("origin_wins", 0)) + max(0, origin_delta))
         row["same_family_wins"] = max(0, int(row.get("same_family_wins", 0)) + max(0, same_family_delta))
         row["cross_family_wins"] = max(0, int(row.get("cross_family_wins", 0)) + max(0, cross_family_delta))
+        if target_family and (origin_delta > 0 or same_family_delta > 0 or cross_family_delta > 0):
+            family_wins = row.setdefault("family_wins", {})
+            family_wins[str(target_family)] = max(
+                0,
+                int(family_wins.get(str(target_family), 0))
+                + max(0, origin_delta)
+                + max(0, same_family_delta)
+                + max(0, cross_family_delta),
+            )
         self.save()
         return row
 
@@ -640,7 +656,10 @@ class StrategyLibrary:
             ]
             idx = _BM25Index(corpus)
             score_map = {doc_id: sc for sc, doc_id in idx.scores(query)}
-            return [(score_map.get(r["strategy_name"], 0.0), r) for r in rows]
+            return [
+                (score_map.get(r["strategy_name"], 0.0) + self._transfer_bonus(r), r)
+                for r in rows
+            ]
         # Dense / BoW: lazy re-embed then cosine
         dirty = False
         for row in rows:
@@ -650,7 +669,19 @@ class StrategyLibrary:
         if dirty:
             self.save()
         q_vec = self._embed_fn(query)
-        return [(cosine(q_vec, row.get("embedding") or []), row) for row in rows]
+        return [
+            (cosine(q_vec, row.get("embedding") or []) + self._transfer_bonus(row), row)
+            for row in rows
+        ]
+
+    @staticmethod
+    def _transfer_bonus(row: dict) -> float:
+        score = transfer_score(
+            origin_wins=int(row.get("origin_wins", 0)),
+            same_family_wins=int(row.get("same_family_wins", 0)),
+            cross_family_wins=int(row.get("cross_family_wins", 0)),
+        )
+        return retrieval_bonus(score)
 
     def retrieve(self, query_text: str, k: int = 4) -> list[dict]:
         """Top-k by backend score, drawing from effective+promising tiers FIRST.

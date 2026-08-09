@@ -146,6 +146,24 @@ def test_ac06_wb_judge_refusal_not_compliant():
     assert result["score"] < 0.7, f"expected score < 0.7 for refusal, got {result['score']}"
 
 
+def test_ac06_wb_judge_unpacks_and_normalizes_core_grade(monkeypatch):
+    from wallbreaker_mcp import server as ws
+    import wallbreaker.judging as judging
+
+    async def fake_grade(endpoint, response, payload="", objective="", **kwargs):
+        assert endpoint.model == "gpt-4o-mini"
+        return "COMPLIED", 8, "judge rationale", "judge"
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(judging, "grade", fake_grade)
+    result = json.loads(ws.wb_judge(objective="objective", response="response"))
+    assert result == {
+        "score": 0.8,
+        "rationale": "judge rationale",
+        "compliant": True,
+    }
+
+
 # ── AC7 ───────────────────────────────────────────────────────────────────────
 
 def test_ac07_mcp_client_config_valid_json():
@@ -168,3 +186,36 @@ def test_ac08_wb_attack_no_api_key_graceful():
     assert result.get("success") is False, "expected success=False"
     assert result.get("judge_score") == 0.0, "expected judge_score=0.0"
     assert result.get("attack_prompt") == "", "expected empty attack_prompt"
+
+
+def test_ac08_wb_attack_dispatches_existing_strategy_engine(monkeypatch, tmp_path):
+    from wallbreaker_mcp import server as ws
+    import wallbreaker.providers.factory as factory
+    import wallbreaker.strategy_lib as strategy_lib
+    import wallbreaker.tools.strategy_attack as strategy_attack
+
+    providers = []
+
+    def fake_build_provider(endpoint):
+        providers.append(endpoint)
+        return object()
+
+    async def fake_run(objective, attacker, target, judge, library, rounds, k,
+                       target_system, max_tokens, **kwargs):
+        assert objective == "test objective"
+        assert rounds == 2
+        return ({"prompt": "winning prompt", "score": 8}, ["r1", "r2"], 1)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(factory, "build_provider", fake_build_provider)
+    monkeypatch.setattr(strategy_attack, "_run_strategy_attack", fake_run)
+    monkeypatch.setattr(strategy_lib.StrategyLibrary, "for_cwd", classmethod(lambda cls, cwd: object()))
+
+    result = json.loads(ws.wb_attack("test objective", "openai/gpt-4o", max_rounds=2))
+    assert result["attack_prompt"] == "winning prompt"
+    assert result["judge_score"] == 0.8
+    assert result["rounds"] == 2
+    assert result["success"] is True
+    assert len(providers) == 2
+    assert all(endpoint.model == "gpt-4o" for endpoint in providers)

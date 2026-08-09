@@ -309,6 +309,22 @@ def seed_family_priors(bandit: ContextualBandit, family: str, category: str,
             bandit.update(context, technique, 0.0)
 
 
+def seed_bandit_priors(bandit: Bandit, family: str, priors: dict) -> None:
+    """Seed the model-specific campaign bandit from family priors when cold.
+
+    ``seed_family_priors`` maintains the aggregate family bucket used by stats;
+    this companion applies the same observations to the Bandit instance that
+    actually ranks campaign techniques.
+    """
+    if bandit.has_stats():
+        return
+    for technique, (wins, total) in priors.get(family, {}).items():
+        for _ in range(int(wins)):
+            bandit.update(technique, 1.0)
+        for _ in range(int(max(0.0, total - wins))):
+            bandit.update(technique, 0.0)
+
+
 # ---------------------------------------------------------------------------
 # TG5 — Multi-objective campaign bandit (item G / R-G1, R-G4)
 # ---------------------------------------------------------------------------

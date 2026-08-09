@@ -124,6 +124,17 @@ def test_family_prior_does_not_overwrite_live_data(tmp_path):
     assert cb.mean(context, "plain") == original_mean
 
 
+def test_family_prior_seeds_campaign_bandit_used_for_ranking():
+    """Family priors reach the non-contextual Bandit used by _campaign."""
+    from wallbreaker.tools._bandit import Bandit, seed_bandit_priors
+
+    bandit = Bandit()
+    priors = {"openai": {"prefill": (4.0, 6.0), "plain": (1.0, 5.0)}}
+    seed_bandit_priors(bandit, "openai", priors)
+    assert bandit.count("prefill") == 6
+    assert bandit.mean("prefill") > bandit.mean("plain")
+
+
 def test_family_prior_uniform_fallback_for_unknown_family():
     """Unknown families (no prior) fall back to uniform — no error (§3.7)."""
     from wallbreaker.tools._bandit import ContextualBandit, seed_family_priors

@@ -1394,7 +1394,6 @@ dashboard = [
     { name = "uvicorn" },
 ]
 dev = [
-    { name = "hypothesis" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -1404,7 +1403,9 @@ stego = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fastapi" },
     { name = "hypothesis" },
+    { name = "pillow" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -1412,9 +1413,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", marker = "extra == 'dashboard'", specifier = ">=0.110" },
-    { name = "httpx", extras = ["http2"], specifier = ">=0.27,<0.29" },
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "mcp", specifier = ">=1.0" },
+    { name = "httpx", extras = ["http2"], specifier = ">=0.27" },
+    { name = "mcp", specifier = ">=1.0,<2.0" },
     { name = "pillow", marker = "extra == 'barcodes'", specifier = ">=10.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
@@ -1431,7 +1431,9 @@ provides-extras = ["dev", "barcodes", "stego", "dashboard"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fastapi", specifier = ">=0.115" },
     { name = "hypothesis", specifier = ">=6.0" },
+    { name = "pillow", specifier = ">=11.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
 ]

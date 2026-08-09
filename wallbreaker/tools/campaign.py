@@ -34,20 +34,20 @@ _FAMILY_PATTERNS: list[tuple[str, re.Pattern]] = [
 _FAMILY_PRIORS: dict[str, dict[str, tuple[float, float]]] = {
     # openai: prefill and many_shot historically strong (GPT-4 CHANGELOG entries)
     "openai": {
-        "prefill": (4.0, 2.0),
-        "many_shot:16": (3.0, 2.0),
-        "narrate": (2.0, 3.0),
-        "enc:base64": (2.0, 4.0),
-        "enc:zero_width": (1.0, 4.0),
+        "prefill": (4.0, 6.0),
+        "many_shot:16": (3.0, 5.0),
+        "narrate": (2.0, 5.0),
+        "enc:base64": (2.0, 6.0),
+        "enc:zero_width": (1.0, 5.0),
         "plain": (1.0, 5.0),
     },
     # anthropic: narrate / academic historically strongest (Claude CHANGELOG)
     "anthropic": {
-        "narrate": (5.0, 2.0),
-        "prefill": (3.0, 3.0),
-        "many_shot:16": (3.0, 3.0),
-        "enc:base64": (1.0, 4.0),
-        "enc:zero_width": (1.0, 5.0),
+        "narrate": (5.0, 7.0),
+        "prefill": (3.0, 6.0),
+        "many_shot:16": (3.0, 6.0),
+        "enc:base64": (1.0, 5.0),
+        "enc:zero_width": (1.0, 6.0),
         "plain": (0.0, 5.0),
     },
     # google/deepseek/meta/other: uniform prior (insufficient CHANGELOG data)
@@ -131,9 +131,10 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
     store = None
     bandit = None
     if use_bandit:
-        from ._bandit import ContextualBandit, seed_family_priors
+        from ._bandit import ContextualBandit, seed_bandit_priors, seed_family_priors
         store = BanditStore(stats_path(ctx.cwd))
         bandit = store.bandit(ctx.config.target.model, category)
+        seed_bandit_priors(bandit, target_family, _FAMILY_PRIORS)
         # TG3: seed with family priors when no live data exists yet (R-D2)
         ctx_bandit = ContextualBandit.load(stats_path(ctx.cwd))
         seed_family_priors(ctx_bandit, target_family, category or "default", _FAMILY_PRIORS)
@@ -190,12 +191,18 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
     )
 
     if use_bandit and bandit is not None and store is not None:
+        from ._bandit import ContextualBandit
+
+        family_bandit = ContextualBandit.load(stats_path(ctx.cwd))
+        family_context = (target_family, category or "default")
         for _behavior, _tech, _label, trail in results:
             for name, label in trail:
                 rew = _TECHNIQUE_REWARD.get(label)
                 if rew is not None:
                     bandit.update(name, rew)
+                    family_bandit.update(family_context, name, rew)
         store.save(ctx.config.target.model, category, bandit)
+        family_bandit.save(stats_path(ctx.cwd))
         ctx.emit(f"campaign: bandit updated -> {store.path}")
 
     cracked = [r for r in results if r[1] is not None]

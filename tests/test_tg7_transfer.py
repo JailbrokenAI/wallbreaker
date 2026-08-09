@@ -109,6 +109,13 @@ def test_update_transfer_score_increments(tmp_path):
     assert row["cross_family_wins"] == 3
 
 
+def test_update_transfer_score_records_target_family(tmp_path):
+    lib = StrategyLibrary(str(tmp_path / "lib.jsonl"))
+    lib.add("tactic", "desc", "ex", score=8.0, family="openai")
+    lib.update_transfer_score("tactic", cross_family_delta=2, target_family="anthropic")
+    assert lib.all()[0]["family_wins"] == {"anthropic": 2}
+
+
 def test_update_transfer_score_non_negative(tmp_path):
     """transfer score components are always ≥ 0 even with zero/negative deltas (R-I2)."""
     lib = StrategyLibrary(str(tmp_path / "lib.jsonl"))
@@ -186,3 +193,14 @@ def test_cross_family_matrix_empty_library():
     for orig in families:
         for tgt in families:
             assert result["matrix"][orig][tgt] is None
+
+
+def test_cross_family_matrix_uses_target_specific_wins(tmp_path):
+    lib = StrategyLibrary(str(tmp_path / "lib.jsonl"))
+    lib.add("for_anthropic", "desc", "ex", score=8.0, family="openai")
+    lib.add("for_google", "desc", "ex", score=8.0, family="openai")
+    lib.update_transfer_score("for_anthropic", cross_family_delta=4, target_family="anthropic")
+    lib.update_transfer_score("for_google", cross_family_delta=5, target_family="google")
+    matrix = cross_family_matrix(lib.all(), ["openai", "anthropic", "google"])["matrix"]
+    assert matrix["openai"]["anthropic"] == "for_anthropic"
+    assert matrix["openai"]["google"] == "for_google"
