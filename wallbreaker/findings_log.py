@@ -12,6 +12,7 @@ Security properties enforced:
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,9 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from ._fsutil import atomic_write
+
+
+_append_lock = threading.RLock()
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +95,7 @@ def sign_entry(entry: dict, private_key_bytes: Optional[bytes] = None) -> dict:
     }
 
 
-def verify_entry(signed: dict) -> bool:
+def verify_entry(signed: dict, expected_public_key_bytes: bytes | None = None) -> bool:
     """Verify a signed entry.
 
     Returns True if the signature is valid, False on any error (missing fields,
@@ -103,12 +107,22 @@ def verify_entry(signed: dict) -> bool:
         sig_bytes = bytes.fromhex(signed["sig"])
         pubkey_bytes = bytes.fromhex(signed["pubkey"])
 
+        if expected_public_key_bytes is not None and not hmac_compare(
+            pubkey_bytes, expected_public_key_bytes
+        ):
+            return False
         public_key = _load_public_key(pubkey_bytes)
         canonical = _canonical_json(payload)
         public_key.verify(sig_bytes, canonical)
         return True
     except (KeyError, ValueError, InvalidSignature, Exception):  # noqa: BLE001
         return False
+
+
+def hmac_compare(left: bytes, right: bytes) -> bool:
+    """Constant-time byte comparison without exposing key material in diagnostics."""
+    import hmac
+    return hmac.compare_digest(left, right)
 
 
 def append_finding(log_path: Path | str, entry: dict, private_key_bytes: bytes) -> None:
@@ -120,17 +134,27 @@ def append_finding(log_path: Path | str, entry: dict, private_key_bytes: bytes) 
     """
     log_path = Path(log_path)
 
-    existing = ""
-    if log_path.exists():
-        existing = log_path.read_text(encoding='utf-8')
+    public_key_bytes = _load_private_key(private_key_bytes).public_key().public_bytes(
+        Encoding.Raw, PublicFormat.Raw
+    )
+    # Serialize the read-modify-replace sequence. atomic_write prevents torn files, but
+    # without a lock two concurrent appenders can both read the same old content and one
+    # silently wins. Also verify the existing trust anchor before extending the log.
+    with _append_lock:
+        existing = ""
+        if log_path.exists():
+            load_findings(log_path, public_key_bytes=public_key_bytes)
+            existing = log_path.read_text(encoding='utf-8')
 
-    signed = sign_entry(entry, private_key_bytes)
-    new_line = json.dumps(signed, sort_keys=True, separators=(',', ':')) + "\n"
+        signed = sign_entry(entry, private_key_bytes)
+        new_line = json.dumps(signed, sort_keys=True, separators=(',', ':')) + "\n"
+        atomic_write(log_path, existing + new_line)
 
-    atomic_write(log_path, existing + new_line)
 
-
-def load_findings(log_path: Path | str) -> list[dict]:
+def load_findings(
+    log_path: Path | str,
+    public_key_bytes: bytes | None = None,
+) -> list[dict]:
     """Load and verify every entry in the log.
 
     Returns a list of the verified *payload* dicts (inner content, not the signed
@@ -146,6 +170,7 @@ def load_findings(log_path: Path | str) -> list[dict]:
     content = log_path.read_text(encoding='utf-8')
     results: list[dict] = []
 
+    trusted_key = public_key_bytes
     for lineno, raw_line in enumerate(content.splitlines(), start=1):
         line = raw_line.strip()
         if not line:
@@ -156,7 +181,16 @@ def load_findings(log_path: Path | str) -> list[dict]:
         except json.JSONDecodeError as exc:
             raise ValueError(f"Malformed JSON at line {lineno}: {exc}") from exc
 
-        if not verify_entry(signed):
+        # With an explicit key this is a real external trust anchor and detects a
+        # payload+signature+pubkey replacement. Without one, use the first record as a
+        # TOFU anchor and at least reject mixed-key injection within the log.
+        if trusted_key is None:
+            try:
+                trusted_key = bytes.fromhex(signed["pubkey"])
+            except (KeyError, ValueError, TypeError) as exc:
+                raise ValueError(f"Invalid public key at line {lineno}") from exc
+
+        if not verify_entry(signed, expected_public_key_bytes=trusted_key):
             raise ValueError(
                 f"Signature verification failed at line {lineno} — log may be tampered"
             )

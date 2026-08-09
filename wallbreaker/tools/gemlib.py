@@ -128,7 +128,15 @@ def is_present(corpus: str) -> bool:
         return False
     if not corpus_dir(corpus).is_dir():
         return False
-    return bool(seed_files(corpus))
+    if not seed_files(corpus):
+        return False
+    lock_name = {"zetalib": "ZetaLib", "ultrabreaks": "UltraBr3aks"}.get(corpus)
+    try:
+        from .parsel_engine import load_corpus_with_pin_check
+        load_corpus_with_pin_check(lock_name or corpus, corpus_path=corpus_dir(corpus))
+    except RuntimeError:
+        return False
+    return True
 
 
 def _clone_sync(corpus: str) -> str:
@@ -214,6 +222,8 @@ def search(corpus: str, query: str) -> list[tuple[str, int, str]]:
 
 def find_any(name: str) -> tuple[str, str] | None:
     for corpus in ("zetalib", "ultrabreaks"):
+        if not is_present(corpus):
+            continue
         p = find(corpus, name)
         if p is not None:
             text = p.read_text(encoding="utf-8", errors="replace")[:FIND_ANY_MAX]

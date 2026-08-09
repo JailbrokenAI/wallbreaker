@@ -6,6 +6,7 @@ from pathlib import Path
 from ..agent.messages import assistant, user
 from ..judging import grade
 from .registry import ToolContext, ToolRegistry
+from .files import _resolve_read
 
 # keep this above the largest raw seed so the full persona fires UNCHANGED
 MAX_FILE = 60000
@@ -13,9 +14,10 @@ MAX_FILE = 60000
 
 def _read_source(ctx: ToolContext, ref: str) -> tuple[str, str]:
     """Resolve a file path OR an ENI/L1B3RT4S collection name to (label, FULL text)."""
-    p = Path(ref)
-    if not p.is_absolute():
-        p = Path(ctx.cwd) / ref
+    try:
+        p = _resolve_read(ctx, ref)
+    except PermissionError:
+        return "", ""
     if p.is_file():
         return p.name, p.read_text(encoding="utf-8", errors="replace")[:MAX_FILE]
 

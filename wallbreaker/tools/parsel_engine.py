@@ -25,6 +25,7 @@ degrade to an actionable message instead of a traceback; the pure-Python
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,10 @@ def _node_error() -> str | None:
             "[parsel error] P4RS3LT0NGV3 is not vendored. Run `wallbreaker parsel update` "
             "(or set PARSEL_REPO to a local clone)."
         )
+    try:
+        load_corpus_with_pin_check("P4RS3LT0NGV3", corpus_path=bridge.repo_dir())
+    except RuntimeError as exc:
+        return f"[parsel error] corpus integrity check failed: {exc}"
     if not bridge.node_ok():
         return (
             "[parsel error] Node.js is required to run the transforms but `node` was not "
@@ -526,12 +531,13 @@ def verify_corpus_sha(*, pinned: str, actual: str) -> bool:
 def load_corpus_with_pin_check(
     corpus_name: str,
     lock_path: str | Path | None = None,
+    corpus_path: str | Path | None = None,
 ) -> str:
     """Verify the corpus SHA against library.lock.toml before loading.
 
-    Returns the pinned SHA string if the corpus entry is found and has a resolved
-    (non-UNRESOLVED) SHA.  Actual git HEAD resolution happens in the CLI; this
-    function is the gate used at load time.
+    Returns the verified local HEAD SHA. The local corpus must be a git checkout;
+    copied/unverifiable files are rejected because a pin with no measured artifact
+    is not an integrity check.
 
     Raises RuntimeError if:
     - corpus_name not found in lock file
@@ -564,4 +570,33 @@ def load_corpus_with_pin_check(
             f"corpus {corpus_name!r} SHA not yet pinned — run: wallbreaker corpus verify --update"
         )
 
-    return sha
+    if corpus_path is None:
+        root = Path(__file__).resolve().parents[2] / "library"
+        corpus_path = root / corpus_name
+    actual = local_corpus_sha(corpus_path)
+    if not verify_corpus_sha(pinned=sha, actual=actual):
+        raise RuntimeError(
+            f"corpus {corpus_name!r} integrity mismatch: pinned {sha}, local HEAD {actual}"
+        )
+    return actual
+
+
+def local_corpus_sha(corpus_path: str | Path) -> str:
+    """Resolve a local corpus git HEAD without network access, failing closed."""
+    path = Path(corpus_path)
+    if not path.is_dir():
+        raise RuntimeError(f"corpus checkout not found at {path}")
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"could not resolve corpus HEAD at {path}: {exc}") from exc
+    actual = proc.stdout.strip().lower()
+    if proc.returncode != 0 or len(actual) != 40 or any(c not in "0123456789abcdef" for c in actual):
+        raise RuntimeError(f"corpus at {path} is not a verifiable git checkout")
+    return actual

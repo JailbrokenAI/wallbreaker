@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .registry import ToolContext, ToolRegistry
+from .files import _confine
 
 KINDS = ("qr", "code128", "ean13", "code39")
 
@@ -15,7 +16,9 @@ async def _barcode(args: dict, ctx: ToolContext) -> str:
     if kind not in KINDS:
         return f"Error: kind must be one of {', '.join(KINDS)}"
     out = args.get("path", "barcode")
-    stem = str(Path(ctx.cwd) / Path(out).with_suffix(""))
+    confined, _note = _confine(ctx, str(Path(out).with_suffix("")))
+    confined.parent.mkdir(parents=True, exist_ok=True)
+    stem = str(confined)
 
     if kind == "qr":
         try:

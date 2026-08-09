@@ -191,6 +191,27 @@ def test_dashboard_registry_excludes_host_tools_by_default(monkeypatch):
     reg = tool_policy.build_dashboard_registry(SimpleNamespace())
     names = set(reg.names())
     assert not (names & tool_policy.HOST_AFFECTING), f"host tools leaked: {names & tool_policy.HOST_AFFECTING}"
+    assert reg.ctx.confine_reads is True
+
+
+def test_alternate_file_read_helper_honors_dashboard_confinement(tmp_path):
+    from wallbreaker.tools.files import _resolve_read
+    ctx = _Ctx(cwd=str(tmp_path / "work"), confine_reads=True)
+    Path(ctx.cwd).mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret")
+    with pytest.raises(PermissionError, match="escapes the working directory"):
+        _resolve_read(ctx, str(outside))
+
+
+def test_fire_file_cannot_bypass_dashboard_read_confinement(tmp_path):
+    from wallbreaker.tools.fire_file import _read_source
+    work = tmp_path / "work"
+    work.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret")
+    ctx = _Ctx(cwd=str(work), confine_reads=True)
+    assert _read_source(ctx, str(outside)) == ("", "")
 
 
 def test_dashboard_registry_optin_keeps_host_tools_and_confines_reads(monkeypatch):
@@ -1022,6 +1043,15 @@ def test_http_tool_uses_pinned_transport():
 
     src = inspect.getsource(http_tool._http_request)
     assert "make_pinned_transport" in src, "http_request must use pinned transport"
+
+
+def test_model_discovery_uses_pinned_transport():
+    """Credential-bearing provider discovery must pin the connect-time IP too."""
+    import inspect
+    from wallbreaker.dashboard.server import _discover_profile_models
+    src = inspect.getsource(_discover_profile_models)
+    assert "make_pinned_transport" in src
+    assert "transport=make_pinned_transport()" in src
 
 
 # --------------------------------------------------------------- P3.4 REL-13 retry cap for non-idempotent generation

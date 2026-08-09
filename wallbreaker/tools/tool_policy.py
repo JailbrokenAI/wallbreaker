@@ -37,10 +37,13 @@ def build_dashboard_registry(config, cwd: str | None = None, *, allow_host_tools
 
     # Pass cwd only when set so monkeypatched build_registry doubles (lambda _config: ...) still work.
     registry = build_registry(config) if cwd is None else build_registry(config, cwd=cwd)
+    # Several otherwise-safe red-team tools accept input-image or corpus paths.  Keep
+    # *all* dashboard registries read-confined, not just the explicit host-tools mode;
+    # removing read_file alone must not leave alternate arbitrary-file-read gadgets.
+    registry.ctx.confine_reads = True
     if allow_host_tools:
         # Keep host tools, but confine read_file to cwd so an opted-in agent still can't
         # exfiltrate ~/.env / keys outside the project (audit SEC-5).
-        registry.ctx.confine_reads = True
         return registry
 
     for name in list(registry.names()):

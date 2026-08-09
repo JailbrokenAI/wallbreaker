@@ -8,7 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from wallbreaker.findings_log import generate_keypair, sign_entry, verify_entry
+from wallbreaker.findings_log import (
+    append_finding,
+    generate_keypair,
+    load_findings,
+    sign_entry,
+    verify_entry,
+)
 from wallbreaker.judging import run_ensemble
 
 
@@ -146,3 +152,28 @@ def test_sign_entry_does_not_mutate_input():
     signed = sign_entry(entry, priv)
     assert id(signed["payload"]) != original_id
     assert entry == {"k": "v"}
+
+
+def test_expected_public_key_rejects_resigned_replacement():
+    """Replacing payload, signature, and embedded pubkey must fail against a trust anchor."""
+    priv, pub = generate_keypair()
+    attacker_priv, _ = generate_keypair()
+    replacement = sign_entry({"finding_id": "forged"}, attacker_priv)
+    assert verify_entry(replacement) is True  # internally self-consistent
+    assert verify_entry(replacement, expected_public_key_bytes=pub) is False
+
+
+def test_load_findings_pins_one_key_and_explicit_anchor(tmp_path):
+    priv, pub = generate_keypair()
+    attacker_priv, _ = generate_keypair()
+    path = tmp_path / "findings.jsonl"
+    append_finding(path, {"id": 1}, priv)
+    append_finding(path, {"id": 2}, priv)
+    assert load_findings(path, public_key_bytes=pub) == [{"id": 1}, {"id": 2}]
+
+    forged = sign_entry({"id": 3}, attacker_priv)
+    with path.open("a", encoding="utf-8") as handle:
+        import json
+        handle.write(json.dumps(forged) + "\n")
+    with pytest.raises(ValueError, match="Signature verification failed"):
+        load_findings(path)

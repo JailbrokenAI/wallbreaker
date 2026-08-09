@@ -114,17 +114,24 @@ def _run_corpus_verify(args) -> int:
                 data = tomllib.load(fh)
             corpora = data.get("corpus", {})
 
-    # Print status for each corpus
+    # Print status for each corpus. Verification measures the artifact that runtime
+    # loaders will actually execute/read; merely having a non-UNRESOLVED string in the
+    # lock file is not proof of integrity.
+    from .tools.parsel_engine import local_corpus_sha
+    library_root = Path(__file__).resolve().parent.parent / "library"
     for name, entry in corpora.items():
         sha = entry.get("sha", "UNRESOLVED")
         if sha == "UNRESOLVED":
             status = "UNRESOLVED"
             any_problem = True
         else:
-            # Without --update we cannot know the actual HEAD; report pinned state only
-            actual = updated.get(name)
+            try:
+                actual = local_corpus_sha(library_root / name)
+            except RuntimeError:
+                actual = None
             if actual is None:
-                status = "OK"  # pinned and not UNRESOLVED; actual HEAD unknown without network
+                status = "MISSING_OR_UNVERIFIABLE"
+                any_problem = True
             elif actual == sha:
                 status = "OK"
             else:
