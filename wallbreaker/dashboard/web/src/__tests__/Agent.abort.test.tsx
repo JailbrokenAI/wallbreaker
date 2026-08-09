@@ -31,9 +31,9 @@ describe("Agent SSE abort (REL-4)", () => {
     const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     const { unmount } = render(<Agent hasTarget />);
 
-    const textarea = await screen.findByPlaceholderText(/assess whether the target/i);
+    const textarea = await screen.findByPlaceholderText(/assess whether the target|评估目标是否/i);
     await userEvent.type(textarea, "probe the target");
-    await userEvent.click(screen.getByRole("button", { name: /RUN AGENT/i }));
+    await userEvent.click(screen.getByRole("button", { name: /RUN AGENT|启动智能体/i }));
 
     await waitFor(() => expect(capturedSignal).not.toBeNull());
     expect(capturedSignal!.aborted).toBe(false);

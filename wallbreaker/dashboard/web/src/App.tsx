@@ -307,7 +307,8 @@ export function App() {
 
   return (
     <div className={`app ${railCollapsed ? "rail-collapsed" : ""}`}>
-      <aside className="rail" aria-label="主导航">
+      <a href="#main-content" className="skip-link">跳到主要内容</a>
+      <nav className="rail" aria-label="主导航">
         <div className="brand">
           <span className="mark">◆</span>
           {!railCollapsed ? (
@@ -369,16 +370,16 @@ export function App() {
           {!railCollapsed && <span className="nav-kbd">Ctrl K</span>}
         </button>
         <div className="foot">{zh.foot}</div>
-      </aside>
+      </nav>
 
       <div className="main">
         <div className="topbar">
-          <div className="title">
+          <h1 className="title">
             {NAV.find((n) => n.id === tab)?.label}
             {tab === "agent" && <span className="title-sub">自主攻击循环</span>}
             {tab === "console" && <span className="title-sub">单次发射</span>}
             {tab === "terminal" && <span className="title-sub">实时活动流</span>}
-          </div>
+          </h1>
           <div className="meta">
             {roles &&
               (["attacker", "target", "judge"] as const).map((role) => (
@@ -420,7 +421,7 @@ export function App() {
             </button>
           </div>
         </div>
-        <div className={`content ${tab === "terminal" ? "content-flush" : ""}`}>
+        <main id="main-content" className={`content ${tab === "terminal" ? "content-flush" : ""}`}>
           {visited.has("agent") && (
             <div className="tab-keep" hidden={tab !== "agent"}>
               <ErrorBoundary label={zh.nav.agent}>
@@ -484,7 +485,7 @@ export function App() {
               </ErrorBoundary>
             </div>
           )}
-        </div>
+        </main>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />

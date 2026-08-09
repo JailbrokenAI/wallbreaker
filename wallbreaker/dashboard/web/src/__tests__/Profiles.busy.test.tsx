@@ -43,7 +43,7 @@ describe("Profiles double-submit guard (REL-10)", () => {
     render(<Profiles />);
 
     // Find the attacker card's Remove button.
-    const heading = await screen.findByText("attacker profiles");
+    const heading = await screen.findByText(/attacker profiles/i);
     const card = heading.closest("section")!;
     const remove = within(card).getByRole("button", { name: "Remove" });
 

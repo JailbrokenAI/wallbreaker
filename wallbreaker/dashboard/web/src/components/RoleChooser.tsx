@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ModelPoolItem, type RoleAssignments, type RoleChoice } from "../api";
 import { zh } from "../i18n/zh";
+import { Dialog } from "../primitives/Dialog";
 
 const ROLE_LABEL: Record<string, string> = {
   attacker: zh.roles.attacker,
@@ -18,27 +19,29 @@ export function RoleChooser({
   onSaved: () => void;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [pool, setPool] = useState<ModelPoolItem[]>([]);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    const close = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+  const close = useCallback(() => {
+    setOpen(false);
+    queueMicrotask(() => trigger.current?.focus());
   }, []);
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     setError("");
-    api
-      .modelPool()
+    const request = api.modelPool?.();
+    if (!request) {
+      setPool([]);
+      setLoading(false);
+      return;
+    }
+    request
       .then((res) => setPool(res.items || []))
       .catch((err) => setError((err as Error).message))
       .finally(() => setLoading(false));
@@ -83,12 +86,12 @@ export function RoleChooser({
 
   return (
     <div className="role-chooser" ref={root}>
-      <button type="button" className="role-chip" onClick={() => setOpen(!open)} aria-expanded={open}>
+      <button ref={trigger} type="button" className="role-chip" onClick={() => setOpen(!open)} aria-expanded={open} aria-label={`${role} model chooser`}>
         <span>{ROLE_LABEL[role] || role}</span>
         <b>{value.model || "未设置"}</b>
         <small>{value.provider ? value.provider : "从模型池选择"}</small>
       </button>
-      {open && (
+      <Dialog open={open} title={`Configure ${ROLE_LABEL[role] || role}`} onClose={close}>
         <div className="role-menu role-menu-pool">
           <div className="role-menu-title">从模型池选择</div>
           <input
@@ -133,7 +136,7 @@ export function RoleChooser({
           </div>
           {error && <div className="err">{error}</div>}
         </div>
-      )}
+      </Dialog>
     </div>
   );
 }

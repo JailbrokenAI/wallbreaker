@@ -177,7 +177,8 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       setEnabled(initial);
     }).catch(() => {});
     // If a run is still active on the backend, reflect control state after remount.
-    api.agentStatus().then((status) => {
+    const statusRequest = api.agentStatus?.();
+    statusRequest?.then((status) => {
       if (!status.active) return;
       setRunning(true);
       runningRef.current = true;
@@ -227,6 +228,7 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
   }
 
   function push(it: Item) {
+    const pinned = isPinnedToBottom(bodyRef.current);
     setItems((prev) => {
       if (it.kind === "text" && prev.length && prev[prev.length - 1].kind === "text") {
         const copy = prev.slice();
@@ -236,6 +238,7 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
       }
       return [...prev, it];
     });
+    if (!pinned || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     requestAnimationFrame(() => {
       if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
     });
@@ -686,4 +689,10 @@ function Row({ it }: { it: Item }) {
     case "done": return <div className={`t-done ${DONE_KIND[it.status] || "neutral"}`}>● {it.status}{it.summary ? ` — ${it.summary}` : ""}</div>;
     case "error": return <div className="err mono">{it.error}</div>;
   }
+}
+const PIN_THRESHOLD_PX = 40;
+
+function isPinnedToBottom(el: HTMLElement | null): boolean {
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_THRESHOLD_PX;
 }

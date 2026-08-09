@@ -101,7 +101,7 @@ describe("TG7 axe sweep (WCAG 2.2 AA)", () => {
   it("App shell has landmarks (nav/main), an h1, a skip link, and no violations (A11Y-13)", async () => {
     const { container, findByRole } = render(<App />);
     // Landmarks + heading + skip link.
-    await findByRole("navigation", { name: /primary navigation/i });
+    await findByRole("navigation", { name: /primary navigation|主导航/i });
     expect(container.querySelector("main#main-content")).toBeInTheDocument();
     expect(container.querySelector("h1")).toBeInTheDocument();
     const skip = container.querySelector("a.skip-link");
@@ -123,29 +123,28 @@ describe("TG7 axe sweep (WCAG 2.2 AA)", () => {
           scorecard: { asr: 0.25, total: 8, hits: 2, grade: "B", by_technique: { author_persona: { hits: 1, total: 4 } } },
           findings_count: 2, runs_count: 3, latest_run: "run-1",
         }}
-        status="data"
       />,
     );
-    await findByText(/Attack success rate/i);
+    await findByText(/Attack success rate|攻击成功率/i);
     await expectNoViolations(container);
   });
 
   it("Console has no violations", async () => {
     const { container, findByText } = render(<Console hasTarget />);
-    await findByText(/Compose attack/i);
+    await findByText(/Compose attack|编排攻击/i);
     await waitFor(() => expect(mockApi.transforms).toHaveBeenCalled());
     await expectNoViolations(container);
   });
 
   it("Agent has no violations", async () => {
     const { container, findByText } = render(<Agent hasTarget />);
-    await findByText(/drives the attack loop/i);
+    await findByText(/drives the attack loop|自主驱动攻击循环/i);
     await expectNoViolations(container);
   });
 
   it("Arsenal has no violations", async () => {
-    const { container, findByText } = render(<Arsenal />);
-    await findByText(/Prompt template|Select an arsenal/i);
+    const { container, findByRole } = render(<Arsenal />);
+    await findByRole("heading", { name: /dan/i });
     await expectNoViolations(container);
   });
 

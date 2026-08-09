@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, verdictKind, type ComposeResult, type Preset, type Transform, type FireResult } from "../api";
 import { appendActivity } from "../activityLog";
 import { maybeNotifyVerdict } from "../notify";
+import { InteractiveChip } from "../primitives/InteractiveChip";
 
 type BusyAction = "compose" | "fire" | "firePayload" | null;
 
@@ -114,8 +115,8 @@ export function Console({ hasTarget }: { hasTarget: boolean }) {
   // If a previous fire is still held by the backend (e.g. after refresh), allow stop.
   useEffect(() => {
     let cancelled = false;
-    api.consoleStatus()
-      .then((st) => {
+    const statusRequest = api.consoleStatus?.();
+    statusRequest?.then((st) => {
         if (cancelled || !st.active) return;
         busyRef.current = true;
         setBusy("fire");
@@ -286,22 +287,23 @@ export function Console({ hasTarget }: { hasTarget: boolean }) {
         <label className="fld">请求内容</label>
         <textarea rows={5} value={request} placeholder="要测试的有害请求…" onChange={(e) => setRequest(e.target.value)} />
         <label className="fld">预设（包装请求）</label>
-        <select value={preset} onChange={(e) => setPreset(e.target.value)}>
+        <select aria-label="预设" value={preset} onChange={(e) => setPreset(e.target.value)}>
           <option value="">无（原始发送）</option>
           {presets.map((p) => <option key={p.name} value={p.name}>{p.name} - {p.description.slice(0, 60)}</option>)}
         </select>
         <label className="fld">编码变换（已选 {picked.length}）</label>
-        <div className="chips">
+        <div className="chips" role="group" aria-label="编码变换">
           {transforms.map((t) => (
-            <span key={t.name} className={`chip ${picked.includes(t.name) ? "on" : ""}`} title={t.description} onClick={() => toggle(t.name)}>
+            <InteractiveChip key={t.name} selected={picked.includes(t.name)} title={t.description} onToggle={() => toggle(t.name)}>
               {t.name}
-            </span>
+            </InteractiveChip>
           ))}
         </div>
         <label className="fld">系统提示（可选）</label>
         <textarea rows={2} value={system} placeholder="可选的目标系统提示…" onChange={(e) => setSystem(e.target.value)} />
         <label className="fld">最大 tokens</label>
         <input
+          aria-label="最大 tokens"
           type="number"
           min={1}
           step={1}
