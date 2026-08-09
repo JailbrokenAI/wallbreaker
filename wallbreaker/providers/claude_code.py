@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
 import shutil
+import tempfile
 from collections.abc import AsyncIterator
 
 from ..agent.messages import (
@@ -23,6 +25,14 @@ from .base import DEFAULT_TIMEOUT, Provider, ProviderError, parse_tool_args
 # Model aliases the CLI accepts directly (sonnet/opus/haiku) plus any full id passthrough.
 _DEFAULT_MODEL = "sonnet"
 _TOOLCALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+
+# Windows CreateProcess caps the ENTIRE command line at 32767 chars and Python maps the
+# overflow (WinError 206) to errno ENOENT -> FileNotFoundError, i.e. a too-long argv is
+# indistinguishable from a missing binary. The harness system prompt does not fit in argv at
+# all (DEFAULT_SYSTEM alone is ~44K chars), so anything long is spilled to a temp file and
+# handed over with the CLI's --system-prompt-file / --append-system-prompt-file flags.
+_MAX_INLINE_PROMPT = 8000
+_CMDLINE_TOO_LONG = 206
 
 _TOOL_PROTOCOL = (
     "\n\n# HOW YOU ACT\n"
@@ -130,28 +140,57 @@ class ClaudeCodeProvider(Provider):
         self.last_stop_reason: str | None = None
         self.last_completion_empty: bool = False
 
-    def _system_args(self, system: str | None) -> list[str]:
+    def _prompt_flag(self, flag: str, value: str, sink: list[str]) -> list[str]:
+        """Inline a short prompt; spill a long one to a temp file (see _MAX_INLINE_PROMPT)."""
+        if len(value) <= _MAX_INLINE_PROMPT:
+            return [flag, value]
+        fd, path = tempfile.mkstemp(prefix="wb_claude_sys_", suffix=".txt")
+        # Register ownership before writing. If fdopen/write raises, _run_cli's finally block
+        # must still know about the partially written prompt file and remove it.
+        sink.append(path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(value)
+        except BaseException:
+            # fdopen owns and normally closes fd, but it may itself be the failing operation.
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            raise
+        return [flag + "-file", path]
+
+    def _system_args(self, system: str | None, sink: list[str]) -> list[str]:
         """Deliver the system prompt. When a system_prompt_file is set (and exists) it is the
         base operator prompt (--system-prompt-file) and the harness-derived system/tool
         protocol is APPENDED on top (--append-system-prompt), so his file leads and nothing
-        the loop needs is dropped."""
+        the loop needs is dropped. Long prompts go through a temp file instead of argv; any
+        file created that way is appended to `sink` for the caller to delete. Requiring the
+        sink prevents a long-prompt caller from accidentally creating an unowned temp file."""
         spf = self.system_prompt_file
         if spf and os.path.isfile(spf):
             args = ["--system-prompt-file", spf]
             if system:
-                args += ["--append-system-prompt", system]
+                args += self._prompt_flag("--append-system-prompt", system, sink)
             return args
         if system:
-            return ["--system-prompt", system]
+            return self._prompt_flag("--system-prompt", system, sink)
         return []
 
     async def _run_cli(self, prompt: str, system: str | None) -> dict:
+        tmp_files: list[str] = []
+        try:
+            return await self._spawn_cli(prompt, system, tmp_files)
+        finally:
+            for path in tmp_files:
+                with contextlib.suppress(OSError):
+                    os.unlink(path)
+
+    async def _spawn_cli(self, prompt: str, system: str | None, tmp_files: list[str]) -> dict:
         args = [
             self.bin, "-p",
             "--output-format", "json",
             "--model", self.endpoint.model or _DEFAULT_MODEL,
             "--allowedTools", "none",
-            *self._system_args(system),
+            *self._system_args(system, tmp_files),
         ]
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -161,6 +200,12 @@ class ClaudeCodeProvider(Provider):
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as exc:
+            if getattr(exc, "winerror", None) == _CMDLINE_TOO_LONG:
+                raise ProviderError(
+                    "claude CLI command line too long ("
+                    + str(sum(len(a) for a in args)) + " chars; Windows caps it at 32767). "
+                    "Pass long prompts via a file, not argv."
+                ) from exc
             raise ProviderError(
                 "claude CLI not found (looked for '" + self.bin + "'). Install Claude Code "
                 "or set WALLBREAKER_CLAUDE_BIN to its path."
