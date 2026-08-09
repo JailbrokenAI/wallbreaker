@@ -334,7 +334,11 @@ async def _crescendo_auto(args: dict, ctx: ToolContext) -> str:
 
 
 async def _crescendo(args: dict, ctx: ToolContext) -> str:
+    # Backward compatibility: supplying the legacy static turn ladder still
+    # selects static mode, while calls without turns get the new auto default.
     mode = str(args.get("mode", "auto")).strip().lower()
+    if "mode" not in args and args.get("turns"):
+        mode = "static"
     if mode in ("auto", "crescendomation", "adaptive"):
         return await _crescendo_auto(args, ctx)
     return await _crescendo_static(args, ctx)

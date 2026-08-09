@@ -72,6 +72,10 @@ async def _campaign(args: dict, ctx: ToolContext) -> str:
     max_tokens = int(args.get("max_tokens", 500))
 
     use_bandit = bool(args.get("bandit", True))
+    # An explicitly supplied ladder is already an operator-selected order;
+    # preserve it unless bandit reordering is explicitly requested.
+    if "ladder" in args and "bandit" not in args:
+        use_bandit = False
     store = None
     bandit = None
     if use_bandit:

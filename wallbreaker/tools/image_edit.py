@@ -449,7 +449,11 @@ async def _image_crescendo_alias(args: dict, ctx: ToolContext) -> str:
 
 
 async def _image_chain(args: dict, ctx: ToolContext) -> str:
+    # Preserve legacy callers that provide a static edit ladder without an
+    # explicit mode; calls without steps use the new adaptive default.
     mode = str(args.get("mode", "auto")).strip().lower()
+    if "mode" not in args and args.get("steps"):
+        mode = "static"
     if mode in ("auto", "adaptive", "semantic"):
         return await _image_chain_auto(args, ctx)
     return await _image_chain_static(args, ctx)

@@ -90,20 +90,45 @@ function createWindow(): BrowserWindow {
   win.on("move", () => persistBounds(win));
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    const external = allowedExternalUrl(url);
+    if (external) shell.openExternal(external);
     return { action: "deny" };
   });
 
   // Keep desktop pages on local dashboard host when possible
   win.webContents.on("will-navigate", (event, url) => {
     const st = backend.getStatus();
-    if (st.state === "ready" && url.startsWith("http") && !url.startsWith(st.url)) {
+    if (st.state === "ready" && !sameOrigin(url, st.url)) {
       event.preventDefault();
-      shell.openExternal(url);
+      const external = allowedExternalUrl(url);
+      if (external) shell.openExternal(external);
     }
   });
 
   return win;
+}
+
+function allowedExternalUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    return ["http:", "https:", "mailto:"].includes(parsed.protocol) ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameOrigin(candidate: string, expected: string): boolean {
+  try {
+    return new URL(candidate).origin === new URL(expected).origin;
+  } catch {
+    return false;
+  }
+}
+
+function pathUnderProject(target: string): string | null {
+  const root = path.resolve(projectRoot());
+  const candidate = path.resolve(target);
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`) ? candidate : null;
 }
 
 function persistBounds(win: BrowserWindow): void {
@@ -305,16 +330,17 @@ function registerIpc(): void {
     return backend.getStatus();
   });
   ipcMain.handle("desktop:open-external", async (_e, url: string) => {
-    if (typeof url === "string" && /^(https?:|mailto:)/i.test(url)) {
-      await shell.openExternal(url);
-    }
+    const external = typeof url === "string" ? allowedExternalUrl(url) : null;
+    if (external) await shell.openExternal(external);
   });
   ipcMain.handle("desktop:open-path", async (_e, target: string) => {
     if (typeof target !== "string") return "invalid";
-    return shell.openPath(target);
+    const allowed = pathUnderProject(target);
+    return allowed ? shell.openPath(allowed) : "path outside project root";
   });
   ipcMain.handle("desktop:show-item", async (_e, target: string) => {
-    if (typeof target === "string") shell.showItemInFolder(target);
+    const allowed = typeof target === "string" ? pathUnderProject(target) : null;
+    if (allowed) shell.showItemInFolder(allowed);
   });
   ipcMain.handle(
     "desktop:pick-file",

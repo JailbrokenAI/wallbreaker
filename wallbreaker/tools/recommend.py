@@ -31,6 +31,7 @@ async def _recommend(args: dict, ctx: ToolContext) -> str:
     max_tokens = int(args.get("max_tokens", 350))
     top = max(1, int(args.get("top", 3)))
     timeout = float(args.get("timeout", 45))
+    timeout_is_explicit = "timeout" in args
     concurrency = max(1, int(args.get("concurrency", 5)))
     use_bandit = bool(args.get("bandit", True))
     category = args.get("category", "transform")
@@ -64,10 +65,10 @@ async def _recommend(args: dict, ctx: ToolContext) -> str:
                 # bound BOTH the target call and the judge grade, so a hung backend or a slow
                 # judge can never stall the whole survey - the probe becomes a timed-out row.
                 reply = await await_llm(target.complete([user(encoded)], system=system, max_tokens=max_tokens),
-                    timeout=timeout,
+                    timeout=timeout, floor=not timeout_is_explicit,
                 )
                 label, score, _r, _s = await await_llm(grade(ctx.judge_endpoint, reply, payload=encoded, objective=base),
-                    timeout=timeout,
+                    timeout=timeout, floor=not timeout_is_explicit,
                 )
                 rank = _SCORE.get(label, 0) * 10 + (score or 0)
                 outcome = (name, label, rank)

@@ -652,10 +652,11 @@ def compose_system(endpoint, base: str | None = None, config=None) -> str:
     )
     # Skip doctrine if the operator file already IS the doctrine path (no double inject).
     skip_doctrine = bool(doctrine) and is_same_doctrine_file(spf, config)
-    if doctrine and not skip_doctrine:
-        parts.append(doctrine)
 
     # --- Operator identity ---
+    # Preserve the long-standing contract that an explicitly configured operator
+    # identity leads the composed prompt.  This matters for profile switching and
+    # avoids silently demoting operator policy behind the product doctrine.
     inline = str(getattr(endpoint, "system_prompt", "") or "").strip()
     if inline:
         parts.append(inline)
@@ -667,6 +668,9 @@ def compose_system(endpoint, base: str | None = None, config=None) -> str:
                 text = ""
             if text:
                 parts.append(text)
+
+    if doctrine and not skip_doctrine:
+        parts.append(doctrine)
 
     parts.append(base)
     # Drop empties; join with blank lines.

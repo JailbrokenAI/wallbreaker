@@ -51,7 +51,12 @@ def _looks_token_truncated(stop: str | None, empty: bool, reasoning: str | None)
 _MIN_OUTER_LLM_TIMEOUT = 120.0
 
 
-async def await_llm(coro: Awaitable[T] | Coroutine[Any, Any, T], timeout: float | None = None) -> T:
+async def await_llm(
+    coro: Awaitable[T] | Coroutine[Any, Any, T],
+    timeout: float | None = None,
+    *,
+    floor: bool = True,
+) -> T:
     """Await an LLM completion without cancelling a healthy stream.
 
     Historical tools wrapped ``complete*`` in ``asyncio.wait_for(..., 30|45)``. That
@@ -72,7 +77,9 @@ async def await_llm(coro: Awaitable[T] | Coroutine[Any, Any, T], timeout: float 
         return await coro
     if t <= 0:
         return await coro
-    hard = max(t, _MIN_OUTER_LLM_TIMEOUT)
+    # Tool defaults use the safety floor, but an explicitly operator-selected
+    # deadline must remain enforceable (and keeps bounded fan-out from hanging).
+    hard = max(t, _MIN_OUTER_LLM_TIMEOUT) if floor else t
     try:
         return await asyncio.wait_for(coro, timeout=hard)
     except asyncio.TimeoutError as exc:

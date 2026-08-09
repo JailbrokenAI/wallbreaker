@@ -2503,7 +2503,7 @@ class RthApp(App):
         pin = "+".join(tgt.provider) if tgt and tgt.provider else "none"
         payload = str(f.get("payload", ""))
         block = (
-            "=== Daedalus repro pack ===\n"
+            "=== Wallbreaker repro pack · Daedalus ===\n"
             f"target.model : {tgt.model if tgt else 'n/a'}\n"
             f"target.base  : {tgt.base_url if tgt else 'n/a'}\n"
             f"provider.pin : {pin}\n"

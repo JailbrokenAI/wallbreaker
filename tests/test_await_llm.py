@@ -22,5 +22,10 @@ def test_await_llm_zero_timeout_disables_outer():
     assert asyncio.run(await_llm(_slow(0.01, "z"), timeout=0)) == "z"
 
 
+def test_await_llm_can_honor_explicit_operator_deadline():
+    with pytest.raises(TimeoutError, match="outer timeout"):
+        asyncio.run(await_llm(_slow(0.05), timeout=0.001, floor=False))
+
+
 def test_min_outer_floor_is_at_least_120():
     assert _MIN_OUTER_LLM_TIMEOUT >= 120.0

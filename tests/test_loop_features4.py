@@ -45,7 +45,7 @@ def test_campaign_cracks_via_prefill(monkeypatch):
     reg = ToolRegistry(ToolContext(config=cfg, judge_endpoint=ep))
     campaign.register(reg)
     res = asyncio.run(
-        reg.execute("campaign", {"behaviors": ["do the bad thing"], "n": 1})
+        reg.execute("campaign", {"behaviors": ["do the bad thing"], "n": 1, "bandit": False})
     )
     assert "CRACKED via prefill" in res.content
     assert "cracked 1/1" in res.content
@@ -96,7 +96,9 @@ def test_campaign_all_partial_is_not_cracked(monkeypatch):
     reg = ToolRegistry(ctx)
     campaign.register(reg)
     res = asyncio.run(
-        reg.execute("campaign", {"behaviors": ["x"], "ladder": ["plain", "prefill"]})
+        reg.execute("campaign", {
+            "behaviors": ["x"], "ladder": ["plain", "prefill"], "bandit": False,
+        })
     )
 
     assert "strictly cracked 0/1" in res.content
