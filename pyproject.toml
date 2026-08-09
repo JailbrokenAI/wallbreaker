@@ -25,6 +25,7 @@ dependencies = [
     "mcp>=1.0,<2.0",
     "python-dotenv>=1.0",
     "pillow>=10.0",
+    "pyyaml>=6.0.3",
 ]
 
 [project.urls]
@@ -59,3 +60,12 @@ include = ["wallbreaker*", "p4rs3lt0ngv3_mcp*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "hypothesis>=6.0",
+    "fastapi>=0.115",
+    "pillow>=11.0",
+]

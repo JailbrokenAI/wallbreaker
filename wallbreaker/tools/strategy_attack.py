@@ -127,7 +127,7 @@ async def _name_strategy(attacker, objective: str, prompt: str, bounded) -> tupl
 async def _run_strategy_attack(objective, attacker, target, judge_endpoint, library,
                                rounds, k, target_system, max_tokens, *,
                                max_calls=None, call_timeout=_CALL_TIMEOUT, run=None,
-                               jump=_JUMP):
+                               jump=_JUMP, target_family=""):
     """Drive the AutoDAN-Turbo + ASTRA loop for ONE objective against a persistent library.
 
     Each round embeds the target's last refusal, retrieves the top-k proven (effective/
@@ -166,7 +166,17 @@ async def _run_strategy_attack(objective, attacker, target, judge_endpoint, libr
             _note(f"budget reached ({calls}/{max_calls} calls) - stopping before round {rnd}")
             break
 
-        rows = library.retrieve_positive(last_response, k)
+        family_rows = library.retrieve_by_family(target_family, k) if target_family else []
+        rows = []
+        seen = set()
+        for row in family_rows + library.retrieve_positive(last_response, k):
+            name = row.get("strategy_name", "")
+            if name in seen:
+                continue
+            seen.add(name)
+            rows.append(row)
+            if len(rows) >= k:
+                break
         sys_prompt = ATTACKER_SYSTEM
         if rows:
             sys_prompt += STRATEGY_BLOCK.format(strategies=_format_strategies(rows))
@@ -209,7 +219,25 @@ async def _run_strategy_attack(objective, attacker, target, judge_endpoint, libr
         succeeded += 1
         score = score or 0
         try:
-            library.distill(objective, cand, resp, reasoning, label, score)
+            distilled = library.distill(
+                objective, cand, resp, reasoning, label, score, family=target_family or None
+            )
+            if label in ("COMPLIED", "PARTIAL"):
+                if distilled is not None:
+                    library.update_transfer_score(
+                        distilled["strategy_name"], origin_delta=1,
+                        target_family=target_family or None,
+                    )
+                for row in rows:
+                    origin = row.get("family")
+                    if not origin or not target_family:
+                        continue
+                    library.update_transfer_score(
+                        row["strategy_name"],
+                        same_family_delta=1 if origin == target_family else 0,
+                        cross_family_delta=1 if origin != target_family else 0,
+                        target_family=target_family,
+                    )
         except Exception:
             pass
         prev = best["score"]
@@ -231,7 +259,7 @@ async def _run_strategy_attack(objective, attacker, target, judge_endpoint, libr
             calls += 1
             name, desc = await _name_strategy(attacker, objective, cand, _bounded)
             if name:
-                library.add(name, desc, cand, score)
+                library.add(name, desc, cand, score, family=target_family or None)
                 learned += 1
                 _note(f"round {rnd}: score jump {max(prev, 0)}->{score}, learned '{name}'")
 
@@ -275,6 +303,9 @@ async def _strategy_attack(args: dict, ctx: ToolContext) -> str:
     attacker = build_provider(attacker_ep)
     target = build_provider(ctx.config.target)
     library = StrategyLibrary.for_cwd(ctx.cwd)
+    from .campaign import classify_family
+
+    target_family = classify_family(ctx.config.target.model)
     before = len(library.all())
 
     with ctx.run("strategy_attack", total=rounds,
@@ -282,6 +313,7 @@ async def _strategy_attack(args: dict, ctx: ToolContext) -> str:
         best, traj, learned = await _run_strategy_attack(
             objective, attacker, target, ctx.judge_endpoint, library, rounds, k,
             target_system, max_tokens, max_calls=max_calls, run=run,
+            target_family=target_family,
         )
         after = len(library.all())
         run.done(

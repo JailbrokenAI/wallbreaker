@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "p4rs3lt0ngv3": {
+      "command": "python",
+      "args": ["-m", "p4rs3lt0ngv3_mcp"],
+      "env": {
+        "PARSEL_REPO": "/path/to/wallbreaker/library/P4RS3LT0NGV3"
+      }
+    },
+    "wallbreaker": {
+      "command": "python",
+      "args": ["-m", "wallbreaker_mcp"],
+      "env": {
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+      }
+    }
+  }
+}

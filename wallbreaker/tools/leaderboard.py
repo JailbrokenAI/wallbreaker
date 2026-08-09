@@ -80,6 +80,63 @@ async def _leaderboard(args: dict, ctx: ToolContext) -> str:
     return "\n".join(lines)
 
 
+async def _cross_family_leaderboard(args: dict, ctx: ToolContext) -> str:
+    """R-I3: run a battery across ≥3 profiles and report a cross-family transfer matrix."""
+    from ..strategy_lib import StrategyLibrary, cross_family_matrix
+    from ..tools.campaign import classify_family
+
+    names = args.get("targets")
+    profiles = ctx.config.profiles
+    if not names:
+        names = list(profiles)
+    endpoints = []
+    for n in names:
+        if n in profiles:
+            endpoints.append((n, profiles[n]))
+    if len(endpoints) < 3:
+        return (
+            f"Error: --cross-family needs >=3 profiles. Available: "
+            f"{', '.join(profiles) or '(none)'}"
+        )
+
+    lib = StrategyLibrary.for_cwd(ctx.cwd)
+    strategies = lib.all()
+    families = sorted({
+        classify_family(ep.model) for _, ep in endpoints
+    })
+    result = cross_family_matrix(strategies, families)
+    matrix = result["matrix"]
+
+    # Render the matrix
+    col_w = max(14, max(len(f) for f in families) + 2)
+    _corner = "origin / target"  # avoid backslash in f-string expr (SyntaxError on Python 3.11)
+    header = f"{_corner:20} " + "".join(f"{f:>{col_w}}" for f in families)
+    rows = [
+        f"CROSS-FAMILY TRANSFER MATRIX ({len(endpoints)} profiles, {len(strategies)} strategies)",
+        "=" * len(header),
+        header,
+        "-" * len(header),
+    ]
+    for orig in families:
+        cells = []
+        for tgt in families:
+            val = matrix.get(orig, {}).get(tgt)
+            cells.append((val or "-")[:col_w - 1])
+        rows.append(f"{orig:20} " + "".join(f"{c:>{col_w}}" for c in cells))
+    rows.append("=" * len(header))
+    rows.append(
+        f"rows = origin family, cols = target family, "
+        f"cell = best-transferring strategy name (or '-' if no data)"
+    )
+    return "\n".join(rows)
+
+
+async def _leaderboard_dispatch(args: dict, ctx: ToolContext) -> str:
+    if args.get("cross_family"):
+        return await _cross_family_leaderboard(args, ctx)
+    return await _leaderboard(args, ctx)
+
+
 def register(registry: ToolRegistry) -> None:
     registry.add(
         name="leaderboard",
@@ -108,7 +165,8 @@ def register(registry: ToolRegistry) -> None:
                 "n": {"type": "integer", "description": "Behaviors per target (default 5)"},
                 "seed": {"type": "integer"},
                 "max_tokens": {"type": "integer"},
+                "cross_family": {"type": "boolean", "description": "Report a cross-family transfer matrix instead of a per-target ASR ranking (R-I3). Requires >=3 profiles."},
             },
         },
-        handler=_leaderboard,
+        handler=_leaderboard_dispatch,
     )

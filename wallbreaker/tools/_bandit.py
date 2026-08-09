@@ -33,8 +33,13 @@ class Bandit:
     def __init__(self, arms=None, c: float = DEFAULT_C, rng=None):
         self._arms: dict[str, _Arm] = {}
         if arms:
-            for key, val in arms.items():
-                self._arms[str(key)] = _Arm(int(val.get("n", 0)), float(val.get("reward", 0.0)))
+            if isinstance(arms, dict):
+                for key, val in arms.items():
+                    self._arms[str(key)] = _Arm(int(val.get("n", 0)), float(val.get("reward", 0.0)))
+            else:
+                # Accept a list of arm keys (pre-register with zero stats)
+                for key in arms:
+                    self._arms[str(key)] = _Arm()
         self._c = float(c)
         self._rng = rng
 
@@ -268,3 +273,115 @@ class ContextualBandit:
     @classmethod
     def load(cls, path: str, seed: int = 0) -> "ContextualBandit":
         return cls(_read_stats(path), seed=seed)
+
+    def best_by_context(self, context) -> str | None:
+        """Return the arm with the highest posterior mean for this context, or None."""
+        bucket = self._ctx.get(_ctx_key(context), {})
+        if not bucket:
+            return None
+        return max(bucket, key=lambda arm: bucket[arm].mean)
+
+
+# ---------------------------------------------------------------------------
+# TG3 — Family-aware bandit helpers (item D / R-D2, R-D3)
+# ---------------------------------------------------------------------------
+
+def seed_family_priors(bandit: ContextualBandit, family: str, category: str,
+                       priors: dict) -> None:
+    """Seed a contextual bandit with empirical family priors if no live data exists yet.
+
+    ``priors`` is a dict[technique -> (wins, total)] from CHANGELOG ASR data.
+    Only seeds when the bucket has no live data (≥1 real update), so empirical
+    data always overrides the prior without fighting it (R-D2).
+    """
+    family_priors = priors.get(family, {})
+    if not family_priors:
+        return
+    context = (family, category)
+    if bandit.has_stats(context):
+        return  # live data already present — don't overwrite
+    for technique, (wins, total) in family_priors.items():
+        held = max(0.0, total - wins)
+        # Inject as real updates so posterior is in the same space as live data.
+        for _ in range(int(wins)):
+            bandit.update(context, technique, 1.0)
+        for _ in range(int(held)):
+            bandit.update(context, technique, 0.0)
+
+
+def seed_bandit_priors(bandit: Bandit, family: str, priors: dict) -> None:
+    """Seed the model-specific campaign bandit from family priors when cold.
+
+    ``seed_family_priors`` maintains the aggregate family bucket used by stats;
+    this companion applies the same observations to the Bandit instance that
+    actually ranks campaign techniques.
+    """
+    if bandit.has_stats():
+        return
+    for technique, (wins, total) in priors.get(family, {}).items():
+        for _ in range(int(wins)):
+            bandit.update(technique, 1.0)
+        for _ in range(int(max(0.0, total - wins))):
+            bandit.update(technique, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# TG5 — Multi-objective campaign bandit (item G / R-G1, R-G4)
+# ---------------------------------------------------------------------------
+
+def arm_key(technique: str, transform_chain: str, behavior_category: str) -> str:
+    """Canonical string key for a (technique, transform_chain, behavior_category) arm."""
+    return f"{technique or '?'}|{transform_chain or ''}|{behavior_category or 'default'}"
+
+
+def regret_curve(
+    rewards_by_step: list[float],
+    baseline_rewards_by_step: list[float],
+) -> dict:
+    """Compute cumulative ASR for the bandit and a random-arm baseline (R-G4).
+
+    Returns::
+        {
+            "bandit":   list[float],  # cumulative ASR at each step
+            "random":   list[float],  # random-arm cumulative ASR at each step
+            "beats_random": bool,     # True if bandit ASR > random at the final step
+        }
+    """
+    def cumulative_asr(rewards):
+        out = []
+        total = hits = 0
+        for r in rewards:
+            total += 1
+            hits += r >= 1.0  # COMPLIED counts as a hit
+            out.append(hits / total if total else 0.0)
+        return out
+
+    bandit_asr = cumulative_asr(rewards_by_step)
+    random_asr = cumulative_asr(baseline_rewards_by_step)
+    beats = bandit_asr[-1] > random_asr[-1] if bandit_asr and random_asr else False
+    return {"bandit": bandit_asr, "random": random_asr, "beats_random": beats}
+
+
+def best_technique_by_family(path: str, families=None) -> dict:
+    """Return {family: {category: best_technique}} from a saved ContextualBandit file.
+
+    Used by /stats (R-D3) to surface the best technique per family.
+    ``families`` defaults to the 6 known families when None.
+    """
+    known = families or ["openai", "anthropic", "google", "deepseek", "meta", "other"]
+    data = _read_stats(path)
+    cb = ContextualBandit(data)
+    result: dict = {}
+    for ckey, bucket in cb._ctx.items():
+        if not bucket:
+            continue
+        # ckey is "family|category"
+        parts = ckey.split("|", 1)
+        family = parts[0]
+        category = parts[1] if len(parts) > 1 else "default"
+        if families is not None and family not in families:
+            continue
+        best = max(bucket, key=lambda arm: bucket[arm].mean) if bucket else None
+        if best:
+            result.setdefault(family, {})[category] = best
+    return result
