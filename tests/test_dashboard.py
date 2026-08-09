@@ -203,6 +203,64 @@ def test_fire_records_full_console_attempt(monkeypatch, tmp_path):
     assert [event["type"] for event in response["stream_metadata"]] == ["usage", "stop"]
 
 
+def test_console_conversation_is_multi_turn_until_reset_and_archive(monkeypatch, tmp_path):
+    from wallbreaker.config import Config, Endpoint
+    from wallbreaker.tools.registry import ToolResult
+    import wallbreaker.tools as tools_mod
+
+    sessions = tmp_path / "sessions"
+    cfg = Config(
+        default_profile="attacker",
+        profiles={"attacker": Endpoint("attacker", "openai", "http://attacker", "attack-model")},
+        target=Endpoint("target", "openai", "http://target", "target-model"),
+        path=tmp_path / "config.toml",
+    )
+    registries = []
+
+    class FakeRegistry:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, name, args):
+            self.calls.append((name, args))
+            return ToolResult(f"{name}: {args['prompt']}")
+
+    def build_registry(_config):
+        registry = FakeRegistry()
+        registries.append(registry)
+        return registry
+
+    monkeypatch.setattr(tools_mod, "build_registry", build_registry)
+    client = TestClient(create_app(config=cfg, sessions_dir=sessions))
+
+    first = client.post("/api/fire", json={"request": "first"}).json()
+    second = client.post("/api/fire", json={"request": "follow up"}).json()
+    state = client.get("/api/console/conversation").json()
+
+    assert [name for name, _args in registries[0].calls] == ["query_target", "continue_target"]
+    assert first["turn"]["continuation"] is False
+    assert second["turn"]["continuation"] is True
+    assert state["active"] is True
+    assert state["turn_count"] == 2
+    assert [turn["request"] for turn in state["turns"]] == ["first", "follow up"]
+
+    reset = client.post("/api/console/conversation/reset").json()
+    assert reset["ok"] is True
+    assert reset["archived_run"] == first["run_log"]
+    assert reset["active"] is False
+    records = [
+        json.loads(line)
+        for line in (sessions / reset["archived_run"]).read_text(encoding="utf-8").splitlines()
+    ]
+    assert records[-1]["kind"] == "conversation_archived"
+    assert records[-1]["turn_count"] == 2
+
+    third = client.post("/api/fire", json={"request": "new conversation"}).json()
+    assert len(registries) == 2
+    assert registries[1].calls[0][0] == "query_target"
+    assert third["run_log"] != first["run_log"]
+
+
 def test_agent_run_logs_full_scaffold_inference_and_tools(monkeypatch, tmp_path):
     from wallbreaker.agent.messages import (
         ReasoningDelta, StopEvent, TextDelta, ToolUseEvent, UsageEvent,

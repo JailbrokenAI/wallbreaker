@@ -60,6 +60,7 @@ def test_provider_can_be_saved_and_tested_without_default_model(monkeypatch, tmp
     import wallbreaker.dashboard.server as server_mod
 
     cfg = _config(tmp_path)
+    completed_with = []
 
     async def discover(name, endpoint):
         assert name == "catalog-only"
@@ -75,6 +76,20 @@ def test_provider_can_be_saved_and_tested_without_default_model(monkeypatch, tmp
         }
 
     monkeypatch.setattr(server_mod, "_discover_profile_models", discover)
+
+    class VerifiedProvider:
+        async def complete(self, messages, **kwargs):
+            completed_with.append(messages[0].text())
+            return "OK"
+
+        async def aclose(self):
+            return None
+
+    def build_verified(endpoint, timeout=None):
+        assert endpoint.model == "vendor/model-a"
+        return VerifiedProvider()
+
+    monkeypatch.setattr(server_mod, "build_provider", build_verified)
     client = TestClient(create_app(config=cfg, sessions_dir=tmp_path / "sessions"))
     saved = client.put("/api/providers/catalog-only", json={
         "protocol": "openai",
@@ -94,6 +109,9 @@ def test_provider_can_be_saved_and_tested_without_default_model(monkeypatch, tmp
     tested = client.post("/api/providers/catalog-only/test")
     assert tested.status_code == 200
     assert tested.json()["models"] == ["vendor/model-a", "vendor/model-b"]
+    assert tested.json()["model"] == "vendor/model-a"
+    assert tested.json()["inference"]["ok"] is True
+    assert completed_with == ["Connectivity check. Reply with OK."]
     catalog = client.get("/api/models", params={"profile": "catalog-only"})
     assert catalog.status_code == 200
     assert catalog.json()["models"] == ["vendor/model-a", "vendor/model-b"]

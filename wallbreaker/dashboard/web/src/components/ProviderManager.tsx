@@ -46,11 +46,14 @@ export function ProviderManager({ onChanged }: { onChanged: () => void }) {
     setTestResults((current) => ({ ...current, [provider.name]: { ok: true, message: "Testing connection…" } }));
     try {
       const result = await api.testProvider(provider.name);
-      if (!result.ok) throw new Error(result.error || "Provider unavailable");
+      if (!result.ok || !result.inference?.ok) throw new Error(result.error || "Authenticated inference failed");
       const count = result.models.length;
       setTestResults((current) => ({
         ...current,
-        [provider.name]: { ok: true, message: `Connected · ${count} model${count === 1 ? "" : "s"} found` },
+        [provider.name]: {
+          ok: true,
+          message: `Authenticated inference passed · ${result.model} · ${result.inference.latency_ms} ms · ${count} model${count === 1 ? "" : "s"} discovered`,
+        },
       }));
       invalidateModelCatalog(provider.name);
     }
@@ -84,7 +87,7 @@ export function ProviderManager({ onChanged }: { onChanged: () => void }) {
           <div role="cell" className="provider-state"><span className={`status-dot ${provider.enabled ? "live" : ""}`} /><span>{provider.enabled ? "Enabled" : "Disabled"}</span></div>
           <div role="cell" className="row-actions">
             <button type="button" title="Edit provider" onClick={() => edit(provider)}>Edit</button>
-            <button type="button" title="Test provider connection and fetch available models" disabled={busy || testing !== null} onClick={() => void testConnection(provider)}>{testing === provider.name ? "Testing…" : "Test connection"}</button>
+            <button type="button" title="Run an authenticated inference and fetch available models" disabled={busy || testing !== null} onClick={() => void testConnection(provider)}>{testing === provider.name ? "Verifying…" : "Verify credentials"}</button>
             {provider.enabled
               ? <button type="button" disabled={busy || testing !== null} onClick={() => void act(() => api.disableProvider(provider.name), "Provider disabled")}>Disable</button>
               : <button type="button" disabled={busy || testing !== null} onClick={() => void act(() => api.enableProvider(provider.name), "Provider enabled")}>Enable</button>}

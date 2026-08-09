@@ -170,6 +170,10 @@ def build_sub_parser() -> argparse.ArgumentParser:
     dash.add_argument("--port", type=int, default=8787, help="Bind port (default 8787)")
     dash.add_argument("--sessions", default="sessions", help="Run-log directory (default sessions/)")
     dash.add_argument("--config", help="Path to config.toml")
+    dash.add_argument(
+        "--allow-network", action="store_true",
+        help="Acknowledge the risk of exposing this unauthenticated single-operator dashboard",
+    )
 
     return parser
 
@@ -373,12 +377,22 @@ def main(argv: list[str] | None = None) -> int:
                 config = load_config(args.config)
             except ConfigError:
                 config = None
+            if args.host not in {"127.0.0.1", "localhost", "::1"} and not args.allow_network:
+                print(
+                    "Refusing to expose the unauthenticated dashboard on a network interface. "
+                    "Use --allow-network only on a trusted network.",
+                    file=sys.stderr,
+                )
+                return 2
             tgt = (config.target.model if config and config.target else "no target")
             print(
                 f"Wallbreaker dashboard -> http://{args.host}:{args.port}  (target: {tgt})",
                 file=sys.stderr,
             )
-            serve(host=args.host, port=args.port, config=config, sessions_dir=args.sessions)
+            serve(
+                host=args.host, port=args.port, config=config,
+                sessions_dir=args.sessions, allow_network=args.allow_network,
+            )
             return 0
         if args.command == "baseline":
             from .baseline import compare_baseline, format_regressions, save_baseline

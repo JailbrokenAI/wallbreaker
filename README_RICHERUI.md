@@ -1,8 +1,12 @@
-# Wallbreaker Richer UI Guide
+# Wallbreaker browser UI guide
 
-This guide covers the browser-dashboard features added on the `richer-ui` branch. It is
-intended as a companion to the main [README](README.md), which remains the reference for
-the red-team harness, CLI, tools, and safety policy.
+This guide describes the original browser dashboard retained at `/legacy`. WebUI V2 is
+the active unified operator surface at `/v2`; use the [setup guide](docs/SETUP.md) for
+installation, current navigation, local history, development, and troubleshooting.
+
+The original interface remains available during the V2 parity rollout. Its provider and
+profile management APIs are also used by V2, but its page names and workflows below should
+not be read as the V2 information architecture.
 
 ## Install and launch
 
@@ -17,7 +21,7 @@ cd ../../..
 wallbreaker dashboard
 ```
 
-Open <http://127.0.0.1:8787>. For frontend development, keep `wallbreaker dashboard`
+Open <http://127.0.0.1:8787/legacy>. Open V2 at <http://127.0.0.1:8787/v2>. For frontend development, keep `wallbreaker dashboard`
 running and start Vite in another terminal:
 
 ```bash
@@ -25,7 +29,7 @@ cd wallbreaker/dashboard/web
 npm run dev
 ```
 
-The dashboard has nine views: **Agent**, **Overview**, **Attack console**, **Findings**,
+The original dashboard has nine views: **Agent**, **Overview**, **Attack console**, **Findings**,
 **Run logs**, **Arsenal**, **Profiles**, **Advanced**, and **Settings**. Use the arrow beside the Wallbreaker logo to
 collapse or expand the navigation rail. The choice is remembered in the browser.
 
