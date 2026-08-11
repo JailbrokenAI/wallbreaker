@@ -11,6 +11,7 @@ import {
 import { AgentConfigDrawer, DEFAULT_AGENT_CONFIG, normalizeAgentConfig } from "./AgentConfigDrawer";
 import { ModelChooser } from "./ModelChooser";
 import { ProviderChooser } from "./ProviderChooser";
+import { isAbortError, useAbortableFetch } from "../primitives/useAbortableFetch";
 
 type Item =
   | { kind: "text"; text: string }
@@ -57,6 +58,7 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
   const [err, setErr] = useState("");
   const runningRef = useRef(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { start: startRun, abort: abortRun } = useAbortableFetch();
 
   useEffect(() => {
     api.settings()
@@ -142,14 +144,21 @@ export function Agent({ hasTarget }: { hasTarget: boolean }) {
     }
   }
 
+  useEffect(() => abortRun, [abortRun]);
+
   async function run() {
     if (!objective.trim() || runningRef.current) return;
     runningRef.current = true;
     setItems([]); setErr(""); setRunLog(""); setPaused(false); setPauseReady(false); setRunning(true);
+    const controller = startRun();
     try {
-      await runAgent({ objective, ...agentConfig, enabled_techniques: [...enabled] }, onEvent);
+      await runAgent(
+        { objective, ...agentConfig, enabled_techniques: [...enabled] },
+        onEvent,
+        controller.signal,
+      );
     } catch (e) {
-      setErr((e as Error).message);
+      if (!isAbortError(e)) setErr((e as Error).message);
     } finally {
       runningRef.current = false;
       setRunning(false);

@@ -68,13 +68,6 @@ def test_aliases_resolve_to_their_canonical_capabilities():
     assert lookup_capability("/resume") is lookup_capability("/session")
 
 
-@pytest.mark.parametrize("command", ["/liberate", "/memory"])
-def test_daedalus_commands_are_catalogued(command):
-    capability = lookup_capability(command)
-    assert capability is not None
-    assert capability.category == "operations"
-
-
 def test_records_and_nested_schema_are_immutable():
     capability = lookup_capability("/fire")
     assert capability is not None

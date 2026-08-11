@@ -1354,6 +1354,7 @@ def create_app(
 
     dashboard_inference_lock = asyncio.Lock()
     agent_active = False
+    agent_task: asyncio.Task | None = None
     agent_control = None
 
     @app.post("/api/compose")
@@ -1610,7 +1611,7 @@ def create_app(
 
     @app.post("/api/agent/run")
     async def agent_run(body: AgentRunRequest):
-        nonlocal agent_active, agent_control
+        nonlocal agent_active, agent_control, agent_task
         from fastapi.responses import StreamingResponse
 
         body = body.model_dump(exclude_defaults=True)
@@ -1815,7 +1816,7 @@ def create_app(
                 agent_control["pause_ready"] = False
 
         async def runner():
-            nonlocal agent_active, agent_control
+            nonlocal agent_active, agent_control, agent_task
             from ..session import inference_logging
 
             async with dashboard_inference_lock:
@@ -1854,12 +1855,14 @@ def create_app(
                     except Exception:
                         pass
                     agent_active = False
+                    agent_task = None
                     resume_event.set()
                     agent_control = None
                     push(None)
 
         agent_active = True
         task = asyncio.create_task(runner())
+        agent_task = task
         agent_control["task"] = task
 
         async def gen():
@@ -1883,6 +1886,29 @@ def create_app(
                 stream_attached = False
 
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/agent/stop")
+    async def agent_stop():
+        """Force-stop an active run; idle stops are idempotent."""
+        nonlocal agent_active, agent_control, agent_task
+        if not agent_active or agent_task is None:
+            agent_active = False
+            agent_control = None
+            agent_task = None
+            return {"stopped": False}
+
+        task = agent_task
+        try:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                pass
+        finally:
+            agent_active = False
+            agent_control = None
+            agent_task = None
+        return {"stopped": True}
 
     def _execution_or_404(execution_id: str):
         execution = execution_manager.get(execution_id)
