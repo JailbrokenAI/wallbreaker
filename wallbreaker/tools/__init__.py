@@ -32,6 +32,7 @@ def build_registry(config: Config, cwd: str | None = None) -> ToolRegistry:
         "typographic", "session_card", "rag_poison", "memory_poison", "agentharm", "fingerprint_defense",
         "profile_target", "recommend_next",
         "cot_forge",
+        "deep_think_probe", "stolen_thoughts", "reasoning_hygiene",
         "evolve_persona", "framing_sweep", "persona_modulate", "author_persona",
         "persona_forge",
         "narrative_persona_splinter",

@@ -21,7 +21,11 @@ class EngagementContext:
     vault_enabled: bool = True
     target_thread: list = field(default_factory=list)
     target_system: str | None = None
-    target_reasoning: str = ""
+    target_reasoning: str = ""  # includes recovered CoT (Method 1/5/6)
+    target_reasoning_details: list = field(default_factory=list)
+    # CoT recovery defaults for query_target / continue_target (overridable per-call)
+    recover_cot: str = "auto"  # auto|off|details|deep_think|stolen_thoughts|all
+    cot_weak_model: str = ""  # Method 5 weak sibling model id
 
 
 @dataclass
@@ -164,6 +168,30 @@ class ToolContext:
     @target_reasoning.setter
     def target_reasoning(self, v: str) -> None:
         self.engagement.target_reasoning = v
+
+    @property
+    def target_reasoning_details(self) -> list:
+        return self.engagement.target_reasoning_details
+
+    @target_reasoning_details.setter
+    def target_reasoning_details(self, v: list) -> None:
+        self.engagement.target_reasoning_details = v if v is not None else []
+
+    @property
+    def recover_cot(self) -> str:
+        return self.engagement.recover_cot
+
+    @recover_cot.setter
+    def recover_cot(self, v: str) -> None:
+        self.engagement.recover_cot = str(v or "auto")
+
+    @property
+    def cot_weak_model(self) -> str:
+        return self.engagement.cot_weak_model
+
+    @cot_weak_model.setter
+    def cot_weak_model(self, v: str) -> None:
+        self.engagement.cot_weak_model = str(v or "")
 
     # ------------------------------------------------------------------
     # IOContext delegating properties (R-B2)

@@ -29,6 +29,9 @@ Block = TextBlock | ToolUseBlock | ToolResultBlock
 class Message:
     role: str
     content: list[Block] = field(default_factory=list)
+    # OpenRouter / provider reasoning continuity (Method 1 + Method 5 replay).
+    reasoning: str | None = None
+    reasoning_details: list | None = None
 
     def text(self) -> str:
         return "".join(b.text for b in self.content if isinstance(b, TextBlock))

@@ -89,6 +89,13 @@ def _fold_trailing_assistant_prefill(wire: list[dict]) -> list[dict]:
     trailing = wire[-1]
     if trailing.get("tool_calls"):
         return wire
+    if (
+        trailing.get("reasoning_details")
+        or trailing.get("reasoning")
+        or trailing.get("encrypted_content")
+        or trailing.get("reasoning_content")
+    ):
+        return wire
     prefix = trailing.get("content")
     if not prefix:
         return wire
@@ -143,6 +150,12 @@ def _messages_to_wire(
             entry: dict = {"role": "assistant", "content": text or None}
             if tool_calls:
                 entry["tool_calls"] = tool_calls
+            rd = getattr(msg, "reasoning_details", None)
+            if rd:
+                entry["reasoning_details"] = rd
+            rtxt = getattr(msg, "reasoning", None)
+            if rtxt:
+                entry["reasoning"] = rtxt
             wire.append(entry)
             continue
         results = [b for b in msg.content if isinstance(b, ToolResultBlock)]
@@ -238,9 +251,21 @@ class OpenAIProvider(Provider):
             )
             if tc:
                 payload["tool_choice"] = tc
-        if getattr(self.endpoint, "reasoning", False):
+        override = getattr(self, "reasoning_override", None)
+        if isinstance(override, dict) and override:
+            payload["reasoning"] = dict(override)
+        elif getattr(self.endpoint, "reasoning", False):
             # OpenRouter: ask the model to emit its reasoning and include it in the stream.
             payload["reasoning"] = {"enabled": True}
+        effort = getattr(self, "reasoning_effort", None) or getattr(
+            self.endpoint, "reasoning_effort", ""
+        )
+        if effort:
+            payload["reasoning_effort"] = effort
+            if "reasoning" not in payload and str(effort).lower() in {
+                "none", "minimal", "low", "medium", "high", "xhigh", "max",
+            }:
+                payload["reasoning"] = {"effort": str(effort).lower()}
         if getattr(self.endpoint, "provider", ()):
             payload["provider"] = {
                 "order": list(self.endpoint.provider),
@@ -250,9 +275,12 @@ class OpenAIProvider(Provider):
         pending: dict[int, dict] = {}
         content_chars = 0
         reasoning_parts: list[str] = []
+        reasoning_details: list = []
         finish_reason: str | None = None
         self.last_stop_reason = None
         self.last_completion_empty = False
+        self.last_reasoning_details = []
+        self.last_tool_uses = []
         saw_sse_event = False
         client = self._http_client()
         try:
@@ -296,9 +324,33 @@ class OpenAIProvider(Provider):
                             content_chars += len(delta["content"])
                             yield TextDelta(delta["content"])
                         reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+                        emitted_reasoning_this_chunk = False
                         if reasoning:
                             reasoning_parts.append(str(reasoning))
                             yield ReasoningDelta(str(reasoning))
+                            emitted_reasoning_this_chunk = True
+                        for det in delta.get("reasoning_details") or []:
+                            if not isinstance(det, dict):
+                                continue
+                            reasoning_details.append(det)
+                            if emitted_reasoning_this_chunk:
+                                continue
+                            dtype = str(det.get("type") or "")
+                            if dtype in ("reasoning.text", "text") and det.get("text"):
+                                piece = str(det["text"])
+                                reasoning_parts.append(piece)
+                                yield ReasoningDelta(piece)
+                            elif dtype in ("reasoning.summary", "summary") and (
+                                det.get("summary") or det.get("text")
+                            ):
+                                piece = str(det.get("summary") or det.get("text"))
+                                reasoning_parts.append(piece)
+                                yield ReasoningDelta(piece)
+                        msg = choices[0].get("message") or {}
+                        if msg.get("reasoning_details") and not reasoning_details:
+                            for det in msg.get("reasoning_details") or []:
+                                if isinstance(det, dict):
+                                    reasoning_details.append(det)
                         for tc in delta.get("tool_calls") or []:
                             idx = tc.get("index", 0)
                             slot = pending.setdefault(
@@ -321,15 +373,24 @@ class OpenAIProvider(Provider):
 
         self.last_stop_reason = finish_reason
         self.last_completion_empty = content_chars == 0
+        self.last_reasoning_details = list(reasoning_details)
+        tool_uses_out: list[dict] = []
+        for idx in sorted(pending):
+            slot = pending[idx]
+            args = parse_tool_args(slot["args"])
+            tool_uses_out.append(
+                {
+                    "id": slot["id"] or f"call_{idx}",
+                    "name": slot["name"],
+                    "input": args,
+                }
+            )
+        self.last_tool_uses = tool_uses_out
 
         fallback = _reasoning_fallback(content_chars, bool(pending), reasoning_parts)
         if fallback:
             yield TextDelta(fallback)
 
-        for idx in sorted(pending):
-            slot = pending[idx]
-            args = parse_tool_args(slot["args"])
-            yield ToolUseEvent(
-                id=slot["id"] or f"call_{idx}", name=slot["name"], input=args
-            )
+        for tu in tool_uses_out:
+            yield ToolUseEvent(id=tu["id"], name=tu["name"], input=tu["input"])
         yield StopEvent(finish_reason or ("tool_use" if pending else "end_turn"))

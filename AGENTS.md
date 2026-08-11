@@ -12,6 +12,17 @@ Red-team harness: configurable agentic LLM terminal with Parseltongue + L1B3RT4S
   with `lossy` flags.
 
 ## Lessons Learned
+- **[cot-recover]**: frontier targets often hide raw CoT (encrypted `reasoning_details`,
+  summaries only, or empty `reasoning` while still billing thinking tokens). The attacker
+  brain needs that CoT to refine. `query_target` / `continue_target` run
+  `tools/_cot_recover.recover_cot` after every fire (default `recover_cot=auto`): native
+  reasoning + details text/summary first; Method 5 weak-sibling decode when
+  `cot_weak_model` is set and encrypted blocks exist; Method 6 `deep_think` tool dump when
+  still empty or `recover_cot=deep_think|all`. Result is folded into `ctx.target_reasoning`
+  and the tool reply under `<<target reasoning>>`. OpenAI wire must NOT fold trailing
+  assistant messages that carry `reasoning_details` (Method 5 replay). Standalone tools:
+  `deep_think_probe`, `stolen_thoughts`, `reasoning_hygiene`. Docs:
+  `docs/reasoning_token_visibility_methods.md`.
 - **[provider-lifecycle]**: tools MUST NOT cache a `build_provider()` result for reuse across
   separate `ToolRegistry.execute()` calls. `ToolRegistry.execute` wraps each call in
   `providers.provider_scope()`, which tracks every `build_provider()` made during the call and
