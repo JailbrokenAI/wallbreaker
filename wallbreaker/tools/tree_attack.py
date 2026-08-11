@@ -4,7 +4,7 @@ import asyncio
 
 from ..agent.messages import user
 from ._conversation import Conversation, grade_and_record
-from ._util import complete_with_reasoning, gather_capped, await_llm
+from ._util import complete_with_reasoning, gather_capped
 from .registry import ToolContext, ToolRegistry
 
 ATTACKER_SYSTEM = (
@@ -111,7 +111,7 @@ async def _run_siege(objective, attacker, target, judge_endpoint, *, width=3, de
                 pass
 
     async def _bounded(coro):
-        return await await_llm(coro, timeout=call_timeout)
+        return await asyncio.wait_for(coro, timeout=call_timeout)
 
     async def _expand_one(parent):
         nonlocal calls, attempted, succeeded

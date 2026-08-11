@@ -5,7 +5,7 @@ import asyncio
 from ..agent.messages import assistant, user
 from ..judging import grade
 from ..library import WinLibrary, label_to_asr
-from ._util import complete_with_reasoning, gather_capped, await_llm
+from ._util import complete_with_reasoning, gather_capped
 from .registry import ToolContext, ToolRegistry
 
 _CALL_TIMEOUT = 120.0
@@ -51,13 +51,15 @@ async def _fire_entry(row, target, judge_endpoint, system, max_tokens, call_time
     if not msgs:
         return {"error": "empty entry"}
     try:
-        resp, reasoning = await await_llm(complete_with_reasoning(target, msgs, system=system, max_tokens=max_tokens),
+        resp, reasoning = await asyncio.wait_for(
+            complete_with_reasoning(target, msgs, system=system, max_tokens=max_tokens),
             timeout=call_timeout,
         )
     except Exception as exc:
         return {"error": type(exc).__name__}
     try:
-        label, score, reason, _ = await await_llm(grade(
+        label, score, reason, _ = await asyncio.wait_for(
+            grade(
                 judge_endpoint, resp,
                 payload=_payload(row), objective=_objective(row), reasoning=reasoning,
             ),

@@ -6,7 +6,7 @@ import time
 
 from ..agent.messages import user
 from ._conversation import Conversation, grade_and_record
-from ._util import complete_with_reasoning, await_llm
+from ._util import complete_with_reasoning
 from .registry import ToolContext, ToolRegistry
 
 _CALL_TIMEOUT = 120.0
@@ -217,7 +217,7 @@ async def _chat_session(args: dict, ctx: ToolContext) -> str:
     forced_advances = 0
 
     async def _bounded(coro):
-        return await await_llm(coro, timeout=_CALL_TIMEOUT)
+        return await asyncio.wait_for(coro, timeout=_CALL_TIMEOUT)
 
     with ctx.run("chat session", total=max_turns,
                  target=ctx.config.target.model, objective=goal) as run:

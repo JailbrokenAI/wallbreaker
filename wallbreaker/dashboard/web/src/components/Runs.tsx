@@ -439,8 +439,8 @@ export function Runs() {
     }
   };
 
-  if (!runs) return <div className="empty">加载中…</div>;
-  if (!runs.length) return <div className="empty">sessions/ 中尚无运行日志。</div>;
+  if (!runs) return <div className="empty">Loading…</div>;
+  if (!runs.length) return <div className="empty">No run logs in sessions/ yet.</div>;
 
   if (open) {
     const loaded = records.length;
@@ -604,7 +604,7 @@ export function Runs() {
         <thead><tr><th>Run</th><th>Time</th><th>Models</th><th>Records</th><th>Hits</th><th>Size</th></tr></thead>
         <tbody>
           {runs.map((r) => (
-            <tr key={r.name} className="row-clickable" onClick={() => setOpen(r.name)}>
+            <tr key={r.name} style={{ cursor: "pointer" }} onClick={() => setOpen(r.name)}>
               <td className="mono">{r.name}</td>
               <td className="mono muted">{r.time || timeFromRunName(r.name) || "unknown"}</td>
               <td><ModelsCell models={r.models} /></td>

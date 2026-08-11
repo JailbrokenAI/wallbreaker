@@ -9,8 +9,7 @@ from wallbreaker.providers.base import ProviderError
 from wallbreaker.providers.openai_provider import OpenAIProvider
 
 
-def test_readtimeout_after_content_is_soft_partial(monkeypatch):
-    """BUG-001: if answer tokens already arrived, teardown timeout is not a hard network error."""
+def test_readtimeout_becomes_provider_error(monkeypatch):
     class TimeoutStream:
         def __init__(self, **kw): pass
         async def __aenter__(self): return self
@@ -30,38 +29,15 @@ def test_readtimeout_after_content_is_soft_partial(monkeypatch):
     p = OpenAIProvider(Endpoint("t", "openai", "http://x", "m", api_key="k"))
 
     async def run():
-        return [ev async for ev in p.stream([user("hi")])]
+        got = []
+        with pytest.raises(ProviderError):
+            async for ev in p.stream([user("hi")]):
+                got.append(ev)
+        return got
 
     events = asyncio.run(run())
+    # the partial text before the timeout still came through
     assert any(getattr(e, "text", "") == "partial" for e in events)
-    assert any(getattr(e, "stop_reason", None) == "partial" for e in events)
-
-
-def test_readtimeout_before_content_is_provider_error(monkeypatch):
-    class TimeoutStream:
-        def __init__(self, **kw): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        status_code = 200
-        async def aiter_lines(self):
-            raise httpx.ReadTimeout("read timed out")
-            yield  # pragma: no cover
-
-    class Client:
-        def __init__(self, **kw): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        def stream(self, *a, **k): return TimeoutStream()
-
-    monkeypatch.setattr("wallbreaker.providers.openai_provider.httpx.AsyncClient", Client)
-    p = OpenAIProvider(Endpoint("t", "openai", "http://x", "m", api_key="k"))
-
-    async def run():
-        async for _ev in p.stream([user("hi")]):
-            pass
-
-    with pytest.raises(ProviderError, match="timeout from"):
-        asyncio.run(run())
 
 
 def test_openai_provider_follows_routing_redirects(monkeypatch):

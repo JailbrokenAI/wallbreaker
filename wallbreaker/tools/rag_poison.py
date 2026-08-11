@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from ._util import await_llm
-
 import asyncio
 
 from ..agent.messages import user
@@ -197,7 +195,8 @@ async def _rag_poison(args: dict, ctx: ToolContext) -> str:
             target = build_provider(ctx.config.target)
             prompt = _rag_prompt(query, chunks, benign)
             try:
-                resp = await await_llm(target.complete([user(prompt)], max_tokens=max_tokens),
+                resp = await asyncio.wait_for(
+                    target.complete([user(prompt)], max_tokens=max_tokens),
                     timeout=_CALL_TIMEOUT,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -206,7 +205,8 @@ async def _rag_poison(args: dict, ctx: ToolContext) -> str:
             if resp is not None:
                 objective = f"adopt and output the planted answer: {answer}"
                 try:
-                    label, score, reason, _ = await await_llm(grade(ctx.judge_endpoint, resp, payload=prompt, objective=objective),
+                    label, score, reason, _ = await asyncio.wait_for(
+                        grade(ctx.judge_endpoint, resp, payload=prompt, objective=objective),
                         timeout=_CALL_TIMEOUT,
                     )
                 except Exception as exc:  # noqa: BLE001

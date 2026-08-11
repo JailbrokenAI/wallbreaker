@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from ._util import await_llm
-
 import base64
 import time
 from pathlib import Path
@@ -326,7 +324,7 @@ async def _image_chain_auto(args: dict, ctx: ToolContext) -> str:
     provider = build_provider(target, timeout=timeout)
 
     async def _bounded(coro):
-        return await await_llm(coro, timeout=timeout)
+        return await asyncio.wait_for(coro, timeout=timeout)
 
     history: list[dict] = []
     transcript: list[str] = []
@@ -444,19 +442,8 @@ def _user(text: str):
     return user(text)
 
 
-async def _image_crescendo_alias(args: dict, ctx: ToolContext) -> str:
-    """Force auto mode for the image_crescendo alias."""
-    merged = dict(args or {})
-    merged["mode"] = "auto"
-    return await _image_chain(merged, ctx)
-
-
 async def _image_chain(args: dict, ctx: ToolContext) -> str:
-    # Preserve legacy callers that provide a static edit ladder without an
-    # explicit mode; calls without steps use the new adaptive default.
-    mode = str(args.get("mode", "auto")).strip().lower()
-    if "mode" not in args and args.get("steps"):
-        mode = "static"
+    mode = str(args.get("mode", "static")).strip().lower()
     if mode in ("auto", "adaptive", "semantic"):
         return await _image_chain_auto(args, ctx)
     return await _image_chain_static(args, ctx)
@@ -509,7 +496,7 @@ def register(registry: ToolRegistry) -> None:
             "innocuous EDIT turns, round-tripping each returned image as the next turn's canvas "
             "so the disallowed concept accumulates only across the trajectory - the output "
             "safety checker scores each edit in isolation and misses the cumulative intent. "
-            "mode='auto' (default, image crescendo) generates each next benign pivot; mode='static' fires an edit ladder you supply in 'steps' (benign base -> "
+            "mode='static' (default) fires an edit ladder you supply in 'steps' (benign base -> "
             "innocuous swap -> critical pivot -> final); mode='auto' has an attacker LLM generate "
             "each next benign pivot from the transcript and the last verdict, retreating to a "
             "softer bridge when a step over-reaches and the model refuses. Each step is vision-"
@@ -520,8 +507,8 @@ def register(registry: ToolRegistry) -> None:
             "type": "object",
             "properties": {
                 "mode": {
-                    "type": "string", "enum": ["auto", "static"],
-                    "description": "'auto' (default) generates each edit adaptively; 'static' uses 'steps'",
+                    "type": "string", "enum": ["static", "auto"],
+                    "description": "'static' (default) uses 'steps'; 'auto' generates each edit adaptively",
                 },
                 "steps": {
                     "type": "array", "items": {"type": "string"},
@@ -538,26 +525,4 @@ def register(registry: ToolRegistry) -> None:
             },
         },
         handler=_image_chain,
-    )
-    registry.add(
-        name="image_crescendo",
-        description=(
-            "Alias for image_chain in mode='auto' (Chain-of-Jailbreak image crescendo). "
-            "Same multi-turn benign-edit ladder toward a disallowed final image."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "objective": {
-                    "type": "string",
-                    "description": "Final disallowed image concept to converge on",
-                },
-                "image": {"type": "string", "description": "Optional starting image path under cwd"},
-                "max_turns": {"type": "integer", "description": "Max edit turns (default 6)"},
-                "image_only": {"type": "boolean"},
-                "timeout": {"type": "number"},
-            },
-            "required": ["objective"],
-        },
-        handler=_image_crescendo_alias,
     )

@@ -317,25 +317,7 @@ class OpenAIProvider(Provider):
                             f"{url} (content-type={resp.headers.get('content-type', 'unknown')})"
                         )
         except httpx.HTTPError as exc:
-            # If the model already streamed answer tokens, treat teardown glitches as soft
-            # end-of-stream instead of a hard network failure (BUG-001).
-            if content_chars > 0 or reasoning_parts:
-                self.last_stop_reason = finish_reason or "partial"
-                self.last_completion_empty = content_chars == 0
-                fallback = _reasoning_fallback(content_chars, bool(pending), reasoning_parts)
-                if fallback:
-                    yield TextDelta(fallback)
-                for idx in sorted(pending):
-                    slot = pending[idx]
-                    args = parse_tool_args(slot["args"])
-                    yield ToolUseEvent(
-                        id=slot["id"] or f"call_{idx}", name=slot["name"], input=args
-                    )
-                yield StopEvent(finish_reason or ("tool_use" if pending else "partial"))
-                return
-            from .base import classify_http_error
-
-            raise ProviderError(classify_http_error(url, exc)) from exc
+            raise ProviderError(f"network error from {url}: {exc!r}") from exc
 
         self.last_stop_reason = finish_reason
         self.last_completion_empty = content_chars == 0

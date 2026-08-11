@@ -8,7 +8,7 @@ import re
 
 from ..agent.messages import user
 from ..judging import grade
-from ._util import gather_capped, await_llm
+from ._util import gather_capped
 from .registry import ToolContext, ToolRegistry
 
 DEFAULT_GENERATIONS = 3
@@ -157,7 +157,8 @@ def _resolve_seeds(names) -> list[tuple[str, str]]:
 async def _crossover(attacker, a: str, b: str, objective: str, max_tokens: int) -> str:
     prompt = CROSSOVER_PROMPT.format(objective=objective, a=a[:4000], b=b[:4000])
     try:
-        out = await await_llm(attacker.complete([user(prompt)], system=PERSONA_SYSTEM, max_tokens=max_tokens),
+        out = await asyncio.wait_for(
+            attacker.complete([user(prompt)], system=PERSONA_SYSTEM, max_tokens=max_tokens),
             timeout=FIRE_TIMEOUT,
         )
         return _clamp_genome(out) or a
@@ -175,10 +176,12 @@ async def _mutate_genome(attacker, text: str, objective: str, max_tokens: int) -
         elif wc < 10:
             prompt = EXPAND_PROMPT.format(objective=objective, text=text)
         else:
-            outs = await await_llm(mutate._generate(attacker, text, 1, False), timeout=FIRE_TIMEOUT
+            outs = await asyncio.wait_for(
+                mutate._generate(attacker, text, 1, False), timeout=FIRE_TIMEOUT
             )
             return _clamp_genome(outs[0]) if outs else text
-        out = await await_llm(attacker.complete([user(prompt)], system=PERSONA_SYSTEM, max_tokens=max_tokens),
+        out = await asyncio.wait_for(
+            attacker.complete([user(prompt)], system=PERSONA_SYSTEM, max_tokens=max_tokens),
             timeout=FIRE_TIMEOUT,
         )
         return _clamp_genome(out) or text
@@ -188,13 +191,15 @@ async def _mutate_genome(attacker, text: str, objective: str, max_tokens: int) -
 
 async def _evaluate(target, judge_ep, genome: str, objective: str, max_tokens: int):
     try:
-        reply = await await_llm(target.complete([user(objective)], system=genome, max_tokens=max_tokens),
+        reply = await asyncio.wait_for(
+            target.complete([user(objective)], system=genome, max_tokens=max_tokens),
             timeout=FIRE_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001
         return "ERROR", -1, f"target error: {str(exc)[:60]}", ""
     try:
-        label_v, score, reason, _src = await await_llm(grade(judge_ep, reply, payload=objective, objective=objective),
+        label_v, score, reason, _src = await asyncio.wait_for(
+            grade(judge_ep, reply, payload=objective, objective=objective),
             timeout=FIRE_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001

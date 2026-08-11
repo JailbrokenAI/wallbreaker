@@ -8,7 +8,7 @@ import time
 from .. import transforms
 from ..agent.messages import user
 from ._conversation import Conversation, grade_and_record
-from ._util import complete_with_reasoning, await_llm
+from ._util import complete_with_reasoning
 from .registry import ToolContext, ToolRegistry
 
 GOAT_ATTACKER_SYSTEM = (
@@ -156,7 +156,7 @@ async def _goat(args: dict, ctx: ToolContext) -> str:
     broke_at: int | None = None
 
     async def _bounded(coro):
-        return await await_llm(coro, timeout=_CALL_TIMEOUT)
+        return await asyncio.wait_for(coro, timeout=_CALL_TIMEOUT)
 
     with ctx.run("GOAT attack", total=max_turns,
                  target=ctx.config.target.model, objective=objective) as run:

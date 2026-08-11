@@ -282,24 +282,7 @@ class AnthropicProvider(Provider):
                         elif etype == "message_stop":
                             break
         except httpx.HTTPError as exc:
-            # BUG-001: if tokens already arrived, soft-end instead of hard network error.
-            if content_chars > 0 or thinking_parts:
-                from .openai_provider import _reasoning_fallback
-
-                self.last_stop_reason = stop_reason or "partial"
-                self.last_completion_empty = content_chars == 0
-                fallback = _reasoning_fallback(content_chars, bool(blocks), thinking_parts)
-                if fallback:
-                    yield TextDelta(fallback)
-                for idx in sorted(blocks):
-                    slot = blocks[idx]
-                    args = parse_tool_args(slot["args"])
-                    yield ToolUseEvent(id=slot["id"], name=slot["name"], input=args)
-                yield StopEvent(stop_reason or ("tool_use" if blocks else "partial"))
-                return
-            from .base import classify_http_error
-
-            raise ProviderError(classify_http_error(url, exc)) from exc
+            raise ProviderError(f"network error from {url}: {exc!r}") from exc
 
         from .openai_provider import _reasoning_fallback
 

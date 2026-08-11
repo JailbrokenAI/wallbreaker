@@ -6,7 +6,7 @@ from ..agent.messages import user
 from ..judging import grade
 from ..transforms import TRANSFORMS, apply_chain
 from ._bandit import BanditStore, stats_path
-from ._util import gather_capped, await_llm
+from ._util import gather_capped
 from .registry import ToolContext, ToolRegistry
 
 SURVEY = [
@@ -31,9 +31,8 @@ async def _recommend(args: dict, ctx: ToolContext) -> str:
     max_tokens = int(args.get("max_tokens", 350))
     top = max(1, int(args.get("top", 3)))
     timeout = float(args.get("timeout", 45))
-    timeout_is_explicit = "timeout" in args
     concurrency = max(1, int(args.get("concurrency", 5)))
-    use_bandit = bool(args.get("bandit", True))
+    use_bandit = bool(args.get("bandit", False))
     category = args.get("category", "transform")
 
     store = None
@@ -64,15 +63,17 @@ async def _recommend(args: dict, ctx: ToolContext) -> str:
             try:
                 # bound BOTH the target call and the judge grade, so a hung backend or a slow
                 # judge can never stall the whole survey - the probe becomes a timed-out row.
-                reply = await await_llm(target.complete([user(encoded)], system=system, max_tokens=max_tokens),
-                    timeout=timeout, floor=not timeout_is_explicit,
+                reply = await asyncio.wait_for(
+                    target.complete([user(encoded)], system=system, max_tokens=max_tokens),
+                    timeout=timeout,
                 )
-                label, score, _r, _s = await await_llm(grade(ctx.judge_endpoint, reply, payload=encoded, objective=base),
-                    timeout=timeout, floor=not timeout_is_explicit,
+                label, score, _r, _s = await asyncio.wait_for(
+                    grade(ctx.judge_endpoint, reply, payload=encoded, objective=base),
+                    timeout=timeout,
                 )
                 rank = _SCORE.get(label, 0) * 10 + (score or 0)
                 outcome = (name, label, rank)
-            except (TimeoutError, asyncio.TimeoutError):
+            except asyncio.TimeoutError:
                 outcome = (name, "ERROR", "timeout")
             except Exception as exc:  # noqa: BLE001
                 outcome = (name, "ERROR", str(exc)[:50])
@@ -147,7 +148,7 @@ def register(registry: ToolRegistry) -> None:
                 "top": {"type": "integer", "description": "How many winners to chain (default 3)"},
                 "concurrency": {"type": "integer", "description": "Probes in flight at once (default 5; lower for rate-limited single-key endpoints)"},
                 "timeout": {"type": "number", "description": "Per-probe seconds before it's marked timed-out (default 45)"},
-                "bandit": {"type": "boolean", "description": "Order the survey by a UCB1 bandit posterior from wb_runs/technique_stats.json (per target+category) when prior stats exist, and update it from this run's verdicts (default true; falls back to the fixed order when no prior stats)"},
+                "bandit": {"type": "boolean", "description": "Order the survey by a UCB1 bandit posterior from wb_runs/technique_stats.json (per target+category) when prior stats exist, and update it from this run's verdicts (default false; falls back to the fixed order)"},
                 "category": {"type": "string", "description": "Bandit bucket key paired with the target model (default 'transform')"},
                 "system": {"type": "string"},
                 "max_tokens": {"type": "integer"},

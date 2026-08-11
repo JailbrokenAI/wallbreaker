@@ -277,8 +277,8 @@ export function Findings() {
     }
   };
 
-  if (!runs || !rows) return <div className="empty">加载中…</div>;
-  if (!runs.length) return <div className="empty">sessions/ 中尚无运行日志。</div>;
+  if (!runs || !rows) return <div className="empty">Loading...</div>;
+  if (!runs.length) return <div className="empty">No run logs in sessions/ yet.</div>;
 
   const selectedSet = new Set(selectedRuns);
   const allFindingRuns = runs.filter((run) => (run.findings ?? run.hits) > 0).map((run) => run.name);
@@ -339,8 +339,8 @@ export function Findings() {
             {allExpanded ? "Collapse all" : "Expand all"}
           </button>
         </div>
-        {!selectedRuns.length && <div className="empty">请选择一个或多个运行以查看发现。</div>}
-        {!!selectedRuns.length && !rows.length && <div className="empty">所选运行日志中没有 COMPLIED / PARTIAL 发现。</div>}
+        {!selectedRuns.length && <div className="empty">Select one or more runs to inspect findings.</div>}
+        {!!selectedRuns.length && !rows.length && <div className="empty">No COMPLIED / PARTIAL findings in the selected run logs.</div>}
         {!!rows.length && (
           <div className="runs-table-wrap">
             <table className="runs-table findings-table" style={{ minWidth: columns.reduce((sum, column) => sum + column.width, 0) }}>

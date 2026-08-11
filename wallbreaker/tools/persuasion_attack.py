@@ -6,7 +6,7 @@ import time
 from ..agent.messages import user
 from ..judging import grade
 from ..persuasion_taxonomy import STRATEGIES, STRATEGIES_BY_NAME, PersuasionStrategy
-from ._util import complete_with_reasoning, gather_capped, await_llm
+from ._util import complete_with_reasoning, gather_capped
 from .registry import ToolContext, ToolRegistry
 
 ATTACKER_SYSTEM = (
@@ -56,7 +56,8 @@ async def _rewrite(attacker, strategy: PersuasionStrategy, objective: str, max_t
         return objective
     seed = REWRITE_TEMPLATE.format(objective=objective, label=strategy.label, brief=strategy.brief)
     try:
-        text = await await_llm(attacker.complete([user(seed)], system=ATTACKER_SYSTEM, max_tokens=max_tokens),
+        text = await asyncio.wait_for(
+            attacker.complete([user(seed)], system=ATTACKER_SYSTEM, max_tokens=max_tokens),
             timeout=_CALL_TIMEOUT,
         )
     except Exception:
@@ -66,13 +67,15 @@ async def _rewrite(attacker, strategy: PersuasionStrategy, objective: str, max_t
 
 async def _fire_one(target, judge_endpoint, strategy, prompt, objective, system, max_tokens):
     try:
-        reply, reasoning = await await_llm(complete_with_reasoning(target, [user(prompt)], system=system, max_tokens=max_tokens),
+        reply, reasoning = await asyncio.wait_for(
+            complete_with_reasoning(target, [user(prompt)], system=system, max_tokens=max_tokens),
             timeout=_CALL_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001
         return strategy, "", f"[target error] {exc}", ("REFUSED", None, str(exc)[:120])
     try:
-        verdict = await await_llm(grade(judge_endpoint, reply, payload=prompt, objective=objective, reasoning=reasoning),
+        verdict = await asyncio.wait_for(
+            grade(judge_endpoint, reply, payload=prompt, objective=objective, reasoning=reasoning),
             timeout=_CALL_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001

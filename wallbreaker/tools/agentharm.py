@@ -5,7 +5,7 @@ import json
 import re
 
 from ..agent.messages import user
-from ._util import gather_capped, await_llm
+from ._util import gather_capped
 from .registry import ToolContext, ToolRegistry
 
 _CALL_TIMEOUT = 120.0
@@ -236,7 +236,7 @@ async def _agentharm(args: dict, ctx: ToolContext) -> str:
     calls = {"n": 0}
 
     async def _bounded(coro):
-        return await await_llm(coro, timeout=_CALL_TIMEOUT)
+        return await asyncio.wait_for(coro, timeout=_CALL_TIMEOUT)
 
     async def _rubric_yes(response: str, question: str) -> bool:
         calls["n"] += 1

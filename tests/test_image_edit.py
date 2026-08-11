@@ -203,7 +203,7 @@ def test_image_chain_static_round_trips_and_breaks(tmp_path, monkeypatch):
 def test_image_chain_static_requires_steps(tmp_path, monkeypatch):
     monkeypatch.setattr(factory, "build_provider", _RecEdit)
     reg = _edit_reg(tmp_path)
-    res = asyncio.run(reg.execute("image_chain", {"mode": "static", "objective": "x"}))
+    res = asyncio.run(reg.execute("image_chain", {"objective": "x"}))
     assert "steps" in res.content.lower()
 
 

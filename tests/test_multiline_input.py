@@ -136,7 +136,7 @@ def test_multiline_paste_shows_visible_preview():
             inp._on_paste(events.Paste("line one\nline two\nline three"))
             await pilot.pause()
             assert not preview.has_class("hidden")
-            assert preview.border_title == "编辑中 · 3 行"
+            assert preview.border_title == "composing · 3 lines"
             inp.reset_buffer()
             await pilot.pause()
             assert preview.has_class("hidden")

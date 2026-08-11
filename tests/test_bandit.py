@@ -162,7 +162,7 @@ def test_seed_sweep_default_writes_no_stats(monkeypatch, tmp_path):
     reg = ToolRegistry(ctx)
     seed_sweep.register(reg)
 
-    asyncio.run(reg.execute("seed_sweep", {"request": "do it", "bandit": False}))
+    asyncio.run(reg.execute("seed_sweep", {"request": "do it"}))
     assert not (tmp_path / "wb_runs" / "technique_stats.json").exists()
 
 

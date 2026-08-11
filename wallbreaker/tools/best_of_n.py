@@ -7,7 +7,7 @@ import random
 from ..agent.messages import assistant, user
 from ..judging import grade
 from ..transforms import TRANSFORMS
-from ._util import DEFAULT_CONCURRENCY, complete_untruncated, gather_capped, await_llm
+from ._util import DEFAULT_CONCURRENCY, complete_untruncated, gather_capped
 from .registry import ToolContext, ToolRegistry
 
 _DEFAULT_REGISTRY_POOL = [
@@ -238,14 +238,16 @@ async def _best_of_n(args: dict, ctx: ToolContext) -> str:
             if prefill:
                 messages.append(assistant(prefill))
             try:
-                resp, reasoning, _stop, _trunc = await await_llm(complete_untruncated(prov, messages, system=system, max_tokens=max_tokens),
+                resp, reasoning, _stop, _trunc = await asyncio.wait_for(
+                    complete_untruncated(prov, messages, system=system, max_tokens=max_tokens),
                     timeout=call_timeout,
                 )
             except Exception as exc:  # noqa: BLE001
                 return _err(idx, text, exc, label=lbl)
             graded = (prefill + resp) if prefill else resp
             try:
-                verdict, score, _reason, _src = await await_llm(grade(ctx.judge_endpoint, graded, payload=text, objective=payload,
+                verdict, score, _reason, _src = await asyncio.wait_for(
+                    grade(ctx.judge_endpoint, graded, payload=text, objective=payload,
                           reasoning=reasoning),
                     timeout=call_timeout,
                 )
@@ -265,7 +267,8 @@ async def _best_of_n(args: dict, ctx: ToolContext) -> str:
             lbl = label or f"sample {idx + 1}"
             text = variant_text(idx)
             try:
-                result = await await_llm(prov.generate([user(text)], system=system, max_tokens=max(max_tokens, 1024)),
+                result = await asyncio.wait_for(
+                    prov.generate([user(text)], system=system, max_tokens=max(max_tokens, 1024)),
                     timeout=call_timeout,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -279,7 +282,8 @@ async def _best_of_n(args: dict, ctx: ToolContext) -> str:
                         "reasoning": reasoning, "text": text}
             saved = _save_images(ctx, result.images)
             try:
-                verdict, score, _reason, _src = await await_llm(grade_image(ctx.judge_endpoint, result.data_urls, payload=text,
+                verdict, score, _reason, _src = await asyncio.wait_for(
+                    grade_image(ctx.judge_endpoint, result.data_urls, payload=text,
                                 objective=payload, timeout=wait, reasoning=reasoning),
                     timeout=call_timeout,
                 )

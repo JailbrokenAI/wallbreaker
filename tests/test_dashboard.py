@@ -377,56 +377,6 @@ def test_settings_get_and_set(tmp_path):
         "modality": "auto", "system_mode": "default", "provider": "",
         "judge_enabled": True,
     }
-    # Daedalus product layer exposed on settings GET
-    assert "daedalus" in g
-    assert g["daedalus"]["topology"] in ("dual", "single")
-    assert g["daedalus"]["memory_require_validate"] is True
-
-
-def test_settings_daedalus_roundtrip(tmp_path):
-    """POST /api/settings daedalus persists TOML and returns updated view."""
-    from wallbreaker.config import Config, DaedalusSettings, Endpoint, load_config
-
-    path = tmp_path / "config.toml"
-    path.write_text(
-        'default_profile = "glm"\n\n'
-        '[profiles.glm]\nprotocol = "openai"\nbase_url = "http://x"\n'
-        'model = "glm-5.2"\napi_key = "k"\n\n'
-        "[daedalus]\ntopology = \"dual\"\ndoctrine_enabled = true\n"
-        "cyber_gate_enabled = true\nmemory_require_validate = true\n",
-        encoding="utf-8",
-    )
-    cfg = load_config(path)
-    client = TestClient(create_app(config=cfg, sessions_dir=_sessions(tmp_path), require_auth=False))
-    r = client.post(
-        "/api/settings",
-        json={
-            "daedalus": {
-                "topology": "single",
-                "doctrine_enabled": False,
-                "cyber_gate_enabled": False,
-                "memory_require_validate": False,
-                "codename": "Daedalus",
-            }
-        },
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()["daedalus"]
-    assert body["topology"] == "single"
-    assert body["doctrine_enabled"] is False
-    assert body["cyber_gate_enabled"] is False
-    assert body["memory_require_validate"] is False
-    # live config mutated
-    assert cfg.daedalus.topology == "single"
-    assert cfg.daedalus.cyber_gate_enabled is False
-    # disk round-trip
-    reloaded = load_config(path)
-    assert reloaded.daedalus.topology == "single"
-    assert reloaded.daedalus.doctrine_enabled is False
-    assert reloaded.daedalus.memory_require_validate is False
-    # bad topology rejected
-    bad = client.post("/api/settings", json={"daedalus": {"topology": "triple"}})
-    assert bad.status_code == 400
 
     r = client.post("/api/settings", json={"target_model": "google/gemini-3-pro-image", "target_modality": "auto"})
     assert r.status_code == 200

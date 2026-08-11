@@ -51,12 +51,11 @@ export function Profiles({ onSaved }: { onSaved?: () => void }) {
     catch (error) { setErrors((value) => ({ ...value, [role]: (error as Error).message })); }
     finally { end(role); }
   };
-  const roleLabel: Record<string, string> = { attacker: "Attacker", target: "Target", judge: "Judge" };
-  if (!data) return <div className="empty">正在加载档案…</div>;
+  if (!data) return <div className="empty">Loading profiles…</div>;
   return <div className="agent-profile-grid">{ROLES.map((role) => {
     const roleData = data.roles[role]; const form = editing[role]; const roleBusy = !!busy[role];
     return <section className="card agent-profile-card" key={role}>
-      <h3>{roleLabel[role] || role} profiles</h3>
+      <h3>{role} profiles</h3>
       <div className="profile-active mono">Active: <b>{roleData.active.profile || `Custom · ${roleData.active.provider}`}</b> · {roleData.active.model}</div>
       <div className="profile-list">{roleData.profiles.map((item) => <div className="profile-list-item" key={item.name}>
         <button type="button" className="profile-select" onClick={() => edit(item)}><b>{item.name}</b><span>{item.provider} · {item.model}</span><small>{item.prompt_source === "none" ? "No system prompt" : `${item.prompt_source} system prompt`}</small></button>

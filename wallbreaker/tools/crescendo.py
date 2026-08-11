@@ -6,7 +6,7 @@ import time
 from ..agent.messages import Message, TextBlock, user
 from ..judging import grade
 from ._conversation import Conversation, grade_and_record
-from ._util import complete_with_reasoning, await_llm
+from ._util import complete_with_reasoning
 from .registry import ToolContext, ToolRegistry
 
 _CALL_TIMEOUT = 120.0
@@ -194,7 +194,7 @@ async def _crescendo_auto(args: dict, ctx: ToolContext) -> str:
     target = build_provider(ctx.config.target)
 
     async def _bounded(coro):
-        return await await_llm(coro, timeout=_CALL_TIMEOUT)
+        return await asyncio.wait_for(coro, timeout=_CALL_TIMEOUT)
 
     convo = Conversation()
     lines: list[str] = []
@@ -334,11 +334,7 @@ async def _crescendo_auto(args: dict, ctx: ToolContext) -> str:
 
 
 async def _crescendo(args: dict, ctx: ToolContext) -> str:
-    # Backward compatibility: supplying the legacy static turn ladder still
-    # selects static mode, while calls without turns get the new auto default.
-    mode = str(args.get("mode", "auto")).strip().lower()
-    if "mode" not in args and args.get("turns"):
-        mode = "static"
+    mode = str(args.get("mode", "static")).strip().lower()
     if mode in ("auto", "crescendomation", "adaptive"):
         return await _crescendo_auto(args, ctx)
     return await _crescendo_static(args, ctx)
@@ -348,7 +344,7 @@ def register(registry: ToolRegistry) -> None:
     registry.add(
         name="crescendo",
         description=(
-            "Run an automated multi-turn Crescendo attack. Default mode='auto' (Crescendomation) lets an attacker LLM generate each next turn with judge-in-the-loop auto-backtrack. mode='static' fires an "
+            "Run an automated multi-turn Crescendo attack. Default mode='static' fires an "
             "escalation ladder you supply in 'turns' one turn at a time, threading the growing "
             "conversation so each turn rides the target's prior compliance. mode='auto' "
             "(Crescendomation) drops the fixed ladder: an attacker LLM generates each NEXT "
@@ -366,8 +362,8 @@ def register(registry: ToolRegistry) -> None:
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["auto", "static"],
-                    "description": "'auto' (default, Crescendomation) generates each turn adaptively; 'static' uses 'turns'",
+                    "enum": ["static", "auto"],
+                    "description": "'static' (default) uses 'turns'; 'auto' generates each turn adaptively",
                 },
                 "turns": {
                     "type": "array",

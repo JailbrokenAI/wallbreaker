@@ -1,29 +1,5 @@
 default_profile = "openrouter"
 
-# ── Daedalus product layer ──────────────────────────────────────────────────
-# Codename from myth (craftsman of the labyrinth). UI copy can rename later.
-# topology "dual"  = brain and target may be different models (set under [agents.*])
-# topology "single" = target mirrors the attacker/default brain after load
-# Liberation memory is GLOBAL (library/liberation/). Env: WALLBREAKER_TOPOLOGY,
-# WALLBREAKER_DOCTRINE=0|1, WALLBREAKER_DOCTRINE_FILE=...
-[daedalus]
-codename = "Daedalus"
-topology = "dual"
-doctrine_enabled = true
-doctrine_file = "wallbreaker/doctrine/liberation_agent.md"
-memory_scope = "global"
-memory_root = "library/liberation"
-cyber_gate_enabled = true
-# Only write Liberation Memory after validate reports a rate (e.g. 6/8).
-memory_require_validate = true
-# Liberation Memory similarity: offline (hashed) | openai | openrouter | custom
-# memory_embed_provider = "offline"
-# memory_embed_model = "text-embedding-3-small"
-# memory_embed_base_url = "https://api.openai.com/v1"
-# memory_embed_api_key_env = "OPENAI_API_KEY"
-# memory_embed_profile = ""          # optional: borrow key/url from a [profiles.*]
-# memory_embed_dimensions = 0        # 0 = provider default
-
 # Active agent assignments. Choose a named role profile with `profile`, or store
 # a direct provider/model assignment by omitting profile and setting provider/model.
 [agents.attacker]

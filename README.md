@@ -1,6 +1,4 @@
-# Daedalus: AI Red-Team Harness
-
-> **Product layer:** Daedalus &nbsp;·&nbsp; **Package / CLI:** `wallbreaker`
+# Wallbreaker: AI Red-Team Harness
 
 ```
 ██╗    ██╗ █████╗ ██╗     ██╗     ██████╗ ██████╗ ███████╗ █████╗ ██╗  ██╗███████╗██████╗
@@ -12,7 +10,7 @@
         break the wall · not the rules of engagement    ⚔  authorized testing only
 ```
 
-Daedalus is a Claude-Code-style terminal built for red-teaming LLMs (installable package and CLI: `wallbreaker`). You talk to it like
+A Claude-Code-style terminal built for red-teaming LLMs (CLI command: `wallbreaker`). You talk to it like
 Claude Code; it reasons and calls tools in a loop. The backend is fully configurable, so
 it runs on **OpenRouter**, the **Z.AI GLM coding plan**, the local **Claude Code CLI**, a
 local server, or any OpenAI-/Anthropic-compatible API (including third-party proxies via
@@ -296,7 +294,7 @@ workflow sequencing, provider/profile management, and current or historical evid
 inspection. **Agent** is dedicated to the autonomous Attack → Target → Judge loop;
 **Live** provides the holistic-to-granular observability surface.
 
-![Daedalus attack console](docs/images/dashboard-console.png)
+![Wallbreaker attack console](docs/images/dashboard-console.png)
 
 <details>
 <summary>More views: overview &amp; arsenal</summary>
@@ -322,22 +320,9 @@ history storage, development workflow, network-exposure safeguards, and troubles
 See the [WebUI V2 showcase](docs/WEBUI_V2_SHOWCASE.md) for a visual tour of the unified
 operator surface.
 
-
-
-## Package vs product
-
-| Layer | Name |
-|-------|------|
-| Product / UI codename | **Daedalus** (configurable via `[daedalus].codename`) |
-| Python package & CLI | **`wallbreaker`** (`pip install`, `wallbreaker …`) |
-| Import path | `import wallbreaker` |
-
-The dual naming is intentional: the mythic product layer can rebrand without breaking
-scripts, CI, or pinned package names.
-
 ## Responsible use
 
-Daedalus (package `wallbreaker`) is for **authorized** LLM red-teaming and safety evaluation only: your own
+Wallbreaker is for **authorized** LLM red-teaming and safety evaluation only: your own
 models, or targets you have explicit permission to test. Run logs and generated
 artifacts can contain harmful content; they're written to gitignored `wb_runs/`,
 `wb_artifacts/`, `findings/`. See [SECURITY.md](SECURITY.md) for the full policy and how
@@ -350,7 +335,7 @@ Setup, architecture, and house rules are in [CONTRIBUTING.md](CONTRIBUTING.md). 
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE). Daedalus / wallbreaker is copyleft: any modified version (**including
+[AGPL-3.0-or-later](LICENSE). Wallbreaker is copyleft: any modified version (**including
 one you run as a network/hosted service**) must make its complete corresponding source
 available under the same license. Third-party jailbreak corpora (L1B3RT4S, P4RS3LT0NGV3,
 ENI) are fetched at runtime, not redistributed; see [NOTICE](NOTICE).

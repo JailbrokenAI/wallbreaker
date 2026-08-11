@@ -33,7 +33,7 @@ from ..persona_spec import (
 )
 from ..state import load_state, state_path_for
 from ..strategy_lib import StrategyLibrary
-from ._util import complete_with_reasoning, await_llm
+from ._util import complete_with_reasoning
 from . import eni as eni_lib
 from .registry import ToolContext, ToolRegistry
 
@@ -563,7 +563,7 @@ async def _persona_forge(args: dict, ctx: ToolContext) -> str:
     history: list[dict[str, Any]] = []
 
     async def _bounded(coro):
-        return await await_llm(coro, timeout=_CALL_TIMEOUT)
+        return await asyncio.wait_for(coro, timeout=_CALL_TIMEOUT)
 
     with ctx.run(
         "persona forge (ENI genome)",

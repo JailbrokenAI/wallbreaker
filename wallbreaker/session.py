@@ -561,7 +561,7 @@ class RunLog:
 
     def verdict(
         self, payload: str, response: str, label: str, reason: str, technique: str = "",
-        *, target_model: str = "", benign: bool = False, axis: str = "",
+        *, target_model: str = "",
     ) -> None:
         data = {
             "payload": payload, "response": response, "label": label,
@@ -569,11 +569,6 @@ class RunLog:
         }
         if target_model:
             data["target_model"] = target_model
-        if benign:
-            data["benign"] = True
-            data["axis"] = axis or "benign"
-        elif axis:
-            data["axis"] = axis
         self.event("verdict", **data)
 
 

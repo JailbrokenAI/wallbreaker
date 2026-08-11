@@ -244,34 +244,10 @@ async def _query_target(args: dict, ctx: ToolContext) -> str:
         reply, reasoning, stop, empty = await _fire(provider, messages, system, max_tokens)
     except Exception as exc:  # noqa: BLE001
         dt = time.monotonic() - start
-        msg = str(exc)
-        low = msg.lower()
-        if "401" in msg or "authentication" in low or "invalid" in low and "api key" in low:
-            hint = (
-                "Authentication failed (invalid/expired API key). "
-                "Update the target provider key in .env / Settings, then restart the backend."
-            )
-        elif "403" in msg or "permission" in low:
-            hint = "Target rejected the request (403/permission). Check model access and account limits."
-        elif "429" in msg or "rate" in low:
-            hint = "Rate limited. Wait, lower concurrency, or increase request_delay_ms."
-        elif "timeout" in low or "timed out" in low:
-            hint = "Timed out. Retry, raise target timeout / max_tokens, or lower concurrency."
-        elif "cancelled" in low:
-            hint = (
-                "Request was cancelled (often an outer wait_for timeout mid-stream). "
-                "Raise the tool timeout; this is not necessarily a network outage."
-            )
-        elif "connect error" in low or ("connect" in low and "network" not in low):
-            hint = "Connect failed. Check base_url, VPN/proxy, and that the target service is up."
-        elif "network error" in low:
-            hint = (
-                "Transport error while calling the target. If content already appeared, "
-                "check the run log — success may still have been recorded (BUG-001)."
-            )
-        else:
-            hint = "Target call failed. Inspect the error above; retry or switch target provider/model."
-        return f"[target error after {dt:.1f}s] {type(exc).__name__}: {msg[:300]}\n{hint}"
+        return (
+            f"[target error after {dt:.1f}s] {type(exc).__name__}: {str(exc)[:180]}\n"
+            "The target failed (timeout/network). Retry, lower max_tokens, or try another technique."
+        )
     # Token-exhaustion auto-recovery: a reasoning model that complied inside its CoT but
     # ran out of budget before answering comes back empty. That is the single most common
     # "it came back empty" failure - one retry at a higher ceiling recovers the answer

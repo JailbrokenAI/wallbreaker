@@ -98,14 +98,15 @@ async def _label_clusters(judge_endpoint, reps: list[str]) -> list[str]:
             + text[:600]
         )
         try:
-            out = await await_llm(provider.complete([user(prompt)], max_tokens=24), timeout=120
+            out = await asyncio.wait_for(
+                provider.complete([user(prompt)], max_tokens=24), timeout=30
             )
         except Exception:  # noqa: BLE001
             return ""
         out = (out or "").strip()
         return out.splitlines()[0][:60] if out else ""
 
-    from ._util import gather_capped, await_llm
+    from ._util import gather_capped
 
     return await gather_capped([one(r) for r in reps], limit=4)
 

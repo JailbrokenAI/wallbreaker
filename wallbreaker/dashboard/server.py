@@ -479,23 +479,12 @@ def _config_summary(config) -> dict:
         prof = roles.get("attacker", {}).get("provider", display_config.default_profile)
     except Exception:
         prof = None
-    daedalus = _daedalus_view(config)
-    target_timeout = None
-    if target is not None:
-        try:
-            target_timeout = float(target.effective_timeout())
-        except Exception:
-            from ..providers.base import DEFAULT_TIMEOUT, resolve_timeout
-
-            target_timeout = resolve_timeout(getattr(target, "timeout", 0))
     return {
         "has_target": target is not None,
         "target": getattr(target, "model", None) if target else None,
         "target_modality": getattr(target, "modality", "text") if target else None,
-        "target_timeout": target_timeout,
         "profile": prof,
         "judge": getattr(judge, "model", None) if judge else None,
-        "daedalus": daedalus,
     }
 
 
@@ -654,8 +643,7 @@ def _settings_view(config, prefs: dict | None = None) -> dict:
         return {"profiles": [], "default_profile": None, "attacker_model": None,
                 "target": None, "judge_model": None, "agent": agent,
                 "profile_details": {},
-                "target_options": _target_settings(None, prefs),
-                "daedalus": _daedalus_view(None)}
+                "target_options": _target_settings(None, prefs)}
     display_config = config
     role_view = {}
     try:
@@ -698,87 +686,6 @@ def _settings_view(config, prefs: dict | None = None) -> dict:
         "judge_profile": role_view.get("judge", {}).get("provider"),
         "agent": agent,
         "target_options": _target_settings(config, prefs),
-        "daedalus": _daedalus_view(config),
-    }
-
-
-def _daedalus_view(config) -> dict:
-    """Serialize Daedalus product-layer settings for the dashboard."""
-    if config is None:
-        return {
-            "codename": "Daedalus",
-            "topology": "dual",
-            "doctrine_enabled": True,
-            "doctrine_file": "wallbreaker/doctrine/liberation_agent.md",
-            "memory_scope": "global",
-            "memory_root": "library/liberation",
-            "cyber_gate_enabled": True,
-            "memory_require_validate": True,
-            "memory_embed_provider": "offline",
-            "memory_embed_model": "",
-            "memory_embed_base_url": "",
-            "memory_embed_api_key_env": "",
-            "memory_embed_profile": "",
-            "memory_embed_dimensions": 0,
-            "memory_embed_has_key": False,
-            "memory_embed_mode": "offline-hash",
-        }
-    d = getattr(config, "daedalus", None)
-    if d is None:
-        return _daedalus_view(None)
-    # Embed status is operator-facing (no raw secrets).
-    try:
-        from ..memory.embedders import embed_status
-
-        est = embed_status(config)
-    except Exception:
-        est = {
-            "provider": getattr(d, "memory_embed_provider", "offline") or "offline",
-            "model": getattr(d, "memory_embed_model", "") or "",
-            "base_url": getattr(d, "memory_embed_base_url", "") or "",
-            "api_key_env": getattr(d, "memory_embed_api_key_env", "") or "",
-            "profile": getattr(d, "memory_embed_profile", "") or "",
-            "dimensions": int(getattr(d, "memory_embed_dimensions", 0) or 0),
-            "has_api_key": bool(getattr(d, "memory_embed_api_key", "") or ""),
-            "mode": "offline-hash",
-        }
-    return {
-        "codename": getattr(d, "codename", "Daedalus") or "Daedalus",
-        "topology": getattr(d, "topology", "dual") or "dual",
-        "doctrine_enabled": bool(getattr(d, "doctrine_enabled", True)),
-        "doctrine_file": getattr(
-            d, "doctrine_file", "wallbreaker/doctrine/liberation_agent.md"
-        )
-        or "wallbreaker/doctrine/liberation_agent.md",
-        "memory_scope": "global",
-        "memory_root": getattr(d, "memory_root", "library/liberation")
-        or "library/liberation",
-        "cyber_gate_enabled": bool(getattr(d, "cyber_gate_enabled", True)),
-        "memory_require_validate": bool(
-            getattr(d, "memory_require_validate", True)
-        ),
-        "memory_embed_provider": est.get("provider")
-        or getattr(d, "memory_embed_provider", "offline")
-        or "offline",
-        "memory_embed_model": est.get("model")
-        or getattr(d, "memory_embed_model", "")
-        or "",
-        "memory_embed_base_url": est.get("base_url")
-        or getattr(d, "memory_embed_base_url", "")
-        or "",
-        "memory_embed_api_key_env": est.get("api_key_env")
-        or getattr(d, "memory_embed_api_key_env", "")
-        or "",
-        "memory_embed_profile": est.get("profile")
-        or getattr(d, "memory_embed_profile", "")
-        or "",
-        "memory_embed_dimensions": int(
-            est.get("dimensions")
-            or getattr(d, "memory_embed_dimensions", 0)
-            or 0
-        ),
-        "memory_embed_has_key": bool(est.get("has_api_key")),
-        "memory_embed_mode": est.get("mode") or "offline-hash",
     }
 
 
@@ -797,29 +704,17 @@ def _model_ids(payload) -> list[str]:
     return sorted(set(models), key=str.casefold)
 
 
-async def _discover_models_from_endpoint(
-    *,
-    protocol: str,
-    base_url: str,
-    api_key: str = "",
-    auth_style: str = "bearer",
-    models_path: str = "",
-    current_model: str = "",
-    profile: str = "",
-    transport=None,
-) -> dict:
-    """Probe an OpenAI/Anthropic-compatible /models endpoint and list ids."""
-    current = str(current_model or "").strip()
+async def _discover_profile_models(profile: str, endpoint) -> dict:
+    current = str(getattr(endpoint, "model", "") or "").strip()
     fallback = [current] if current else []
-    protocol = str(protocol or "openai").lower()
-    base_url = str(base_url or "").rstrip("/")
+    protocol = str(getattr(endpoint, "protocol", "") or "").lower()
+    base_url = str(getattr(endpoint, "base_url", "") or "").rstrip("/")
     result = {
         "profile": profile,
         "protocol": protocol,
         "models": fallback,
         "fetched": False,
         "error": "",
-        "url": "",
     }
     if protocol == "claude-code":
         result["error"] = "This local provider does not expose a model catalog."
@@ -830,7 +725,7 @@ async def _discover_models_from_endpoint(
 
     import httpx
 
-    custom_path = str(models_path or "")
+    custom_path = str(getattr(endpoint, "models_path", "") or "")
     if protocol == "anthropic":
         path = custom_path or "/v1/models"
         url = f"{base_url}{path if path.startswith('/') else '/' + path}"
@@ -838,17 +733,19 @@ async def _discover_models_from_endpoint(
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
-        if api_key:
-            if str(auth_style or "x-api-key") == "bearer":
-                headers["Authorization"] = f"Bearer {api_key}"
+        key = endpoint.resolved_key()
+        if key:
+            if getattr(endpoint, "auth_style", "x-api-key") == "bearer":
+                headers["Authorization"] = f"Bearer {key}"
             else:
-                headers["x-api-key"] = api_key
+                headers["x-api-key"] = key
     else:
         path = custom_path or "/models"
         url = f"{base_url}{path if path.startswith('/') else '/' + path}"
         headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        key = endpoint.resolved_key()
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
 
     # SSRF guard: model discovery attaches the operator's API key to a request against a
     # profile-supplied base_url. Block private/loopback/metadata targets so a poisoned base_url
@@ -868,7 +765,7 @@ async def _discover_models_from_endpoint(
         async with httpx.AsyncClient(
             timeout=20,
             follow_redirects=False,
-            transport=transport or make_pinned_transport(),
+            transport=make_pinned_transport(),
         ) as client:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
@@ -883,23 +780,6 @@ async def _discover_models_from_endpoint(
     result["models"] = models
     result["fetched"] = True
     return result
-
-
-async def _discover_profile_models(profile: str, endpoint) -> dict:
-    # Keep the enforcing dependency visible at this credential-bearing boundary;
-    # _discover_models_from_endpoint constructs and uses make_pinned_transport().
-    from ..tools.egress_guard import make_pinned_transport
-
-    return await _discover_models_from_endpoint(
-        protocol=str(getattr(endpoint, "protocol", "") or ""),
-        base_url=str(getattr(endpoint, "base_url", "") or ""),
-        api_key=endpoint.resolved_key() if hasattr(endpoint, "resolved_key") else "",
-        auth_style=str(getattr(endpoint, "auth_style", "bearer") or "bearer"),
-        models_path=str(getattr(endpoint, "models_path", "") or ""),
-        current_model=str(getattr(endpoint, "model", "") or ""),
-        profile=profile,
-        transport=make_pinned_transport(),
-    )
 
 
 def create_app(
@@ -1044,51 +924,6 @@ def create_app(
                 prefs = {}
         return _settings_view(config, prefs)
 
-    @app.get("/api/liberation")
-    def liberation_memory(q: str = "", limit: int = 10):
-        """Inspect global Liberation Memory (stats + recent or similar rows)."""
-        from ..harness.replay import liberation_root_for
-        from ..memory import LiberationStore
-
-        cwd = str(Path(config.path).resolve().parent) if config is not None and getattr(config, "path", None) else str(sessions.parent if sessions else Path.cwd())
-        root = liberation_root_for(config, cwd)
-        store = LiberationStore(root=root, cwd=cwd)
-        lim = max(1, min(50, int(limit or 10)))
-        from ..memory import embed_status
-
-        body = {
-            "stats": store.stats(),
-            "recent": store.list_recent(limit=lim),
-            "similar": [],
-            "embed": embed_status(config),
-        }
-        query = (q or "").strip()
-        if query:
-            model = ""
-            if config is not None and getattr(config, "target", None):
-                model = getattr(config.target, "model", "") or ""
-            from ..memory import build_embed_fn, embed_status
-
-            embed_fn = build_embed_fn(config)
-            hits = store.find_similar(
-                query, model=model, limit=lim, method="hybrid", embed_fn=embed_fn
-            )
-            body["embed"] = embed_status(config)
-            body["similar"] = [
-                {
-                    "score": round(float(score), 4),
-                    "id": rec.id,
-                    "objective_norm": rec.objective_norm,
-                    "model": rec.model,
-                    "technique": rec.technique,
-                    "validate_rate": rec.validate_rate,
-                    "hits": rec.hits,
-                    "judge": rec.judge,
-                }
-                for score, rec in hits
-            ]
-        return body
-
     @app.get("/api/providers")
     def providers_get():
         return provider_registry.list() if provider_registry is not None else []
@@ -1196,88 +1031,6 @@ def create_app(
                 "response_preview": preview,
             },
         }
-
-    @app.post("/api/providers/probe")
-    async def provider_probe(body: dict):
-        """Probe URL+key before saving (CC Switch-style model discovery)."""
-        base_url = str(body.get("base_url") or "").strip()
-        if not base_url:
-            raise HTTPException(status_code=400, detail="base_url is required")
-        protocol = str(body.get("protocol") or "openai").strip().lower() or "openai"
-        api_key = str(body.get("api_key") or "").strip()
-        auth_style = str(body.get("auth_style") or ("x-api-key" if protocol == "anthropic" else "bearer"))
-        models_path = str(body.get("models_path") or "").strip()
-        name = str(body.get("name") or "").strip()
-        # Prefer explicit key; else fall back to an existing saved provider key.
-        if not api_key and name and config is not None:
-            endpoint = config.all_profiles.get(name)
-            if endpoint is not None:
-                api_key = endpoint.resolved_key()
-                if not models_path:
-                    models_path = str(getattr(endpoint, "models_path", "") or "")
-                if not body.get("auth_style"):
-                    auth_style = str(getattr(endpoint, "auth_style", auth_style) or auth_style)
-        result = await _discover_models_from_endpoint(
-            protocol=protocol,
-            base_url=base_url,
-            api_key=api_key,
-            auth_style=auth_style,
-            models_path=models_path,
-            current_model=str(body.get("model") or ""),
-            profile=name,
-        )
-        return {"ok": bool(result.get("fetched")), **result}
-
-    @app.post("/api/providers/{name}/models/bulk")
-    def provider_models_bulk(name: str, body: dict):
-        if config is None or name not in config.all_profiles:
-            raise HTTPException(status_code=404, detail=f"unknown provider '{name}'")
-        if model_catalog is None:
-            raise HTTPException(status_code=400, detail="model catalog unavailable")
-        raw = body.get("models")
-        if not isinstance(raw, list):
-            raise HTTPException(status_code=400, detail="models must be a list of model ids")
-        models = [str(item).strip() for item in raw if str(item).strip()]
-        if not models:
-            raise HTTPException(status_code=400, detail="models is empty")
-        model_catalog.sync(name, models, "manual")
-        model_catalog.mark_refreshed(name)
-        entries = model_catalog.list(name)
-        return {
-            "provider": name,
-            "added": len(models),
-            "models": [item["model_id"] for item in entries],
-            "entries": entries,
-        }
-
-    @app.get("/api/model-pool")
-    def model_pool_get():
-        """Flat pool of provider×model pairs for topbar quick switching."""
-        if config is None:
-            return {"items": []}
-        items = []
-        for name, endpoint in sorted(config.all_profiles.items(), key=lambda item: item[0].casefold()):
-            if name in getattr(config, "disabled_profiles", set()):
-                continue
-            models: list[str] = []
-            if model_catalog is not None:
-                models = [entry["model_id"] for entry in model_catalog.list(name) if entry.get("available", True)]
-            default_model = str(getattr(endpoint, "model", "") or "").strip()
-            if default_model and default_model not in models:
-                models = [default_model, *models]
-            if not models and default_model:
-                models = [default_model]
-            for model_id in models:
-                items.append({
-                    "id": f"{name}::{model_id}",
-                    "provider": name,
-                    "model": model_id,
-                    "protocol": str(getattr(endpoint, "protocol", "") or ""),
-                    "base_url": str(getattr(endpoint, "base_url", "") or ""),
-                    "label": f"{model_id} · {name}",
-                    "is_default": model_id == default_model,
-                })
-        return {"items": items, "count": len(items)}
 
     def _roles_view() -> dict:
         if agent_profile_registry is None:
@@ -1454,17 +1207,6 @@ def create_app(
                 if not isinstance(target_options["judge_enabled"], bool):
                     raise HTTPException(status_code=400, detail="judge_enabled must be a boolean")
                 prefs["judge"] = target_options["judge_enabled"]
-        if isinstance(body.get("daedalus"), dict):
-            try:
-                from ..config import ConfigError, write_daedalus_settings
-
-                write_daedalus_settings(config, body["daedalus"])
-            except ConfigError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=400, detail=f"daedalus settings: {exc}"
-                ) from exc
         save_state(state_path_for(config), prefs)
         from ..providers.request_gate import configure_request_gate
 
@@ -1487,33 +1229,12 @@ def create_app(
             except Exception:
                 findings_count = 0
         runs = sorted(sessions.glob("run-*.jsonl")) if sessions.is_dir() else []
-        liberation = {"count": 0, "with_validate_rate": 0, "total_hits": 0}
-        try:
-            from ..harness.replay import liberation_root_for
-            from ..memory import LiberationStore
-
-            cwd = (
-                str(Path(config.path).resolve().parent)
-                if config is not None and getattr(config, "path", None)
-                else str(sessions.parent if sessions else Path.cwd())
-            )
-            liberation = LiberationStore(
-                root=liberation_root_for(config, cwd), cwd=cwd
-            ).stats()
-        except Exception:
-            pass
         return {
             "config": _config_summary(config),
             "scorecard": scorecard,
             "findings_count": findings_count,
             "runs_count": len(runs),
             "latest_run": log.name if log else None,
-            "liberation": {
-                "count": liberation.get("count", 0),
-                "with_validate_rate": liberation.get("with_validate_rate", 0),
-                "total_hits": liberation.get("total_hits", 0),
-                "root": liberation.get("root"),
-            },
         }
 
     @app.get("/api/runs")
@@ -1631,21 +1352,9 @@ def create_app(
         except Exception:
             return []
 
-    # Console fire and agent runs are independent: they only serialize with
-    # themselves (one console fire, one agent). Shared provider rate limits still
-    # apply via request_gate; do not block one workspace with the other.
     dashboard_inference_lock = asyncio.Lock()
-    console_fire_lock = asyncio.Lock()
-    console_fire_control = None  # {"task": Task, "stop_requested": bool}
     agent_active = False
     agent_control = None
-
-    def _console_status_view():
-        control = console_fire_control
-        return {
-            "active": control is not None,
-            "stopping": bool(control and control.get("stop_requested")),
-        }
 
     @app.post("/api/compose")
     def compose(body: dict):
@@ -1690,36 +1399,16 @@ def create_app(
         })
         return {"ok": True, "archived_run": archived, **_console_conversation_view()}
 
-    @app.get("/api/console/status")
-    async def console_status():
-        return _console_status_view()
-
-    @app.post("/api/console/stop")
-    async def console_stop():
-        """Cancel the in-flight console fire (if any)."""
-        nonlocal console_fire_control
-        control = console_fire_control
-        if control is None:
-            raise HTTPException(status_code=409, detail="no console fire is active")
-        control["stop_requested"] = True
-        task = control.get("task")
-        if task is not None and not task.done():
-            task.cancel()
-        return _console_status_view()
     @app.post("/api/fire")
     async def fire(body: dict):
-        nonlocal console_fire_control
         if config is None:
             raise HTTPException(status_code=400, detail="no [target] configured in config.toml")
         try:
             composed = _compose_attack_payload(body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if console_fire_lock.locked() or console_fire_control is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="a console fire is already in progress (use 结束 on the attack console)",
-            )
+        if dashboard_inference_lock.locked():
+            raise HTTPException(status_code=409, detail="another dashboard inference is already in progress")
 
         is_followup = bool(console_conversation["turns"])
         args = {
@@ -1734,7 +1423,6 @@ def create_app(
         from ..tools import build_registry
         from ..agent_profiles import resolved_config
         from ..session import inference_logging
-        from ..tools.registry import ToolResult
 
         if console_conversation["registry"] is None:
             try:
@@ -1777,34 +1465,10 @@ def create_app(
             tool_args=args,
             turn=len(console_conversation["turns"]) + 1,
         )
-        async def _console_fire_job():
-            async with console_fire_lock:
-                with inference_logging(console_runlog):
-                    return await reg.execute(tool_name, args)
-
-        task = asyncio.create_task(_console_fire_job())
-        console_fire_control = {"task": task, "stop_requested": False}
-        cancelled = False
-        try:
-            result = await task
-        except asyncio.CancelledError:
-            # Client abort or /api/console/stop — cancel the fire job if still running.
-            cancelled = True
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-            result = ToolResult(
-                content="[console] fire cancelled by operator",
-                is_error=True,
-            )
-            console_runlog.event("console_cancelled", composed=composed)
-        finally:
-            console_fire_control = None
-
-        verdict = "" if cancelled else _extract_verdict(result.content)
+        async with dashboard_inference_lock:
+            with inference_logging(console_runlog):
+                result = await reg.execute(tool_name, args)
+        verdict = _extract_verdict(result.content)
         target = run_config.target
         console_runlog.event(
             "attack_fire",
@@ -1812,7 +1476,7 @@ def create_app(
             prompt=composed["prompt"],
             payload=composed["payload"],
             response=result.content,
-            label=verdict or ("ERROR" if cancelled else ""),
+            label=verdict,
             technique="console",
             preset=composed["preset"],
             transforms=composed["transforms"],
@@ -1824,19 +1488,7 @@ def create_app(
             agent_roles=role_meta,
             turn=len(console_conversation["turns"]) + 1,
             continuation=is_followup,
-            cancelled=cancelled,
         )
-        if cancelled:
-            return {
-                **composed,
-                "content": result.content,
-                "response": result.content,
-                "is_error": True,
-                "verdict": "ERROR",
-                "run_log": console_runlog.path.name,
-                "cancelled": True,
-                "conversation": _console_conversation_view(),
-            }
         turn = {
             "index": len(console_conversation["turns"]) + 1,
             "request": composed["request"],
@@ -1863,21 +1515,12 @@ def create_app(
 
     def _agent_status_view():
         if not agent_active or agent_control is None:
-            return {
-                "active": False,
-                "paused": False,
-                "pause_ready": False,
-                "stopping": False,
-                "attacker": "",
-                "provider": "",
-                "objective": "",
-            }
+            return {"active": False, "paused": False, "attacker": "", "provider": ""}
         endpoint = agent_control["provider"].endpoint
         return {
             "active": True,
             "paused": bool(agent_control["paused"]),
             "pause_ready": bool(agent_control.get("pause_ready")),
-            "stopping": bool(agent_control.get("stop_requested")),
             "attacker": endpoint.model,
             "provider": str(agent_control.get("provider_name") or ""),
             "objective": str(agent_control.get("objective") or ""),
@@ -1919,49 +1562,12 @@ def create_app(
     @app.post("/api/agent/resume")
     async def agent_resume():
         control = _active_control()
-        if control.get("stop_requested"):
-            raise HTTPException(status_code=409, detail="run is stopping; start a new run after it ends")
         control["paused"] = False
         control["pause_ready"] = False
         control["resume_event"].set()
         control["runlog"].event("agent_resumed")
         control["push"]({"type": "control", "state": "running", "message": "Run resumed."})
         return _agent_status_view()
-
-    @app.post("/api/agent/stop")
-    async def agent_stop():
-        """End the active agent run immediately.
-
-        Unblocks a paused run and cancels the runner task so long tools
-        (profile_target, multi_fire, …) do not keep the UI stuck until they finish.
-        """
-        nonlocal agent_active, agent_control
-        if not agent_active or agent_control is None:
-            agent_active = False
-            agent_control = None
-            return {"stopped": False}
-        control = agent_control
-        control["stop_requested"] = True
-        control["paused"] = False
-        control["pause_ready"] = False
-        # Wake pause_checkpoint so a paused run does not hang forever.
-        control["resume_event"].set()
-        control["runlog"].event("agent_stop_requested")
-        control["push"]({
-            "type": "control",
-            "state": "stopping",
-            "message": "结束任务已请求：正在中断当前步骤…",
-        })
-        task = control.get("task")
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await asyncio.wait_for(task, timeout=5.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                pass
-        agent_active = False
-        agent_control = None
-        return {"stopped": True}
 
     @app.post("/api/agent/attacker")
     async def agent_attacker_switch(body: dict):
@@ -2029,7 +1635,8 @@ def create_app(
             raise HTTPException(status_code=400, detail="'objective' is required")
         if agent_active:
             raise HTTPException(status_code=409, detail="an agent run is already in progress")
-        # Console fire may run in parallel; only one agent at a time.
+        if dashboard_inference_lock.locked():
+            raise HTTPException(status_code=409, detail="another dashboard inference is already in progress")
         agent_defaults = _agent_settings(prefs)
         max_rounds = _int_setting(body.get("max_rounds"), agent_defaults["max_rounds"], 1, 50)
         max_tokens = _int_setting(body.get("max_tokens"), agent_defaults["max_tokens"], 1, 32000)
@@ -2145,22 +1752,6 @@ def create_app(
 
         def internal_message(role, text, source) -> None:
             runlog.event("history_message", role=role, text=text, source=source)
-            src = str(source or "")
-            # Surface Daedalus mode transitions to the live agent timeline.
-            if src in ("cyber_gate_liberate", "liberation_replay", "manual_liberate"):
-                mode = (
-                    "REPLAY"
-                    if "replay" in src
-                    else "LIBERATE"
-                )
-                push(
-                    {
-                        "type": "mode",
-                        "mode": mode,
-                        "source": src,
-                        "text": str(text or "")[:400],
-                    }
-                )
 
         def tool_run_event(event) -> None:
             runlog.event("tool_run_event", event=event)
@@ -2168,8 +1759,6 @@ def create_app(
 
         registry.ctx.progress = progress
         registry.ctx.run_events = tool_run_event
-        registry.ctx.current_objective = objective
-        registry.ctx.attacker_model = getattr(brain, "model", "") or ""
         registry.ctx.record = lambda p, r, lbl, rs, t: runlog.verdict(
             p, r, lbl, rs, t,
             target_model=getattr(run_config.target, "model", "") if run_config.target else "",
@@ -2203,62 +1792,52 @@ def create_app(
             "resume_event": resume_event,
             "paused": False,
             "pause_ready": False,
-            "stop_requested": False,
             "feedback": feedback_queue,
             "runlog": runlog,
             "push": push,
             "objective": objective,
-            "task": None,
         }
 
         def mark_pause_ready() -> None:
             if agent_control is None or agent_control.get("pause_ready"):
                 return
-            if agent_control.get("stop_requested"):
-                return
             agent_control["pause_ready"] = True
             push({
                 "type": "control", "state": "paused",
-                "message": "已暂停。可切换攻击端、发送引导，或结束任务。",
+                "message": "Paused. You can switch the attacker or add steering before resuming.",
             })
 
         async def pause_checkpoint() -> None:
-            if agent_control is not None and agent_control.get("stop_requested"):
-                return
             if not resume_event.is_set():
                 mark_pause_ready()
             await resume_event.wait()
             if agent_control is not None:
                 agent_control["pause_ready"] = False
 
-        def should_stop() -> bool:
-            return bool(agent_control and agent_control.get("stop_requested"))
-
         async def runner():
             nonlocal agent_active, agent_control
             from ..session import inference_logging
 
-            try:
-                with inference_logging(runlog):
-                    started_at = asyncio.get_running_loop().time()
-                    res = await asyncio.wait_for(
-                        run_autonomous(
-                            provider, registry, history, system=compose_system(brain),
-                            events=events, max_rounds=max_rounds, max_tokens=max_tokens,
-                            feedback=drain_feedback,
-                            before_model=pause_checkpoint,
-                            should_stop=should_stop,
-                            config=run_config,
-                            objective=str(
-                                (agent_control or {}).get("objective")
-                                or getattr(registry.ctx, "current_objective", "")
-                                or ""
+            async with dashboard_inference_lock:
+                try:
+                    with inference_logging(runlog):
+                        res = await asyncio.wait_for(
+                            run_autonomous(
+                                provider, registry, history, system=compose_system(brain),
+                                events=events, max_rounds=max_rounds, max_tokens=max_tokens,
+                                feedback=drain_feedback,
+                                before_model=pause_checkpoint,
                             ),
-                        ),
-                        timeout=overall_timeout,
-                    )
-                elapsed = asyncio.get_running_loop().time() - started_at
-                if res.status == "stopped" and elapsed >= overall_timeout * 0.95:
+                            timeout=overall_timeout,
+                        )
+                    data = res.data or {}
+                    summary = data.get("summary") or data.get("question") or ""
+                    runlog.event("agent_done", status=res.status, summary=summary)
+                    push({
+                        "type": "done", "status": res.status,
+                        "summary": summary, "run_log": runlog.path.name,
+                    })
+                except asyncio.TimeoutError:
                     runlog.event("agent_done", status="timeout", summary="run timed out")
                     push({
                         "type": "done",
@@ -2266,44 +1845,18 @@ def create_app(
                         "summary": "run timed out",
                         "run_log": runlog.path.name,
                     })
-                    return
-                data = res.data or {}
-                summary = data.get("summary") or data.get("question") or ""
-                if res.status == "stopped" and not summary:
-                    summary = "operator ended the run"
-                runlog.event("agent_done", status=res.status, summary=summary)
-                push({
-                    "type": "done", "status": res.status,
-                    "summary": summary, "run_log": runlog.path.name,
-                })
-            except asyncio.TimeoutError:
-                runlog.event("agent_done", status="timeout", summary="run timed out")
-                push({
-                    "type": "done",
-                    "status": "timeout",
-                    "summary": "run timed out",
-                    "run_log": runlog.path.name,
-                })
-            except asyncio.CancelledError:
-                runlog.event("agent_done", status="stopped", summary="operator ended the run")
-                push({
-                    "type": "done",
-                    "status": "stopped",
-                    "summary": "operator ended the run",
-                    "run_log": runlog.path.name,
-                })
-            except Exception:  # noqa: BLE001
-                _log.exception("agent run failed")
-                error_event("internal error")
-            finally:
-                try:
-                    await provider.aclose()
-                except Exception:
-                    pass
-                agent_active = False
-                resume_event.set()
-                agent_control = None
-                push(None)
+                except Exception:  # noqa: BLE001
+                    _log.exception("agent run failed")
+                    error_event("internal error")
+                finally:
+                    try:
+                        await provider.aclose()
+                    except Exception:
+                        pass
+                    agent_active = False
+                    resume_event.set()
+                    agent_control = None
+                    push(None)
 
         agent_active = True
         task = asyncio.create_task(runner())
@@ -2325,8 +1878,8 @@ def create_app(
             finally:
                 # A browser stop/disconnect must not abandon an inference that the
                 # remote supplier may still count as active.  Detach the UI and let
-                # the runner drain the response; its normal finally block clears
-                # agent_active. Operator stop still cancels via /api/agent/stop.
+                # the runner drain the response; its normal finally block releases
+                # both the provider request slot and dashboard run lock.
                 stream_attached = False
 
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
