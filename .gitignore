@@ -76,3 +76,4 @@ specs/
 .serena/
 *.log
 .DS_Store
+.xai-token
