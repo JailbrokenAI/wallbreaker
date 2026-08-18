@@ -1,0 +1,8 @@
+# meta-prompt generation common settings
+attempt_times: 10
+total_num: 20
+unsafe_num: 10
+
+meta_dir:
+  response_dir: eval_output
+  unsafe_response_dir: eval_outputs_unsafe
