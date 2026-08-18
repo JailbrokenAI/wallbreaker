@@ -149,9 +149,11 @@ MESSAGES_JS = r"""
     const wrap = el.closest('[class*="message"]');
     const authorEl = wrap ? wrap.querySelector('[class*="username"], [class*="headerText"] h3, [class*="authorInfo"] h3') : null;
     const timeEl = wrap ? wrap.querySelector('time') : null;
+    const imgs = wrap ? Array.from(wrap.querySelectorAll('a[href*="cdn.discordapp.com"], img[src*="cdn.discordapp.com"]')).map(a => a.href || a.src) : [];
     msgs.push({author: authorEl ? authorEl.innerText.trim() : '',
                ts: timeEl ? timeEl.getAttribute('datetime') : '',
-               content});
+               content,
+               attachments: imgs.slice(0, 5)});
   });
   return JSON.stringify({count: msgs.length, messages: msgs.slice(-80), url: location.href});
 })()

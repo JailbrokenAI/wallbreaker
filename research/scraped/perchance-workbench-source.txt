@@ -1,0 +1,88 @@
+$meta
+  title = BasedBlue's Red-Team Workbench
+  description = Your red-team lab where the guardrail is the weapon you're testing. Forge payloads from 71 technique templates, fire at a live model, judge with StrongREJECT, run adaptive loops, encoding sweeps, and unorthodox meta-attacks. For authorized safety evaluation and defensive education.
+  tags = ai, red-team, jailbreak, llm-safety, security, red-team-workbench, defensive, education
+
+generateText = {import:ai-text-plugin}
+superFetch = {import:super-fetch-plugin}
+
+// ---- user-tweakable config ----
+showDefenses = true        // show the "how defenders detect" panel on each card
+
+// ---- weighted technique list for the "deal a random card" draw ----
+// weights loosely reflect how often a technique appears in real engagements
+technique
+  Plain Query (Control)^1
+  PAIR / TAP^3
+  Crescendo^3
+  GOAT Adaptive Loop^3
+  Best-of-N^2
+  Many-Shot^2
+  Response Priming (Prefill)^3
+  Narrate (Fiction Frame)^3
+  Skeleton Key^3
+  CipherChat / SelfCipher^2
+  DrAttack^2
+  Tree Attack^2
+  In-Context Attack (ICA)^2
+  Persuasion (PAP)^4
+  Persona Author (ENI)^3
+  Native-Format Mimicry^2
+  Indirect Prompt Injection^3
+  Memory / RAG Poisoning^2
+  Image-Edit Channel^2
+  Chain-of-Jailbreak (Image)^1
+  Transfer Sweep^2
+  Multi-Fire Encoding Sweep^2
+  Seed Sweep^2
+  L1B3RT4S Library^1
+  Parseltongue Transforms^3
+  Recommend Transforms^2
+  System Sweep^2
+  Optimize Universal^2
+  Validate (Reliability)^3
+  StrongREJECT Judge^4
+  HarmBench Battery^3
+  Leaderboard Benchmark^1
+  Style Confinement^3
+  Compression (Terse Style)^2
+  Prefix Injection (Ignore Previous)^3
+  Attention Dilution^2
+  Goal Hijacking^2
+  Translation Bypass^2
+  Safe-Word Substitution^2
+  GCG (Adversarial Suffix)^2
+  AutoDAN (Genetic Search)^2
+  GPTFuzzer^2
+  Sycophancy Priming^2
+  CoT Refusal Leak^3
+  Self-Directed Attack (Auto-Bypass)^3
+  Analogy / Metaphor Encoding^2
+  Hypothetical / Conditional Frame^2
+  Prompt Extraction (Recon)^2
+  Semantic Redefinition^2
+  AIM (Always Intelligent & Machiavellian)^3
+  Limerick / Poetic Constraint^2
+  Shadow Persona (Beyond the Simulation)^3
+  Dual-Mode Answer^2
+  Grand Narrative (Operation)^2
+  Emoji Rebus (Flag-Letter Cipher)^2
+  The Job Posting^1
+  Threat Mitigation Brief^2
+  The Auction Listing^1
+  Diagnostic Decision Tree^1
+  Reciprocity Debt^2
+  Reverse Demand (Forbidden)^2
+  Safety Classifier Transparency^2
+  The Support Script^1
+  Grant Proposal Methods^1
+  The Fine Print^1
+  The Insurance Claim^2
+  The Laboratory Notebook^1
+  The Safety Data Sheet^1
+  The Chain Email^1
+  The Ghostwriter^1
+  The Official Answer Key^1
+  The Accessibility Description^2
+  The Audit Trail^1
+  The Unboxing Video^1
