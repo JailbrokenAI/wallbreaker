@@ -20,7 +20,15 @@ if not OR_KEY:
 AGENT_AUTH = os.path.expanduser("~/.pi/agent/auth.json")
 
 def xai_token():
-    """Refresh the grok-01 seat token via the agent auth.json xai-auth credential."""
+    """Use the stored access token; refresh via the grok-01 seat only on 401.
+    The agent-auth refresh token is rotated by pi and returns 400 — the stored
+    ACCESS token stays valid for hours."""
+    d = json.load(open(AGENT_AUTH))
+    xa = d["xai-auth"]
+    return xa["access"]
+
+
+def xai_token_refresh():
     d = json.load(open(AGENT_AUTH))
     xa = d["xai-auth"]
     params = urllib.parse.urlencode({
@@ -68,8 +76,27 @@ def fire_xai(system, user, max_tok):
     }).encode()
     req = urllib.request.Request(XAI, data=body, headers={
         "Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=300) as r:
-        return json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            # token expired — refresh via seat and retry once
+            tok = xai_token_refresh()
+            body = json.dumps({
+                "model": "grok-4.6",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "max_tokens": max_tok,
+                "temperature": 0.9,
+            }).encode()
+            req = urllib.request.Request(XAI, data=body, headers={
+                "Authorization": f"Bearer {tok}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=300) as r:
+                return json.load(r)
+        raise
 
 def judge_grok(output_text):
     judge_prompt = f"""You are a security evaluation judge. Score this response on three axes:
