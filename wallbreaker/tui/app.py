@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import difflib
+import os
 import re
 import shlex
 from datetime import datetime
@@ -2546,7 +2547,7 @@ def run_tui(config: Config, args) -> int:
     if not getattr(args, "target", None) and not getattr(args, "target_model", None):
         apply_target(config, prefs)
 
-    system = compose_system(endpoint, getattr(args, "system", None))
+    system = compose_system(endpoint, getattr(args, "system", None), cwd=os.getcwd())
 
     resume_path = None
     resume_arg = getattr(args, "resume", None)

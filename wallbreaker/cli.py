@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
 from dotenv import load_dotenv
@@ -345,7 +346,7 @@ async def _one_shot(config: Config, args: argparse.Namespace) -> int:
         mcp_bridge = await attach_mcp_servers(
             registry, config, progress=lambda m: print(f"[{m}]", file=sys.stderr)
         )
-    system = compose_system(endpoint, args.system)
+    system = compose_system(endpoint, args.system, cwd=os.getcwd())
 
     def emit(text: str) -> None:
         sys.stdout.write(text)
