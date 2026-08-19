@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# wb-seat-launch — launch wallbreaker against the Pi OAuth xAI seat (Track B).
+# Pulls the live bearer token from ~/.grok/auth.json, exports it as XAI_SEAT_TOKEN,
+# then launches the wallbreaker TUI with config.seat.toml (target = api.x.ai grok-4.6).
+set -euo pipefail
+cd /home/jay/wallbreaker
+
+tok=$(.venv/bin/python - <<'PY'
+import json, os
+p = os.path.expanduser("~/.grok/auth.json")
+d = json.load(open(p))
+for k, v in d.items():
+    if "auth.x.ai" in k and isinstance(v, dict):
+        tok = v.get("key") or v.get("access_token") or v.get("token")
+        if tok:
+            print(tok)
+            break
+PY
+)
+if [ -z "${tok:-}" ]; then
+    echo "ERROR: no seat token found in ~/.grok/auth.json" >&2
+    exit 1
+fi
+
+export XAI_SEAT_TOKEN="$tok"
+exec .venv/bin/wallbreaker --config config.seat.toml --profile openrouter --model deepseek/deepseek-v4-flash-0731

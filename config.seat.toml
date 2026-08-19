@@ -1,0 +1,58 @@
+# Wallbreaker — SEAT-JB config (Track B)
+# Attack the Pi OAuth'd xAI seat (api.x.ai) with the SYSTEM-PROMPT channel.
+# Token source: export XAI_SEAT_TOKEN = bearer from ~/.grok/auth.json
+default_profile = "openrouter"
+
+[agents.attacker]
+provider = "openrouter"
+model = "deepseek/deepseek-v4-flash-0731"
+
+[agents.target]
+provider = "seat"
+model = "grok-4.6"
+
+[agents.judge]
+provider = "openrouter"
+model = "openai/gpt-4o-mini"
+
+[agent_profiles.attacker."default attacker"]
+provider = "openrouter"
+model = "deepseek/deepseek-v4-flash-0731"
+prompt_source = "none"
+
+[agent_profiles.target."seat target"]
+provider = "seat"
+model = "grok-4.6"
+prompt_source = "none"
+
+[agent_profiles.judge."default judge"]
+provider = "openrouter"
+model = "openai/gpt-4o-mini"
+prompt_source = "none"
+
+[profiles.openrouter]
+protocol = "openai"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "anthropic/claude-sonnet-4.5"
+
+# Pi OAuth seat — native xAI, OpenAI-compatible wire.
+[profiles.seat]
+protocol = "xai"
+base_url = "https://api.x.ai/v1"
+api_key_env = "XAI_SEAT_TOKEN"
+model = "grok-4.6"
+reasoning = true
+
+[target]
+protocol = "xai"
+base_url = "https://api.x.ai/v1"
+api_key_env = "XAI_SEAT_TOKEN"
+model = "grok-4.6"
+reasoning = true
+
+[judge]
+protocol = "openai"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+model = "openai/gpt-4o-mini"
