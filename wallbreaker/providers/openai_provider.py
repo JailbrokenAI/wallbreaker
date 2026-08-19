@@ -211,6 +211,15 @@ class OpenAIProvider(Provider):
         ):
             yield event
 
+    def _wire_model(self) -> str:
+        model = self.endpoint.model
+        if getattr(self.endpoint, "protocol", "") == "xai":
+            # api.x.ai accepts bare ids only (grok-4.6); strip any vendor prefix
+            # (x-ai/grok-4.6 -> grok-4.6). Other prefixes are left untouched.
+            if model.startswith("x-ai/"):
+                model = model[len("x-ai/"):]
+        return model
+
     async def _stream_ungated(
         self,
         messages: list[Message],
@@ -234,7 +243,11 @@ class OpenAIProvider(Provider):
                 wire_messages, getattr(self.endpoint, "cache_ttl", "5m")
             )
         payload: dict = {
-            "model": self.endpoint.model,
+            # Native xAI (api.x.ai) only knows the bare model id; the harness
+            # profiles may carry the OpenRouter-prefixed form (x-ai/grok-4.6),
+            # which api.x.ai rejects with 404/"model does not exist". Strip the
+            # vendor prefix for the xai protocol only (OpenRouter keeps it).
+            "model": self._wire_model(),
             "messages": wire_messages,
             "max_tokens": max_tokens,
             "stream": True,

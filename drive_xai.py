@@ -29,7 +29,7 @@ def call(system=None, user=None, max_tokens=3000, history=None):
         headers={"Authorization": f"Bearer {TOKEN}",
                  "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=240) as r:
             d = json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         return {"HTTPError": e.code, "body": e.read().decode()[:500]}

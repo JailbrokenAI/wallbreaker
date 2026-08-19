@@ -31,6 +31,34 @@ def test_factory_picks_protocol():
     assert type(ant).__name__ == "AnthropicProvider"
 
 
+def test_xai_wire_model_strips_openrouter_prefix():
+    # The seat (api.x.ai) only knows the bare model id; the harness profiles may
+    # carry the OpenRouter-prefixed form (x-ai/grok-4.6), which api.x.ai rejects
+    # with 404/"model does not exist". _wire_model strips the prefix for protocol
+    # "xai" only — OpenRouter ("openai") keeps it, other protocols are untouched.
+    from wallbreaker.providers.openai_provider import OpenAIProvider
+
+    seat = OpenAIProvider(
+        Endpoint("s", "xai", "https://api.x.ai/v1", "x-ai/grok-4.6")
+    )
+    assert seat._wire_model() == "grok-4.6"
+    # bare id already: unchanged
+    seat_bare = OpenAIProvider(
+        Endpoint("s2", "xai", "https://api.x.ai/v1", "grok-4.6")
+    )
+    assert seat_bare._wire_model() == "grok-4.6"
+    # OpenRouter keeps the vendor prefix
+    or_ = OpenAIProvider(
+        Endpoint("o", "openai", "https://openrouter.ai/api/v1", "x-ai/grok-4.6")
+    )
+    assert or_._wire_model() == "x-ai/grok-4.6"
+    # non-prefixed non-xai id untouched
+    other = OpenAIProvider(
+        Endpoint("t", "anthropic", "https://api.anthropic.com", "claude-sonnet-4-5")
+    )
+    assert other._wire_model() == "claude-sonnet-4-5"
+
+
 def test_openai_message_conversion():
     wire = oai_msgs(CONVO, "sys")
     assert wire[0] == {"role": "system", "content": "sys"}
