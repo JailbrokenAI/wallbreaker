@@ -1614,7 +1614,13 @@ def create_app(
         nonlocal agent_active, agent_control, agent_task
         from fastapi.responses import StreamingResponse
 
-        body = body.model_dump(exclude_defaults=True)
+        # The direct route hands us a pydantic AgentRunRequest, but the V2 execution
+        # engine (_agent_execution) calls this with a plain dict. Tolerate both so a
+        # dict doesn't blow up on .model_dump() (AttributeError).
+        if hasattr(body, "model_dump"):
+            body = body.model_dump(exclude_defaults=True)
+        else:
+            body = dict(body)
 
         if config is None:
             raise HTTPException(status_code=400, detail="no [target] configured in config.toml")
