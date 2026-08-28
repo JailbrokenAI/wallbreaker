@@ -136,6 +136,11 @@ def _persist_thread(messages, reply):
     if messages and messages[-1].role == "assistant":
         prefill = messages[-1].text()
         return messages[:-1] + [assistant((prefill + body) if body else prefill)]
+    if not body:
+        # DeepSeek (and other strict OpenAI-compatible APIs) reject an assistant
+        # message whose content is empty: "content or tool_calls must be set".
+        # A reasoning-only target turn must not poison the persisted thread.
+        return list(messages)
     return messages + [assistant(body)]
 
 
@@ -381,7 +386,15 @@ async def _continue_target(args: dict, ctx: ToolContext) -> str:
         ctx.emit(recover_note)
         enc_note += f" | {recover_note}"
 
-    asst_msg = assistant(reply or "")
+    body = reply or ""
+    if not body:
+        # Never persist an empty assistant message: DeepSeek 400s on
+        # "content or tool_calls must be set". Fold reasoning in when the model
+        # only produced thinking, otherwise keep the thread valid with a marker.
+        body = (cot or reasoning or "").strip()
+        if not body:
+            body = "[target returned no output for this turn]"
+    asst_msg = assistant(body)
     if details:
         asst_msg.reasoning_details = details
         asst_msg.reasoning = cot or reasoning or None
