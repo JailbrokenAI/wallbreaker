@@ -113,6 +113,42 @@ def _fold_trailing_assistant_prefill(wire: list[dict]) -> list[dict]:
     return wire
 
 
+def _complete_missing_tool_results(wire: list[dict]) -> list[dict]:
+    """DeepSeek requires every assistant ``tool_calls`` entry to be immediately
+    followed by a ``tool`` response for each ``tool_call_id``. A session resumed from
+    autosave can end with an unfinished tool-call round (crash before the results were
+    recorded), which would otherwise 400 with "insufficient tool messages following
+    tool_calls message". Insert placeholder tool results so the wire stays valid.
+    """
+    out: list[dict] = []
+    for i, entry in enumerate(wire):
+        out.append(entry)
+        if entry.get("role") != "assistant":
+            continue
+        tool_calls = entry.get("tool_calls") or []
+        if not tool_calls:
+            continue
+        expected = {tc["id"] for tc in tool_calls}
+        found: set[str] = set()
+        j = i + 1
+        while j < len(wire) and wire[j].get("role") == "tool":
+            found.add(wire[j].get("tool_call_id"))
+            j += 1
+        missing = expected - found
+        for mid in sorted(missing):
+            out.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": mid,
+                    "content": (
+                        "[recovered session] tool result not recorded (crash before "
+                        "completion); treat as an error and continue the engagement."
+                    ),
+                }
+            )
+    return out
+
+
 def _messages_to_wire(
     messages: list[Message], system: str | None, system_mode: str = "default"
 ) -> list[dict]:
@@ -147,6 +183,12 @@ def _messages_to_wire(
                 for b in msg.content
                 if isinstance(b, ToolUseBlock)
             ]
+            if not text.strip() and not tool_calls:
+                # Strict OpenAI-compatible endpoints (DeepSeek) reject assistant
+                # messages with no content and no tool calls ("content or
+                # tool_calls must be set"). A reasoning-only / empty target turn
+                # must not poison the wire request (also covers resumed sessions).
+                continue
             entry: dict = {"role": "assistant", "content": text or None}
             if tool_calls:
                 entry["tool_calls"] = tool_calls
@@ -176,6 +218,7 @@ def _messages_to_wire(
             wire.append({"role": "user", "content": text})
     if pending_system:  # merge requested but no user turn existed - add one
         wire.append({"role": "user", "content": pending_system})
+    wire = _complete_missing_tool_results(wire)
     return _fold_trailing_assistant_prefill(wire)
 
 
