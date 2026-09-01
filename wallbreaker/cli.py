@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import subprocess
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -168,7 +170,7 @@ def _add_endpoint_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-key", help="API key literal (prefer --api-key-env)")
 
 
-SUBCOMMANDS = ("lib", "parsel", "eni", "transform", "findings", "report", "export", "check", "regrade", "baseline", "dashboard")
+SUBCOMMANDS = ("lib", "parsel", "eni", "transform", "findings", "report", "export", "check", "regrade", "baseline", "dashboard", "corpus")
 
 
 def build_main_parser() -> argparse.ArgumentParser:
@@ -244,7 +246,7 @@ def build_sub_parser() -> argparse.ArgumentParser:
     parsel = sub.add_parser(
         "parsel", help="Manage the P4RS3LT0NGV3 transform library (MCP server backend)"
     )
-    parsel.add_argument("parsel_action", choices=["update", "list", "path"])
+    parsel.add_argument("parsel_action", choices=["update", "list", "path", "verify"])
 
     eni = sub.add_parser("eni", help="Browse the ENI persona-jailbreak collection")
     eni.add_argument("eni_action", choices=["list", "update", "path"])
@@ -304,6 +306,19 @@ def build_sub_parser() -> argparse.ArgumentParser:
         "--allow-network", action="store_true",
         help="Acknowledge the risk of exposing this unauthenticated single-operator dashboard",
     )
+
+    corpus = sub.add_parser("corpus", help="Manage corpus integrity pins (library.lock.toml)")
+    corpus_sub = corpus.add_subparsers(dest="corpus_action", required=True)
+    cv = corpus_sub.add_parser(
+        "verify",
+        help="Check corpus SHAs against library.lock.toml; non-zero exit on UNRESOLVED or DRIFT",
+    )
+    cv.add_argument(
+        "--update",
+        action="store_true",
+        help="Attempt to resolve actual HEAD SHAs via git ls-remote and update the lock file",
+    )
+    cv.add_argument("--lock", default=None, help="Path to library.lock.toml (default: repo root)")
 
     return parser
 
@@ -412,7 +427,11 @@ def main(argv: list[str] | None = None) -> int:
             from .tools.eni import run_eni_cli
 
             return run_eni_cli(args)
+        if args.command == "corpus":
+            return _run_corpus_verify(args)
         if args.command == "parsel":
+            if getattr(args, "parsel_action", None) == "verify":
+                return _run_corpus_verify(args)
             from .tools.parsel_lib import run_parsel_cli
 
             return run_parsel_cli(args)

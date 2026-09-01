@@ -2,6 +2,11 @@
 
 ## Unreleased — WebUI V2 unified operator surface
 
+- Fixed `wallbreaker corpus verify [--update]` (and the `wallbreaker parsel verify`
+  alias) becoming unreachable when the PR #21 and PR #24 lines merged: the dispatch
+  and subparser were dropped from `cli.py` while `_run_corpus_verify` survived as
+  dead code. Load-time pin checks were unaffected; the interactive command works
+  again. Routing is now regression-tested (`tests/test_corpus_cli_routing.py`).
 - Added a shared typed capability catalog so TUI behavior is the canonical contract and
   every registered operation remains discoverable from V2.
 - Added server-owned queued executions with pause, resume, steering, attacker switching,
