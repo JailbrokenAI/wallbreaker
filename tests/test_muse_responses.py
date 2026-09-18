@@ -86,7 +86,8 @@ FULL_STREAM = [
     "event: response.output_text.delta",
     'data: {"output_index":0,"delta":"Hello"}',
     "event: response.output_item.done",
-    'data: {"item":{"type":"message","content":[{"type":"output_text","text":" world"}]}}',
+    # done echoes the streamed text; the provider must not duplicate it
+    'data: {"item":{"type":"message","content":[{"type":"output_text","text":"Hello"}]}}',
     "event: response.completed",
     'data: {"response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":5}}}',
 ]
@@ -100,7 +101,7 @@ def test_stream_text_reasoning_usage_stop(monkeypatch):
     )
     events = _collect(MuseResponsesProvider(_ep()))
     texts = [e.text for e in events if isinstance(e, TextDelta)]
-    assert "".join(texts) == "Hello world"
+    assert "".join(texts) == "Hello"
     assert any(isinstance(e, ReasoningDelta) and e.text == "sneaky plan" for e in events)
     usage = next(e for e in events if isinstance(e, UsageEvent))
     assert (usage.input_tokens, usage.output_tokens) == (10, 5)
@@ -153,6 +154,21 @@ def test_completed_with_null_incomplete_details(monkeypatch):
     events = _collect(p)
     assert any(isinstance(e, TextDelta) and e.text == "hi" for e in events)
     assert p.last_stop_reason == "end_turn"
+
+
+def test_done_item_without_deltas_still_yields_text(monkeypatch):
+    lines = [
+        "event: response.output_item.done",
+        'data: {"item":{"type":"message","content":[{"type":"output_text","text":"late"}]}}',
+        "event: response.completed",
+        'data: {"response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}',
+    ]
+    monkeypatch.setattr(
+        "wallbreaker.providers.muse_responses.httpx.AsyncClient",
+        _client_factory(lines),
+    )
+    events = _collect(MuseResponsesProvider(_ep()))
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "late"
 
 
 def test_incomplete_marks_truncation(monkeypatch):

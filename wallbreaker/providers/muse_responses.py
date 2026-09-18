@@ -249,6 +249,7 @@ class MuseResponsesProvider(Provider):
         pending: dict[str, dict] = {}
         order: list[str] = []
         content_chars = 0
+        saw_text_delta = False
         reasoning_parts: list[str] = []
         stop_reason = "end_turn"
         saw_sse_event = False
@@ -287,6 +288,7 @@ class MuseResponsesProvider(Provider):
                         delta = payload_data.get("delta") or ""
                         if delta:
                             content_chars += len(str(delta))
+                            saw_text_delta = True
                             yield TextDelta(str(delta))
                     elif etype in (
                         "response.reasoning_text.delta",
@@ -320,6 +322,11 @@ class MuseResponsesProvider(Provider):
                             continue
                         itype = item.get("type")
                         if itype == "message":
+                            # output_item.done echoes the full text already streamed as
+                            # deltas; yield it only when no deltas arrived (else the
+                            # reply would be duplicated).
+                            if saw_text_delta:
+                                continue
                             for part in item.get("content") or []:
                                 if not isinstance(part, dict):
                                     continue
