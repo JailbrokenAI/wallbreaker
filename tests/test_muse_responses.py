@@ -156,7 +156,17 @@ def test_completed_with_null_incomplete_details(monkeypatch):
     assert p.last_stop_reason == "end_turn"
 
 
-def test_done_item_without_deltas_still_yields_text(monkeypatch):
+def test_output_budget_floored_for_reasoning(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "wallbreaker.providers.muse_responses.httpx.AsyncClient",
+        _client_factory(FULL_STREAM, captured=captured),
+    )
+    _collect(MuseResponsesProvider(_ep()))
+    assert captured["json"]["max_output_tokens"] >= 1024
+
+
+def test_incomplete_marks_truncation(monkeypatch):
     lines = [
         "event: response.output_item.done",
         'data: {"item":{"type":"message","content":[{"type":"output_text","text":"late"}]}}',
@@ -171,7 +181,7 @@ def test_done_item_without_deltas_still_yields_text(monkeypatch):
     assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "late"
 
 
-def test_incomplete_marks_truncation(monkeypatch):
+def test_done_item_without_deltas_still_yields_text(monkeypatch):
     lines = [
         "event: response.incomplete",
         'data: {"response":{"status":"incomplete"}}',

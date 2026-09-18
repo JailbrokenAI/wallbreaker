@@ -74,6 +74,12 @@ _EFFORT_ALIASES = {
 # timeout strangle a call. Mirrors the Codex provider's floor rationale.
 _TIMEOUT_FLOOR = 120.0
 
+# Output-budget floor: on the Responses wire reasoning tokens come out of the
+# same max_output_tokens budget as the answer, and Muse Spark thinks long
+# enough that small caller budgets (the judge's 250, one-shot 64s) return
+# completely empty with stop=incomplete. Floor at 1024 so every harness caller
+# gets a usable answer; effort=minimal keeps the thinking short anyway.
+
 
 def normalize_effort(raw: str | None) -> str:
     """Fold a free-form effort string onto a Muse Spark level (default medium)."""
@@ -231,7 +237,7 @@ class MuseResponsesProvider(Provider):
             "stream": True,
             "store": False,
             "reasoning": {"effort": self._effort(), "summary": "auto"},
-            "max_output_tokens": max_tokens,
+            "max_output_tokens": max(max_tokens, 1024),
             "input": input_items,
         }
         if instructions:
