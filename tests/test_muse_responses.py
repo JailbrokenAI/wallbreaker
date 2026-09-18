@@ -136,6 +136,25 @@ def test_reasoning_only_folds_and_flags_empty(monkeypatch):
     assert p.last_completion_empty is True
 
 
+def test_completed_with_null_incomplete_details(monkeypatch):
+    # Live Zen sends "incomplete_details": null on success; must not crash.
+    lines = [
+        "event: response.output_text.delta",
+        'data: {"delta":"hi"}',
+        "event: response.completed",
+        'data: {"response":{"status":"completed","incomplete_details":null,'
+        '"usage":{"input_tokens":1,"output_tokens":1}}}',
+    ]
+    monkeypatch.setattr(
+        "wallbreaker.providers.muse_responses.httpx.AsyncClient",
+        _client_factory(lines),
+    )
+    p = MuseResponsesProvider(_ep())
+    events = _collect(p)
+    assert any(isinstance(e, TextDelta) and e.text == "hi" for e in events)
+    assert p.last_stop_reason == "end_turn"
+
+
 def test_incomplete_marks_truncation(monkeypatch):
     lines = [
         "event: response.incomplete",

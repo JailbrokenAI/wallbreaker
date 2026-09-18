@@ -354,7 +354,7 @@ class MuseResponsesProvider(Provider):
                             )
                         status = str(response.get("status") or "completed")
                         stop_reason = "end_turn" if status == "completed" else "length"
-                        if response.get("incomplete_details", {}).get("reason") == "max_output_tokens":
+                        if (response.get("incomplete_details") or {}).get("reason") == "max_output_tokens":
                             stop_reason = "length"
                     elif etype == "response.incomplete":
                         stop_reason = "length"
