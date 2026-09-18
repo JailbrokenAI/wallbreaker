@@ -53,6 +53,10 @@ class Endpoint:
     timeout: float = 0.0
     modality: str = "text"
     reasoning: bool = False
+    # reasoning effort level for reasoning-capable protocols (muse-responses:
+    # minimal/low/medium/high/xhigh; openai-compatible endpoints that honor
+    # reasoning_effort). None = provider default (medium for muse-responses).
+    reasoning_effort: str | None = None
     # how the system prompt is delivered to THIS endpoint:
     #   "default" - native (OpenAI system message / Anthropic top-level system)
     #   "merge"   - fold the system text into the first user turn (for targets that
@@ -248,10 +252,10 @@ def _endpoint_from_table(name: str, table: dict, *, require_model: bool = False)
     missing = [k for k in required if k not in table]
     if missing:
         raise ConfigError(f"Endpoint '{name}' missing keys: {', '.join(missing)}")
-    if protocol not in ("openai", "anthropic", "claude-code", "xai"):
+    if protocol not in ("openai", "anthropic", "claude-code", "xai", "muse-responses"):
         raise ConfigError(
             f"Endpoint '{name}' has invalid protocol '{protocol}' "
-            f"(expected 'openai', 'anthropic', 'xai', or 'claude-code')"
+            f"(expected 'openai', 'anthropic', 'xai', 'muse-responses', or 'claude-code')"
         )
     modality = str(table.get("modality", "text")).lower()
     if modality not in ("text", "image"):
@@ -292,6 +296,7 @@ def _endpoint_from_table(name: str, table: dict, *, require_model: bool = False)
         timeout=float(table.get("timeout", 0) or 0),
         modality=modality,
         reasoning=bool(table.get("reasoning", False)),
+        reasoning_effort=str(table.get("reasoning_effort")) if table.get("reasoning_effort") else None,
         system_mode=str(table.get("system_mode", "default")).lower(),
         system_prompt_file=str(table.get("system_prompt_file", "")),
         system_prompt=str(table.get("system_prompt", "")),

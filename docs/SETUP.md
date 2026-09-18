@@ -72,6 +72,13 @@ The browser interface can also create, edit, test, enable, and disable providers
 manage attacker, target, and judge profiles. Known credential fields are redacted from
 API responses and execution history.
 
+### Muse Spark (opencode-go Zen)
+
+Muse Spark models ride protocol `"muse-responses"` (OpenAI Responses wire on
+`POST {base_url}/responses`), not chat-completions. See `[profiles.muse-spark]` in
+`config.example.toml`: set the `MUSE_GO_KEY` env var to a Go subscription key and
+pick `reasoning_effort` from minimal/low/medium/high/xhigh.
+
 ## Run the terminal interface
 
 ```bash

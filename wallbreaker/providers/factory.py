@@ -9,6 +9,7 @@ from .base import DEFAULT_TIMEOUT, Provider, ProviderError
 from .claude_code import ClaudeCodeProvider
 from .image_provider import OpenRouterImageProvider
 from .openai_provider import OpenAIProvider
+from .muse_responses import MuseResponsesProvider
 
 
 def build_provider(endpoint: Endpoint, timeout: float | None = None) -> Provider:
@@ -24,6 +25,8 @@ def build_provider(endpoint: Endpoint, timeout: float | None = None) -> Provider
             provider = OpenAIProvider(endpoint, timeout=resolved)
     elif endpoint.protocol == "anthropic":
         provider = AnthropicProvider(endpoint, timeout=resolved)
+    elif endpoint.protocol == "muse-responses":
+        provider = MuseResponsesProvider(endpoint, timeout=resolved)
     elif endpoint.protocol == "claude-code":
         provider = ClaudeCodeProvider(endpoint, timeout=resolved)
     else:

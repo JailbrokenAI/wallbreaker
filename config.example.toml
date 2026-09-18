@@ -70,6 +70,17 @@ protocol = "claude-code"
 model = "sonnet"
 # system_prompt_file = "/path/to/your/system_prompt.txt"
 
+# Muse Spark via the opencode-go Zen gateway (OpenAI Responses wire, NOT
+# chat-completions — that path does not serve these models). Set MUSE_GO_KEY in
+# your environment (Go subscription key); never commit the key itself.
+# reasoning_effort: minimal/low/medium/high/xhigh (max folds to xhigh).
+[profiles.muse-spark]
+protocol = "muse-responses"
+base_url = "https://opencode.ai/zen/go/v1"
+api_key_env = "MUSE_GO_KEY"
+model = "muse-spark-1.3-contributor"
+# reasoning_effort = "medium"
+
 # Native xAI (api.x.ai) brain/target. protocol="xai" is OpenAI wire-compatible, so it rides
 # the OpenAI provider; base_url defaults to https://api.x.ai/v1 and the key env defaults to
 # XAI_API_KEY, so only protocol + model are required. Set XAI_API_KEY in your environment.
