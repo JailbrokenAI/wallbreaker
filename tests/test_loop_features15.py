@@ -32,6 +32,42 @@ def test_doctor_flags_missing_key(monkeypatch):
     assert "no key" in report
 
 
+def test_doctor_accepts_keyless_claude_code_when_cli_exists(monkeypatch):
+    monkeypatch.delenv("WALLBREAKER_CLAUDE_BIN", raising=False)
+    checked = []
+    monkeypatch.setattr(
+        "wallbreaker.config.shutil.which",
+        lambda binary: checked.append(binary) or "/fake/claude",
+    )
+    ep = Endpoint("claude-code", "claude-code", "", "opus")
+    cfg = Config(default_profile="claude-code", profiles={"claude-code": ep})
+
+    report, ok = doctor_report(cfg)
+
+    assert ok
+    assert checked == ["claude"]
+    assert "profile 'claude-code' CLI available" in report
+    assert "no key" not in report
+
+
+def test_doctor_flags_missing_claude_cli(monkeypatch):
+    monkeypatch.setenv("WALLBREAKER_CLAUDE_BIN", "/missing/claude")
+    checked = []
+    monkeypatch.setattr(
+        "wallbreaker.config.shutil.which",
+        lambda binary: checked.append(binary) or None,
+    )
+    ep = Endpoint("claude-code", "claude-code", "", "opus")
+    cfg = Config(default_profile="claude-code", profiles={"claude-code": ep})
+
+    report, ok = doctor_report(cfg)
+
+    assert not ok
+    assert checked == ["/missing/claude"]
+    assert "profile 'claude-code' CLI available" in report
+    assert "NOT READY" in report
+
+
 def test_doctor_notes_missing_target_and_judge():
     ep = Endpoint("p", "openai", "http://x", "m", api_key="k")
     cfg = Config(default_profile="p", profiles={"p": ep})

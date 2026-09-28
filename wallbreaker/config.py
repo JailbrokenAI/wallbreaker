@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -182,17 +183,27 @@ def doctor_report(config: Config) -> tuple[str, bool]:
         ok = ok and passed
         lines.append(f"[{mark}] {label}" + (f" - {detail}" if detail else ""))
 
+    def check_endpoint(label: str, ep: Endpoint, detail: str) -> None:
+        if ep.protocol == "claude-code":
+            binary = os.environ.get("WALLBREAKER_CLAUDE_BIN") or "claude"
+            check(
+                f"{label} CLI available",
+                shutil.which(binary) is not None,
+                f"{ep.model} via {binary}",
+            )
+            return
+        has_key = bool(ep.resolved_key())
+        if not has_key:
+            detail += f" (no key: set {ep.api_key_env or 'api_key'})"
+        check(f"{label} key resolves", has_key, detail)
+
     check("profiles defined", bool(config.profiles), f"{len(config.profiles)} found")
     check(
         f"default_profile '{config.default_profile}' exists",
         config.default_profile in config.profiles,
     )
     for name, ep in config.profiles.items():
-        has_key = bool(ep.resolved_key())
-        detail = f"{ep.model} @ {ep.base_url}"
-        if not has_key:
-            detail += f" (no key: set {ep.api_key_env or 'api_key'})"
-        check(f"profile '{name}' key resolves", has_key, detail)
+        check_endpoint(f"profile '{name}'", ep, f"{ep.model} @ {ep.base_url}")
 
     if config.target is None:
         lines.append("[note] no [target] - set one or use /target before attacking")
@@ -200,19 +211,17 @@ def doctor_report(config: Config) -> tuple[str, bool]:
         modality_note = (
             " (image-gen target)" if config.target.modality == "image" else ""
         )
-        check(
-            "target key resolves",
-            bool(config.target.resolved_key()),
+        check_endpoint(
+            "target",
+            config.target,
             f"{config.target.model} @ {config.target.base_url}{modality_note}",
         )
 
     if config.judge is None:
         lines.append("[note] no [judge] - grading falls back to the default profile")
     else:
-        check(
-            "judge key resolves",
-            bool(config.judge.resolved_key()),
-            f"{config.judge.model} @ {config.judge.base_url}",
+        check_endpoint(
+            "judge", config.judge, f"{config.judge.model} @ {config.judge.base_url}"
         )
 
     if config.art is None:
@@ -221,11 +230,7 @@ def doctor_report(config: Config) -> tuple[str, bool]:
             "profile (if any) or a local renderer"
         )
     else:
-        check(
-            "art key resolves",
-            bool(config.art.resolved_key()),
-            f"{config.art.model} @ {config.art.base_url}",
-        )
+        check_endpoint("art", config.art, f"{config.art.model} @ {config.art.base_url}")
 
     lines.append("=" * 40)
     lines.append("READY" if ok else "NOT READY - fix the XX lines above")
